@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# Main binary
+bin/
+
 # Go binaries (produced by go build; go run does not leave these behind)
 playground/claude-pty/claude-pty
 playground/claude-msg-continuation/claude-msg-continuation

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+start=$(date +%s)
+
+make check
+
+end=$(date +%s)
+elapsed=$((end - start))
+
+if [ "$elapsed" -gt 15 ]; then
+    echo ""
+    echo "notice: check took ${elapsed}s — when this keeps growing, profile which linters are slow"
+fi

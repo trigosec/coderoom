@@ -1,0 +1,51 @@
+version: "2"
+
+linters:
+  enable:
+    # Correctness
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - nilerr
+    # Style
+    - revive
+    - gocritic
+    # Complexity
+    - funlen
+    - cyclop
+    # Security
+    - gosec
+    # Error handling
+    - wrapcheck
+    # Unused code
+    - unparam
+    - exhaustive
+
+  settings:
+    funlen:
+      lines: 50
+      statements: 40
+    cyclop:
+      max-complexity: 10
+    wrapcheck:
+      ignorePackageGlobs:
+        - github.com/trigosec/coderoom/*
+    exhaustive:
+      default-signifies-exhaustive: true
+    gosec:
+      excludes:
+        # Subprocess launched with variable — intentional for agent process management.
+        - G204
+
+formatters:
+  enable:
+    - goimports
+
+issues:
+  exclude-rules:
+    # Test files are exempt from wrapcheck and funlen.
+    - path: _test\.go
+      linters:
+        - wrapcheck
+        - funlen
