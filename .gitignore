@@ -8,6 +8,15 @@
 *.so
 *.dylib
 
+# Go binaries (produced by go build; go run does not leave these behind)
+playground/claude-pty/claude-pty
+playground/claude-msg-continuation/claude-msg-continuation
+playground/claude-simple-env/claude-simple-env
+playground/codex-pty/codex-pty
+playground/codex-msg-continuation/codex-msg-continuation
+playground/codex-simple-env/codex-simple-env
+playground/codex-stdio/codex-stdio
+
 # Test binary, built with `go test -c`
 *.test
 
