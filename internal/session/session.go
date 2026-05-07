@@ -52,6 +52,18 @@ func (s *Session) Execute(cmd Command) error {
 	return cmd.execute(s)
 }
 
+// Shutdown stops all agents in the session. Errors from individual agents are
+// silently discarded; the goal is best-effort cleanup on process exit.
+func (s *Session) Shutdown() {
+	for _, p := range s.participants() {
+		participant, ok := s.detachParticipant(p.Alias)
+		if !ok {
+			continue
+		}
+		_ = participant.Agent.Stop()
+	}
+}
+
 func (s *Session) notify(e Event) {
 	for _, o := range s.obs {
 		o.OnEvent(e)
