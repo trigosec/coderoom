@@ -4,7 +4,6 @@
 package session
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -13,7 +12,7 @@ import (
 )
 
 type agentEntry struct {
-	cancel context.CancelFunc
+	stop chan struct{}
 }
 
 // Session is the central orchestrator of a Code Room session.
@@ -86,7 +85,7 @@ func (s *Session) removeParticipant(alias string) {
 }
 
 // detachParticipant removes the participant and its reader entry atomically,
-// cancels the reader context (signals readLoop: stopped, not crashed),
+// closes the stop channel (signals readLoop: stopped, not crashed),
 // and returns the participant so the caller can stop the agent.
 func (s *Session) detachParticipant(alias string) (*participant.Participant, bool) {
 	s.mu.Lock()
@@ -98,16 +97,16 @@ func (s *Session) detachParticipant(alias string) (*participant.Participant, boo
 	p, _ := s.registry.Get(alias)
 	delete(s.agents, alias)
 	_ = s.registry.Remove(alias)
-	entry.cancel()
+	close(entry.stop)
 	return p, true
 }
 
 func (s *Session) startReader(alias string, a agent.Agent) {
-	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel stored in agentEntry; called inside detachParticipant
+	stop := make(chan struct{})
 	s.mu.Lock()
-	s.agents[alias] = agentEntry{cancel: cancel}
+	s.agents[alias] = agentEntry{stop: stop}
 	s.mu.Unlock()
-	go s.readLoop(ctx, alias, a)
+	go s.readLoop(stop, alias, a)
 }
 
 func (s *Session) lookupParticipant(alias string) (*participant.Participant, bool) {
@@ -123,15 +122,17 @@ func (s *Session) participants() []*participant.Participant {
 }
 
 // readLoop runs in a goroutine per agent, forwarding agent.Event values to the
-// observers. When Read returns an error it emits KindAgentStopped (if shutdown
-// was requested via ctx) or KindAgentCrashed, then exits.
-func (s *Session) readLoop(ctx context.Context, alias string, a agent.Agent) {
+// observers. When Read returns an error it emits KindAgentStopped (if the stop
+// channel was closed) or KindAgentCrashed, then exits.
+func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 	for {
 		ev, err := a.Read()
 		if err != nil {
 			kind := KindAgentCrashed
-			if ctx.Err() != nil {
+			select {
+			case <-stop:
 				kind = KindAgentStopped
+			default:
 			}
 			s.notify(Event{Kind: kind, Alias: alias})
 			return
