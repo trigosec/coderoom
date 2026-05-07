@@ -49,8 +49,21 @@ type BroadcastCommand struct {
     Text string
 }
 
-// SendCommand sends a message directly to one agent's private channel.
-type SendCommand struct {
+// SharedSendCommand sends a message to one agent in the shared room.
+// TextDirect is sent to the addressed agent; TextListeners is sent to all
+// other agents. The caller supplies both texts — the session controller does
+// not format messages. A shared room event is emitted so the TUI displays
+// it to everyone.
+type SharedSendCommand struct {
+    Alias         string
+    TextDirect    string
+    TextListeners string
+}
+
+// PrivateSendCommand sends a message directly to one agent's private channel.
+// Nothing is emitted to the shared room and no other agents are notified.
+// Used for approval flows and reasoning that should not pollute the shared room.
+type PrivateSendCommand struct {
     Alias string
     Text  string
 }
@@ -83,9 +96,11 @@ const (
     KindAgentStarted Kind = "agent.started"
     KindAgentStopped Kind = "agent.stopped"
     KindAgentCrashed Kind = "agent.crashed"
-    KindBroadcast    Kind = "message.broadcast" // shared room message
-    KindDelta        Kind = "message.delta"     // streaming text fragment
-    KindDone         Kind = "message.done"      // turn complete
+    KindBroadcast    Kind = "message.broadcast" // message to all agents
+    KindSharedSend   Kind = "message.shared"   // instruction to one agent, visible to all
+    KindSharedNotice Kind = "message.notice"   // context notice forwarded to a listener
+    KindDelta        Kind = "message.delta"    // streaming text fragment
+    KindDone         Kind = "message.done"     // turn complete
 )
 
 type Event struct {
@@ -105,7 +120,7 @@ The relationship between session events and the persistent event log (`internal/
 
 The reader goroutine loops on `agent.Read()`, translating `agent.Event` values into session `Event` values and calling `observer.OnEvent`. When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent context cancellation) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
 
-`StopCommand` signals the reader goroutine to stop, calls `agent.Stop`, then calls `registry.Remove`.
+`StopCommand` removes the participant from the registry, cancels the reader goroutine's context (so it will emit `KindAgentStopped` rather than `KindAgentCrashed` when it exits), then calls `agent.Stop`.
 
 ---
 
@@ -114,9 +129,10 @@ The reader goroutine loops on `agent.Read()`, translating `agent.Event` values i
 | Command | Routing |
 |---|---|
 | `BroadcastCommand` | Emits `KindBroadcast`; sends text to all agents regardless of initiative |
-| `SendCommand` | Sends text to the named agent via `agent.Send`; response events carry the alias |
+| `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `KindSharedSend` event (addressed agent) and one `KindSharedNotice` event per notified listener |
+| `PrivateSendCommand` | Sends text to the addressed agent only; no shared room event; no other agents notified |
 
-Shared room visibility is a property of the event kind, not a separate mechanism. The TUI renders `KindBroadcast` events to all views and `KindDelta`/`KindDone` to the relevant agent's private view.
+Shared room visibility is a property of the event kind. The TUI renders `KindBroadcast` events to all views and `KindDelta`/`KindDone` to the relevant agent's private view.
 
 ---
 

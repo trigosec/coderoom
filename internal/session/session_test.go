@@ -1,0 +1,318 @@
+package session_test
+
+import (
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/session"
+)
+
+// mockAgent is a controllable agent.Agent for tests.
+// Pre-load events at construction; Stop() closes the read channel.
+type mockAgent struct {
+	once     sync.Once
+	ch       chan agent.Event
+	mu       sync.Mutex
+	sends    []string
+	startErr error
+	stopErr  error
+	sendErr  error
+}
+
+func newMockAgent(events ...agent.Event) *mockAgent {
+	m := &mockAgent{ch: make(chan agent.Event, max(len(events), 1))}
+	for _, ev := range events {
+		m.ch <- ev
+	}
+	return m
+}
+
+func (m *mockAgent) Start() error { return m.startErr }
+func (m *mockAgent) Stop() error {
+	m.once.Do(func() { close(m.ch) })
+	return m.stopErr
+}
+func (m *mockAgent) Send(text string) error {
+	m.mu.Lock()
+	m.sends = append(m.sends, text)
+	m.mu.Unlock()
+	return m.sendErr
+}
+func (m *mockAgent) Read() (agent.Event, error) {
+	ev, ok := <-m.ch
+	if !ok {
+		return agent.Event{}, errors.New("agent closed")
+	}
+	return ev, nil
+}
+
+// testObserver collects events and exposes a channel for synchronisation.
+type testObserver struct {
+	mu     sync.Mutex
+	events []session.Event
+	ch     chan session.Event
+}
+
+func newTestObserver() *testObserver {
+	return &testObserver{ch: make(chan session.Event, 128)}
+}
+
+func (o *testObserver) OnEvent(e session.Event) {
+	o.mu.Lock()
+	o.events = append(o.events, e)
+	o.mu.Unlock()
+	select {
+	case o.ch <- e:
+	default:
+		// ch full; event still recorded in o.events — mustReceive will time out
+		// rather than deadlock the reader goroutine.
+	}
+}
+
+func mustReceive(t *testing.T, ch <-chan session.Event, want session.Kind) session.Event {
+	t.Helper()
+	select {
+	case ev := <-ch:
+		if ev.Kind != want {
+			t.Fatalf("expected kind %q, got %q", want, ev.Kind)
+		}
+		return ev
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for %q event", want)
+		return session.Event{}
+	}
+}
+
+func invite(t *testing.T, s *session.Session, alias string, a agent.Agent) {
+	t.Helper()
+	err := s.Execute(session.InviteCommand{
+		Alias:      alias,
+		Agent:      a,
+		Role:       participant.RoleBuilder,
+		Initiative: participant.InitiativeManual,
+	})
+	if err != nil {
+		t.Fatalf("InviteCommand %q: %v", alias, err)
+	}
+}
+
+// --- tests ---
+
+func TestInvite_emitsAgentStarted(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a := newMockAgent()
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+}
+
+func TestInvite_duplicateAlias(t *testing.T) {
+	s := session.New()
+	a1 := newMockAgent()
+	a2 := newMockAgent()
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada", a1)
+	err := s.Execute(session.InviteCommand{Alias: "ada", Agent: a2, Role: participant.RoleBuilder, Initiative: participant.InitiativeManual})
+	if err == nil {
+		t.Fatal("expected error on duplicate alias, got nil")
+	}
+}
+
+func TestStop_emitsAgentStopped(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a := newMockAgent()
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.StopCommand{Alias: "ada"}); err != nil {
+		t.Fatalf("StopCommand: %v", err)
+	}
+	mustReceive(t, obs.ch, session.KindAgentStopped)
+}
+
+func TestStop_notFound(t *testing.T) {
+	s := session.New()
+	if err := s.Execute(session.StopCommand{Alias: "nobody"}); err == nil {
+		t.Fatal("expected error for unknown alias, got nil")
+	}
+}
+
+func TestBroadcast_emitsAndSendsToAllAgents(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a1 := newMockAgent()
+	a2 := newMockAgent()
+	t.Cleanup(func() {
+		_ = s.Execute(session.StopCommand{Alias: "ada"})
+		_ = s.Execute(session.StopCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada", a1)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing", a2)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.BroadcastCommand{Text: "hello"}); err != nil {
+		t.Fatalf("BroadcastCommand: %v", err)
+	}
+	mustReceive(t, obs.ch, session.KindBroadcast)
+
+	for _, a := range []*mockAgent{a1, a2} {
+		a.mu.Lock()
+		if len(a.sends) == 0 || a.sends[len(a.sends)-1] != "hello" {
+			t.Errorf("agent did not receive broadcast")
+		}
+		a.mu.Unlock()
+	}
+}
+
+func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	ada := newMockAgent()
+	turing := newMockAgent()
+	t.Cleanup(func() {
+		_ = s.Execute(session.StopCommand{Alias: "ada"})
+		_ = s.Execute(session.StopCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada", ada)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing", turing)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"}); err != nil {
+		t.Fatalf("SharedSendCommand: %v", err)
+	}
+	mustReceive(t, obs.ch, session.KindSharedSend)
+	ev := mustReceive(t, obs.ch, session.KindSharedNotice)
+	if ev.Alias != "turing" {
+		t.Errorf("expected notice for turing, got %q", ev.Alias)
+	}
+	if ev.Text != "ada is working on something" {
+		t.Errorf("unexpected notice text: %q", ev.Text)
+	}
+
+	ada.mu.Lock()
+	if len(ada.sends) == 0 || ada.sends[len(ada.sends)-1] != "do the thing" {
+		t.Errorf("addressed agent did not receive instruction")
+	}
+	ada.mu.Unlock()
+
+	turing.mu.Lock()
+	if len(turing.sends) == 0 || turing.sends[len(turing.sends)-1] != "ada is working on something" {
+		t.Errorf("other agent did not receive context notice")
+	}
+	turing.mu.Unlock()
+}
+
+func TestSharedSend_notFound(t *testing.T) {
+	s := session.New()
+	if err := s.Execute(session.SharedSendCommand{Alias: "nobody", TextDirect: "hi", TextListeners: "hi"}); err == nil {
+		t.Fatal("expected error for unknown alias, got nil")
+	}
+}
+
+func TestPrivateSend_forwardsToAgentOnly(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	ada := newMockAgent()
+	turing := newMockAgent()
+	t.Cleanup(func() {
+		_ = s.Execute(session.StopCommand{Alias: "ada"})
+		_ = s.Execute(session.StopCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada", ada)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing", turing)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "secret"}); err != nil {
+		t.Fatalf("PrivateSendCommand: %v", err)
+	}
+
+	ada.mu.Lock()
+	if len(ada.sends) == 0 || ada.sends[len(ada.sends)-1] != "secret" {
+		t.Errorf("addressed agent did not receive message")
+	}
+	ada.mu.Unlock()
+
+	turing.mu.Lock()
+	if len(turing.sends) != 0 {
+		t.Errorf("other agent should not receive private message")
+	}
+	turing.mu.Unlock()
+
+	// no shared room event emitted
+	select {
+	case ev := <-obs.ch:
+		t.Errorf("expected no shared room event, got %q", ev.Kind)
+	default:
+	}
+}
+
+func TestPrivateSend_notFound(t *testing.T) {
+	s := session.New()
+	if err := s.Execute(session.PrivateSendCommand{Alias: "nobody", Text: "hi"}); err == nil {
+		t.Fatal("expected error for unknown alias, got nil")
+	}
+}
+
+func TestReaderLoop_emitsDelta(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a := newMockAgent(agent.Event{Delta: "hello"})
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	ev := mustReceive(t, obs.ch, session.KindDelta)
+	if ev.Text != "hello" {
+		t.Errorf("expected delta %q, got %q", "hello", ev.Text)
+	}
+}
+
+func TestReaderLoop_emitsDone(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a := newMockAgent(agent.Event{Done: true})
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive(t, obs.ch, session.KindDone)
+}
+
+func TestMultipleObservers_bothNotified(t *testing.T) {
+	obs1 := newTestObserver()
+	obs2 := newTestObserver()
+	s := session.New(session.WithObserver(obs1), session.WithObserver(obs2))
+	a := newMockAgent()
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs1.ch, session.KindAgentStarted)
+	mustReceive(t, obs2.ch, session.KindAgentStarted)
+}
+
+func TestReaderLoop_agentCrash_emitsCrashed(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a := newMockAgent() // no events; Stop() will close channel
+	_ = a.Stop()        // close immediately — simulates crash
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive(t, obs.ch, session.KindAgentCrashed)
+}
