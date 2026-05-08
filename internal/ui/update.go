@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/trigosec/coderoom/internal/agent/codex"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 )
@@ -204,7 +203,7 @@ func (m Model) inviteAgent(alias string) (Model, tea.Cmd) {
 	color, nextPalette := m.palette.Next()
 	err := m.sess.Execute(session.InviteCommand{
 		Alias:      alias,
-		Agent:      codex.New(m.cwd),
+		Agent:      m.agentFactory(alias, m.cwd),
 		Role:       participant.RoleBuilder,
 		Initiative: participant.InitiativeManual,
 		Color:      color,

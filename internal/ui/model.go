@@ -6,8 +6,18 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/session"
 )
+
+// Option configures a Model at construction time.
+type Option func(*Model)
+
+// WithAgentFactory sets the factory used to construct agents when a participant
+// is invited. The factory receives the agent alias and working directory.
+func WithAgentFactory(f func(alias, cwd string) agent.Agent) Option {
+	return func(m *Model) { m.agentFactory = f }
+}
 
 // sessionEventMsg wraps a session.Event as a Bubble Tea message.
 type sessionEventMsg session.Event
@@ -43,13 +53,14 @@ type Model struct {
 	renderedRecords []string        // rendered form of each record; rebuilt on resize
 	streaming       map[string]int  // alias → index in records (agents mid-turn)
 	departed        map[string]bool // aliases that have left; kept for grey repaint on resize
+	agentFactory    func(alias, cwd string) agent.Agent
 	palette         colorPalette
 	cwd             string
 	ready           bool // true after first WindowSizeMsg
 }
 
 // New creates a Model with its own session and event queue.
-func New(cwd string) Model {
+func New(cwd string, opts ...Option) Model {
 	q := newEventQueue()
 	sess := session.New(session.WithObserver(channelObserver{queue: q}))
 
@@ -57,7 +68,7 @@ func New(cwd string) Model {
 	ti.Prompt = "> "
 	ti.Focus()
 
-	return Model{
+	m := Model{
 		sess:            sess,
 		queue:           q,
 		input:           ti,
@@ -67,4 +78,8 @@ func New(cwd string) Model {
 		departed:        make(map[string]bool),
 		cwd:             cwd,
 	}
+	for _, o := range opts {
+		o(&m)
+	}
+	return m
 }
