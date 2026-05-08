@@ -76,6 +76,21 @@ func TestHandleEvent_agentCrashed(t *testing.T) {
 	}
 }
 
+func TestHandleEvent_agentLog(t *testing.T) {
+	m := makeReadyModel(t)
+	m = pushEvent(m, session.Event{Kind: session.KindAgentLog, Alias: "ada", Text: "npm warn something"})
+	found := false
+	for _, line := range m.lines {
+		if strings.Contains(line, "▸") && strings.Contains(line, "npm warn something") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected log line with ▸ and text in lines: %v", m.lines)
+	}
+}
+
 func TestHandleEvent_lineRendering(t *testing.T) {
 	tests := []struct {
 		name  string

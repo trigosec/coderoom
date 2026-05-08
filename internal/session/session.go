@@ -137,6 +137,9 @@ func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 			s.notify(Event{Kind: kind, Alias: alias})
 			return
 		}
+		if ev.Log != "" {
+			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: ev.Log})
+		}
 		if ev.Delta != "" {
 			s.notify(Event{Kind: KindDelta, Alias: alias, Text: ev.Delta})
 		}

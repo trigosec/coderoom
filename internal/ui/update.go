@@ -6,11 +6,14 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent/codex"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 )
+
+var logStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 // chromeHeight is the number of terminal rows occupied outside the viewport:
 // one separator row and one input row. Adjust here if toolbox rows are added.
@@ -97,6 +100,8 @@ func (m Model) handleEvent(e session.Event) Model {
 		return m.appendLine("[-> " + e.Alias + "] " + e.Text)
 	case session.KindSharedNotice:
 		return m.appendLine("[notice -> " + e.Alias + "]")
+	case session.KindAgentLog:
+		return m.appendLine(logStyle.Render("▸ " + e.Text))
 	case session.KindDelta:
 		return m.handleDelta(e.Alias, e.Text)
 	case session.KindDone:

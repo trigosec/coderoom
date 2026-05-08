@@ -306,6 +306,24 @@ func TestMultipleObservers_bothNotified(t *testing.T) {
 	mustReceive(t, obs2.ch, session.KindAgentStarted)
 }
 
+func TestReaderLoop_emitsAgentLog(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a := newMockAgent(agent.Event{Log: "npm warn something"})
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	ev := mustReceive(t, obs.ch, session.KindAgentLog)
+	if ev.Text != "npm warn something" {
+		t.Errorf("expected log text %q, got %q", "npm warn something", ev.Text)
+	}
+	if ev.Alias != "ada" {
+		t.Errorf("expected alias %q, got %q", "ada", ev.Alias)
+	}
+}
+
 func TestReaderLoop_agentCrash_emitsCrashed(t *testing.T) {
 	obs := newTestObserver()
 	s := session.New(session.WithObserver(obs))

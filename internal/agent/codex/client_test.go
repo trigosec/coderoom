@@ -13,9 +13,18 @@ type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
 
-// newWithIO constructs a Client with pre-wired I/O; used in tests.
+// newWithIO constructs a Client with pre-wired I/O and starts the readStdout
+// goroutine, mirroring what Start() does after the handshake. Used in tests.
 func newWithIO(stdin io.WriteCloser, stdout io.Reader) *Client {
-	return &Client{stdin: stdin, reader: bufio.NewReader(stdout), obs: noopObserver{}}
+	c := &Client{
+		stdin:        stdin,
+		reader:       bufio.NewReader(stdout),
+		obs:          noopObserver{},
+		stdoutEvents: make(chan readResult),
+		stderrLines:  make(chan string),
+	}
+	go c.readStdout()
+	return c
 }
 
 func TestCodexArgs_default(t *testing.T) {
