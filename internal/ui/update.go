@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent/codex"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
@@ -57,14 +58,16 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 	h := msg.Height - chromeHeight
 	if !m.ready {
 		m.viewport = viewport.New(msg.Width, h)
-		m.viewport.SetContent(strings.Join(m.lines, "\n"))
 		m.ready = true
 	} else {
 		m.viewport.Width = msg.Width
 		m.viewport.Height = h
 	}
 	m.input.Width = msg.Width
-	return m
+	for i, line := range m.lines {
+		m.wrappedLines[i] = wrapLine(line, m.viewport.Width, m.linePrefixes[i])
+	}
+	return m.syncViewport()
 }
 
 func (m Model) handleEnter() (Model, tea.Cmd) {
@@ -105,11 +108,19 @@ func (m Model) handleEvent(e session.Event) Model {
 func (m Model) handleDelta(alias, text string) Model {
 	if idx, ok := m.streaming[alias]; ok {
 		m.lines[idx] += text
+		m.wrappedLines[idx] = wrapLine(m.lines[idx], m.viewport.Width, m.linePrefixes[idx])
 	} else {
-		m.streaming[alias] = len(m.lines)
-		m.lines = append(m.lines, alias+"> "+text)
+		prefix := alias + "> "
+		idx = len(m.lines)
+		m.streaming[alias] = idx
+		line := prefix + text
+		m.lines = append(m.lines, line)
+		m.linePrefixes = append(m.linePrefixes, prefix)
+		m.wrappedLines = append(m.wrappedLines, wrapLine(line, m.viewport.Width, prefix))
 	}
-	return m.syncViewport()
+	m = m.syncViewport()
+	m.viewport.GotoBottom()
+	return m
 }
 
 func (m Model) endStream(alias string) Model {
@@ -185,7 +196,7 @@ func (m Model) showWho() Model {
 }
 
 func (m Model) showHelp() Model {
-	m.lines = append(m.lines,
+	helpLines := []string{
 		"[help]",
 		"  /invite <alias>   start an agent",
 		"  /stop <alias>     stop an agent",
@@ -194,22 +205,56 @@ func (m Model) showHelp() Model {
 		"  @<alias> <text>   send to one agent",
 		"  <text>            broadcast to all agents",
 		"  /quit             exit",
-	)
-	return m.syncViewport()
+	}
+	for _, line := range helpLines {
+		m.lines = append(m.lines, line)
+		m.linePrefixes = append(m.linePrefixes, "")
+		m.wrappedLines = append(m.wrappedLines, wrapLine(line, m.viewport.Width, ""))
+	}
+	m = m.syncViewport()
+	m.viewport.GotoBottom()
+	return m
 }
 
 func (m Model) appendLine(line string) Model {
 	m.lines = append(m.lines, line)
-	return m.syncViewport()
+	m.linePrefixes = append(m.linePrefixes, "")
+	m.wrappedLines = append(m.wrappedLines, wrapLine(line, m.viewport.Width, ""))
+	m = m.syncViewport()
+	m.viewport.GotoBottom()
+	return m
 }
 
 func (m Model) syncViewport() Model {
 	if !m.ready {
 		return m
 	}
-	m.viewport.SetContent(strings.Join(m.lines, "\n"))
-	m.viewport.GotoBottom()
+	m.viewport.SetContent(strings.Join(m.wrappedLines, "\n"))
 	return m
+}
+
+// wrapLine wraps line to width. If prefix is non-empty, continuation lines are
+// indented to align with the first content column after the prefix.
+// Requires that line starts with prefix when prefix is non-empty.
+func wrapLine(line string, width int, prefix string) string {
+	if width <= 0 {
+		return line
+	}
+	if prefix == "" {
+		return ansi.Wrap(line, width, "")
+	}
+	if !strings.HasPrefix(line, prefix) {
+		return ansi.Wrap(line, width, "")
+	}
+	displayWidth := ansi.StringWidth(prefix)
+	indent := strings.Repeat(" ", displayWidth)
+	contentWidth := max(width-displayWidth, 1)
+	wrapped := ansi.Wrap(line[len(prefix):], contentWidth, "")
+	parts := strings.Split(wrapped, "\n")
+	for i := 1; i < len(parts); i++ {
+		parts[i] = indent + parts[i]
+	}
+	return prefix + strings.Join(parts, "\n")
 }
 
 func (m Model) removeAlias(alias string) Model {
