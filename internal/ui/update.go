@@ -182,6 +182,9 @@ func (m Model) sendToAgent(alias, text string) (Model, tea.Cmd) {
 }
 
 func (m Model) broadcastAll(text string) (Model, tea.Cmd) {
+	if len(m.agents) == 0 {
+		return m.appendLine("[no agents — use /invite <alias> to start one]"), nil
+	}
 	if err := m.sess.Execute(session.BroadcastCommand{Text: text}); err != nil {
 		return m.appendLine(fmt.Sprintf("error: broadcast: %v", err)), nil
 	}

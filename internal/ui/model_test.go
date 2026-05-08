@@ -159,6 +159,23 @@ func TestHandleEvent_agentStoppedClearsStreaming(t *testing.T) {
 	}
 }
 
+// --- broadcastAll guard ---
+
+func TestBroadcastAll_noAgentsShowsHint(t *testing.T) {
+	m := makeReadyModel(t)
+	m, _ = m.broadcastAll("hello")
+	found := false
+	for _, line := range m.lines {
+		if strings.Contains(line, "no agents") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected no-agents hint in lines: %v", m.lines)
+	}
+}
+
 // --- showWho / showHelp ---
 
 func TestShowWho_noAgents(t *testing.T) {

@@ -104,7 +104,7 @@ No fixed-size buffers. No dropped events. If the UI falls behind, the internal s
 
 Streaming state: when a `KindDelta` arrives for an alias not currently streaming, a new line starting with `alias> ` is appended to `lines` and marked as in-progress. Subsequent deltas for the same alias append to the last element of `lines` in place. `KindDone` closes the line and clears the streaming flag.
 
-The viewport must be configured with soft-wrap enabled (`viewport.Model.SetWrapping(true)` or equivalent) so that lines longer than the terminal width wrap rather than truncate. Without this, long agent responses and log lines are silently cut off.
+Long lines are wrapped before being passed to the viewport. `syncViewport` applies `wrapLine` to each entry in `lines` before joining and calling `SetContent`. `wrapLine` uses `charmbracelet/x/ansi.Wrap` (already an indirect dependency) so wrapping is ANSI-aware. Streaming lines (`alias> …`) use a hanging indent computed from `ansi.StringWidth(prefix)` so continuation text aligns with the first content column. The wrapped output is cached in `wrappedLines` (parallel to `lines`) so only the changed line is re-wrapped on each delta; all lines are re-wrapped on resize.
 
 ---
 
