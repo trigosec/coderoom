@@ -15,6 +15,7 @@ This document covers two packages designed together:
 type Event struct {
     Delta string // text fragment; empty on non-delta events
     Done  bool   // true on the final event of a turn
+    Log   string // diagnostic line from the agent process (e.g. captured from stderr); empty on other events
 }
 
 type Agent interface {
@@ -35,9 +36,9 @@ Errors — both IO errors and turn failures — are returned as the `error` retu
 func SendAndWait(a Agent, prompt string) (string, error)
 ```
 
-It calls `Send` then loops `Read` until `Event.Done` is true, accumulating `Event.Delta` values. Because `Read()` returns a semantic type, `SendAndWait` requires no backend knowledge.
+It calls `Send` then loops `Read` until `Event.Done` is true, accumulating `Event.Delta` values. `Event.Log` lines are silently discarded — `SendAndWait` returns only the agent's text output, not diagnostic noise. Because `Read()` returns a semantic type, `SendAndWait` requires no backend knowledge.
 
-`Send` + `Read` are the low-level primitives for callers that need to process output as it streams.
+`Send` + `Read` are the low-level primitives for callers that need to process output as it streams, including `Event.Log` lines.
 
 ---
 
@@ -51,7 +52,7 @@ It is **not** responsible for sequencing turns across multiple agents, routing m
 
 ### API model
 
-The API follows the same model as the `http` package: calls are blocking. If the caller needs concurrency, it adds a goroutine at the call site. The package introduces no goroutines during steady-state operation. The one exception is `Stop()`, which spawns a short-lived goroutine to race the graceful exit against a timeout.
+The API follows the same model as the `http` package: calls are blocking. If the caller needs concurrency, it adds a goroutine at the call site. The package owns two persistent goroutines after `Start()` returns: a stderr reader that captures diagnostic lines and queues them for `Read()`, and a short-lived one in `Stop()` that races graceful exit against a timeout. No other goroutines are introduced during steady-state operation.
 
 | Method | Behaviour |
 |---|---|
@@ -62,15 +63,18 @@ The API follows the same model as the `http` package: calls are blocking. If the
 
 `Send` is a pure write. It does not read stdout.
 
-`Read()` blocks until it can return a meaningful event. Unknown or unrecognised notifications are discarded; the observer records them.
+`Read()` blocks until it can return a meaningful event — either a stdout-derived notification (`Delta`, `Done`) or a queued stderr line (`Log`). At most one field is non-zero per returned event. Unknown or unrecognised notifications are discarded; the observer records them.
 
 The Codex-specific mapping is:
 
-| Codex notification | Event |
+| Source | Event |
 |---|---|
-| `item/agentMessage/delta` | `{Delta: "..."}` |
-| `turn/completed` | `{Done: true}` |
-| `turn/failed` | error returned from `Read()` |
+| `item/agentMessage/delta` notification | `{Delta: "..."}` |
+| `turn/completed` notification | `{Done: true}` |
+| `turn/failed` notification | error returned from `Read()` |
+| stderr line from the process | `{Log: "..."}` |
+
+Stderr is captured via a dedicated pipe and read by a background goroutine started in `Start()`. Lines are queued internally and surfaced through `Read()` alongside stdout-derived events. This keeps the `Read()` interface as the single point of consumption for all agent output.
 
 ### Protocol observer
 

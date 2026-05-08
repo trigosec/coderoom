@@ -95,6 +95,7 @@ No fixed-size buffers. No dropped events. If the UI falls behind, the internal s
 | `KindAgentStarted` | `[ada joined]` |
 | `KindAgentStopped` | `[ada left]` |
 | `KindAgentCrashed` | `[ada crashed]` |
+| `KindAgentLog`     | `▸ <line>` in grey (lipgloss); de-emphasised diagnostic output; does not participate in streaming state; appended as a standalone line like any other event |
 | `KindBroadcast` | `[all] <text>` |
 | `KindSharedSend` | `[→ ada] <text>` |
 | `KindSharedNotice` | `[notice → ada]` |
@@ -102,6 +103,8 @@ No fixed-size buffers. No dropped events. If the UI falls behind, the internal s
 | `KindDone` | closes the current streaming line |
 
 Streaming state: when a `KindDelta` arrives for an alias not currently streaming, a new line starting with `alias> ` is appended to `lines` and marked as in-progress. Subsequent deltas for the same alias append to the last element of `lines` in place. `KindDone` closes the line and clears the streaming flag.
+
+The viewport must be configured with soft-wrap enabled (`viewport.Model.SetWrapping(true)` or equivalent) so that lines longer than the terminal width wrap rather than truncate. Without this, long agent responses and log lines are silently cut off.
 
 ---
 

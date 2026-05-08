@@ -96,6 +96,7 @@ const (
     KindAgentStarted Kind = "agent.started"
     KindAgentStopped Kind = "agent.stopped"
     KindAgentCrashed Kind = "agent.crashed"
+    KindAgentLog     Kind = "agent.log"         // diagnostic line from the agent (e.g. stderr); always forwarded, rendering is the observer's choice
     KindBroadcast    Kind = "message.broadcast" // message to all agents
     KindSharedSend   Kind = "message.shared"   // instruction to one agent, visible to all
     KindSharedNotice Kind = "message.notice"   // context notice forwarded to a listener
