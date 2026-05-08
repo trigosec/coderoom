@@ -112,6 +112,30 @@ func TestInvite_emitsAgentStarted(t *testing.T) {
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 }
 
+func TestInvite_colorStoredOnParticipant(t *testing.T) {
+	s := session.New()
+	a := newMockAgent()
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	err := s.Execute(session.InviteCommand{
+		Alias:      "ada",
+		Agent:      a,
+		Role:       participant.RoleBuilder,
+		Initiative: participant.InitiativeManual,
+		Color:      "#4ade80",
+	})
+	if err != nil {
+		t.Fatalf("InviteCommand: %v", err)
+	}
+	p, ok := s.Participant("ada")
+	if !ok {
+		t.Fatal("participant not found after invite")
+	}
+	if p.Color != "#4ade80" {
+		t.Errorf("expected color %q on participant, got %q", "#4ade80", p.Color)
+	}
+}
+
 func TestInvite_duplicateAlias(t *testing.T) {
 	s := session.New()
 	a1 := newMockAgent()

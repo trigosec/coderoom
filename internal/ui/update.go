@@ -2,24 +2,20 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent/codex"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 )
 
-var logStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-
 const (
 	// marginH is the number of columns reserved on each horizontal side. Only a
 	// left prefix is applied in View(); the right margin is implicit because
 	// viewport, separator, and input are all sized to inner = width-2*marginH.
-	// If stale characters appear on the right, pad each rendered line to msg.Width.
 	marginH = 2
 	// marginV is the number of empty rows below the input.
 	marginV = 1
@@ -78,8 +74,9 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 		m.viewport.Height = h
 	}
 	m.input.Width = inner
-	for i, line := range m.lines {
-		m.wrappedLines[i] = wrapLine(line, m.viewport.Width, m.linePrefixes[i])
+	colorFor := m.colorFor()
+	for i, r := range m.records {
+		m.renderedRecords[i] = renderRecord(r, m.viewport.Width, colorFor)
 	}
 	return m.syncViewport()
 }
@@ -91,59 +88,94 @@ func (m Model) handleEnter() (Model, tea.Cmd) {
 		return m, nil
 	}
 	action, err := Parse(raw)
+	var routing []string
+	if err == nil {
+		routing = routingFor(action, m.sess.Participants())
+	}
+	m = m.appendRecord(record{kind: recordKindUserInput, body: raw, routing: routing})
 	if err != nil {
-		return m.appendLine("error: " + err.Error()), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: "error: " + err.Error()}), nil
 	}
 	return m.executeAction(action)
+}
+
+// routingFor returns the aliases that will receive the action, used to
+// populate the routing footer on the user input record. Aliases are sorted
+// for a stable display order.
+func routingFor(a Action, ps []participant.Participant) []string {
+	if _, ok := a.(Broadcast); ok {
+		aliases := make([]string, len(ps))
+		for i, p := range ps {
+			aliases[i] = p.Alias
+		}
+		slices.Sort(aliases)
+		return aliases
+	}
+	if s, ok := a.(Send); ok {
+		return []string{s.Alias}
+	}
+	return nil
+}
+
+// colorFor returns a lookup function that resolves an alias to its assigned
+// colour. Active agents are looked up in the session registry. Departed agents
+// return ColorDeparted (a muted grey) so their historical records dim instead
+// of losing colour entirely on resize.
+func (m Model) colorFor() func(string) string {
+	return func(alias string) string {
+		if p, ok := m.sess.Participant(alias); ok {
+			return p.Color
+		}
+		if m.departed[alias] {
+			return ColorDeparted
+		}
+		return ""
+	}
 }
 
 func (m Model) handleEvent(e session.Event) Model {
 	switch e.Kind {
 	case session.KindAgentStarted:
-		m.agents = append(m.agents, e.Alias)
-		return m.appendLine("[" + e.Alias + " joined]")
+		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " joined]"})
 	case session.KindAgentStopped:
-		m = m.removeAlias(e.Alias)
-		return m.appendLine("[" + e.Alias + " left]")
+		delete(m.streaming, e.Alias)
+		m = m.markDeparted(e.Alias)
+		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " left]"})
 	case session.KindAgentCrashed:
-		m = m.removeAlias(e.Alias)
-		return m.appendLine("[" + e.Alias + " crashed]")
+		delete(m.streaming, e.Alias)
+		m = m.markDeparted(e.Alias)
+		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " crashed]"})
 	case session.KindBroadcast:
-		return m.appendLine("[all] " + e.Text)
+		return m.appendRecord(record{kind: recordKindSystem, body: "[all] " + e.Text})
 	case session.KindSharedSend:
-		return m.appendLine("[-> " + e.Alias + "] " + e.Text)
+		return m.appendRecord(record{kind: recordKindSystem, body: "[→ " + e.Alias + "] " + e.Text})
 	case session.KindSharedNotice:
-		return m.appendLine("[notice -> " + e.Alias + "]")
+		return m.appendRecord(record{kind: recordKindSystem, body: "[notice → " + e.Alias + "]"})
 	case session.KindAgentLog:
-		return m.appendLine(logStyle.Render("▸ " + e.Text))
+		return m.appendRecord(record{kind: recordKindLog, alias: e.Alias, body: e.Text})
 	case session.KindDelta:
 		return m.handleDelta(e.Alias, e.Text)
 	case session.KindDone:
-		return m.endStream(e.Alias)
+		delete(m.streaming, e.Alias)
+		return m
 	}
 	return m
 }
 
 func (m Model) handleDelta(alias, text string) Model {
+	colorFor := m.colorFor()
 	if idx, ok := m.streaming[alias]; ok {
-		m.lines[idx] += text
-		m.wrappedLines[idx] = wrapLine(m.lines[idx], m.viewport.Width, m.linePrefixes[idx])
+		m.records[idx].body += text
+		m.renderedRecords[idx] = renderRecord(m.records[idx], m.viewport.Width, colorFor)
 	} else {
-		prefix := alias + "> "
-		idx = len(m.lines)
+		idx = len(m.records)
 		m.streaming[alias] = idx
-		line := prefix + text
-		m.lines = append(m.lines, line)
-		m.linePrefixes = append(m.linePrefixes, prefix)
-		m.wrappedLines = append(m.wrappedLines, wrapLine(line, m.viewport.Width, prefix))
+		r := record{kind: recordKindAgentOutput, alias: alias, body: text}
+		m.records = append(m.records, r)
+		m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, colorFor))
 	}
 	m = m.syncViewport()
 	m.viewport.GotoBottom()
-	return m
-}
-
-func (m Model) endStream(alias string) Model {
-	delete(m.streaming, alias)
 	return m
 }
 
@@ -169,21 +201,24 @@ func (m Model) executeAction(a Action) (Model, tea.Cmd) {
 }
 
 func (m Model) inviteAgent(alias string) (Model, tea.Cmd) {
+	color, nextPalette := m.palette.Next()
 	err := m.sess.Execute(session.InviteCommand{
 		Alias:      alias,
 		Agent:      codex.New(m.cwd),
 		Role:       participant.RoleBuilder,
 		Initiative: participant.InitiativeManual,
+		Color:      color,
 	})
 	if err != nil {
-		return m.appendLine(fmt.Sprintf("error: invite %q: %v", alias, err)), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: invite %q: %v", alias, err)}), nil
 	}
+	m.palette = nextPalette
 	return m, nil
 }
 
 func (m Model) stopAgent(alias string) (Model, tea.Cmd) {
 	if err := m.sess.Execute(session.StopCommand{Alias: alias}); err != nil {
-		return m.appendLine(fmt.Sprintf("error: stop %q: %v", alias, err)), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: stop %q: %v", alias, err)}), nil
 	}
 	return m, nil
 }
@@ -195,53 +230,63 @@ func (m Model) sendToAgent(alias, text string) (Model, tea.Cmd) {
 		TextListeners: fmt.Sprintf("@%s: %s", alias, text),
 	})
 	if err != nil {
-		return m.appendLine(fmt.Sprintf("error: send to %q: %v", alias, err)), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: send to %q: %v", alias, err)}), nil
 	}
 	return m, nil
 }
 
 func (m Model) broadcastAll(text string) (Model, tea.Cmd) {
-	if len(m.agents) == 0 {
-		return m.appendLine("[no agents — use /invite <alias> to start one]"), nil
+	if len(m.sess.Participants()) == 0 {
+		return m.appendRecord(record{kind: recordKindSystem, body: "[no agents — use /invite <alias> to start one]"}), nil
 	}
 	if err := m.sess.Execute(session.BroadcastCommand{Text: text}); err != nil {
-		return m.appendLine(fmt.Sprintf("error: broadcast: %v", err)), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: broadcast: %v", err)}), nil
 	}
 	return m, nil
 }
 
 func (m Model) showWho() Model {
-	if len(m.agents) == 0 {
-		return m.appendLine("[no agents]")
+	ps := m.sess.Participants()
+	if len(ps) == 0 {
+		return m.appendRecord(record{kind: recordKindSystem, body: "[no agents]"})
 	}
-	return m.appendLine("[agents] " + strings.Join(m.agents, ", "))
+	aliases := make([]string, len(ps))
+	for i, p := range ps {
+		aliases[i] = p.Alias
+	}
+	slices.Sort(aliases)
+	return m.appendRecord(record{kind: recordKindSystem, body: "[agents] " + strings.Join(aliases, ", ")})
 }
 
 func (m Model) showHelp() Model {
-	helpLines := []string{
-		"[help]",
-		"  /invite <alias>   start an agent",
-		"  /stop <alias>     stop an agent",
-		"  /who              list active agents",
-		"  /help             show this message",
-		"  @<alias> <text>   send to one agent",
-		"  <text>            broadcast to all agents",
-		"  /quit             exit",
+	body := "[help]\n" +
+		"  /invite <alias>   start an agent\n" +
+		"  /stop <alias>     stop an agent\n" +
+		"  /who              list active agents\n" +
+		"  /help             show this message\n" +
+		"  @<alias> <text>   send to one agent\n" +
+		"  <text>            broadcast to all agents\n" +
+		"  /quit             exit"
+	return m.appendRecord(record{kind: recordKindSystem, body: body})
+}
+
+// markDeparted records alias as departed and re-renders every record that
+// references it, so that historical output dims to grey immediately (and
+// stays grey on subsequent resizes).
+func (m Model) markDeparted(alias string) Model {
+	m.departed[alias] = true
+	colorFor := m.colorFor()
+	for i, r := range m.records {
+		if r.alias == alias || slices.Contains(r.routing, alias) {
+			m.renderedRecords[i] = renderRecord(r, m.viewport.Width, colorFor)
+		}
 	}
-	for _, line := range helpLines {
-		m.lines = append(m.lines, line)
-		m.linePrefixes = append(m.linePrefixes, "")
-		m.wrappedLines = append(m.wrappedLines, wrapLine(line, m.viewport.Width, ""))
-	}
-	m = m.syncViewport()
-	m.viewport.GotoBottom()
 	return m
 }
 
-func (m Model) appendLine(line string) Model {
-	m.lines = append(m.lines, line)
-	m.linePrefixes = append(m.linePrefixes, "")
-	m.wrappedLines = append(m.wrappedLines, wrapLine(line, m.viewport.Width, ""))
+func (m Model) appendRecord(r record) Model {
+	m.records = append(m.records, r)
+	m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.colorFor()))
 	m = m.syncViewport()
 	m.viewport.GotoBottom()
 	return m
@@ -251,42 +296,6 @@ func (m Model) syncViewport() Model {
 	if !m.ready {
 		return m
 	}
-	m.viewport.SetContent(strings.Join(m.wrappedLines, "\n"))
-	return m
-}
-
-// wrapLine wraps line to width. If prefix is non-empty, continuation lines are
-// indented to align with the first content column after the prefix.
-// Requires that line starts with prefix when prefix is non-empty.
-func wrapLine(line string, width int, prefix string) string {
-	if width <= 0 {
-		return line
-	}
-	if prefix == "" {
-		return ansi.Wrap(line, width, "")
-	}
-	if !strings.HasPrefix(line, prefix) {
-		return ansi.Wrap(line, width, "")
-	}
-	displayWidth := ansi.StringWidth(prefix)
-	indent := strings.Repeat(" ", displayWidth)
-	contentWidth := max(width-displayWidth, 1)
-	wrapped := ansi.Wrap(line[len(prefix):], contentWidth, "")
-	parts := strings.Split(wrapped, "\n")
-	for i := 1; i < len(parts); i++ {
-		parts[i] = indent + parts[i]
-	}
-	return prefix + strings.Join(parts, "\n")
-}
-
-func (m Model) removeAlias(alias string) Model {
-	delete(m.streaming, alias)
-	updated := make([]string, 0, len(m.agents))
-	for _, a := range m.agents {
-		if a != alias {
-			updated = append(updated, a)
-		}
-	}
-	m.agents = updated
+	m.viewport.SetContent(strings.Join(m.renderedRecords, "\n\n"))
 	return m
 }

@@ -121,6 +121,25 @@ func (s *Session) participants() []*participant.Participant {
 	return s.registry.List()
 }
 
+// Participant returns a snapshot of the active participant with the given alias.
+func (s *Session) Participant(alias string) (participant.Participant, bool) {
+	p, ok := s.lookupParticipant(alias)
+	if !ok {
+		return participant.Participant{}, false
+	}
+	return *p, true
+}
+
+// Participants returns a snapshot of all currently active participants.
+func (s *Session) Participants() []participant.Participant {
+	ps := s.participants()
+	out := make([]participant.Participant, len(ps))
+	for i, p := range ps {
+		out[i] = *p
+	}
+	return out
+}
+
 // readLoop runs in a goroutine per agent, forwarding agent.Event values to the
 // observers. When Read returns an error it emits KindAgentStopped (if the stop
 // channel was closed) or KindAgentCrashed, then exits.

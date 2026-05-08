@@ -35,17 +35,17 @@ func (o channelObserver) OnEvent(e session.Event) {
 
 // Model is the Bubble Tea application state for the coderoom TUI.
 type Model struct {
-	sess         *session.Session
-	queue        *eventQueue
-	viewport     viewport.Model
-	input        textinput.Model
-	lines        []string
-	wrappedLines []string       // wrapped version of lines, kept in sync; rebuilt on resize
-	linePrefixes []string       // streaming prefix per line (e.g. "ada> "); "" for non-streaming
-	streaming    map[string]int // alias → index in lines (agents mid-turn)
-	agents       []string       // active agent aliases for /who
-	cwd          string
-	ready        bool // true after first WindowSizeMsg
+	sess            *session.Session
+	queue           *eventQueue
+	viewport        viewport.Model
+	input           textinput.Model
+	records         []record
+	renderedRecords []string        // rendered form of each record; rebuilt on resize
+	streaming       map[string]int  // alias → index in records (agents mid-turn)
+	departed        map[string]bool // aliases that have left; kept for grey repaint on resize
+	palette         colorPalette
+	cwd             string
+	ready           bool // true after first WindowSizeMsg
 }
 
 // New creates a Model with its own session and event queue.
@@ -58,13 +58,13 @@ func New(cwd string) Model {
 	ti.Focus()
 
 	return Model{
-		sess:         sess,
-		queue:        q,
-		input:        ti,
-		lines:        []string{},
-		wrappedLines: []string{},
-		linePrefixes: []string{},
-		streaming:    make(map[string]int),
-		cwd:          cwd,
+		sess:            sess,
+		queue:           q,
+		input:           ti,
+		records:         []record{},
+		renderedRecords: []string{},
+		streaming:       make(map[string]int),
+		departed:        make(map[string]bool),
+		cwd:             cwd,
 	}
 }

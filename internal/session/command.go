@@ -21,6 +21,7 @@ type InviteCommand struct {
 	Agent      agent.Agent
 	Role       participant.Role
 	Initiative participant.Initiative
+	Color      string // display colour assigned by the caller; stored on the participant
 }
 
 func (c InviteCommand) execute(s *Session) error {
@@ -29,6 +30,7 @@ func (c InviteCommand) execute(s *Session) error {
 		Role:       c.Role,
 		Initiative: c.Initiative,
 		Status:     participant.StatusRunning,
+		Color:      c.Color,
 		Agent:      c.Agent,
 	}
 	if err := s.addParticipant(p); err != nil {

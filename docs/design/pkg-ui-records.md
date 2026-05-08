@@ -65,6 +65,8 @@ The header line is `● <alias>:` — the filled circle and alias text are both 
 
 Single line, dimmed. Used for lifecycle events (`joined`, `left`, `crashed`) and routing notices (`[notice → ada]`).
 
+**Exception**: `/help` output is a multi-line system record for readability. Splitting it into individual records would insert blank lines between each help line, making the output hard to scan.
+
 ### Log record
 
 ```
@@ -98,19 +100,24 @@ The `→` arrow is plain; only the alias text is coloured. The footer is part of
 
 ## Agent colour
 
-Each agent is assigned a colour from a fixed palette when it joins. The colour is stored in `participant.Participant.Color` (a terminal 256-colour code string, e.g. `"2"`) and used wherever the agent's alias appears (header bullet, routing footer).
+Each agent is assigned a colour from a fixed palette when it joins. The colour is stored in `participant.Participant.Color` (a hex colour string, e.g. `"#4ade80"`) and used wherever the agent's alias appears (header bullet, routing footer).
 
-**Palette** (terminal 256-colour, visually distinct):
+**Palette** (hex, spread across the hue wheel for contrast on dark backgrounds):
 
-| Slot | Colour | Code |
-|------|--------|------|
-| 0 | Green  | `"2"`   |
-| 1 | Blue   | `"4"`   |
-| 2 | Yellow | `"3"`   |
-| 3 | Cyan   | `"6"`   |
-| 4 | Magenta | `"5"`  |
+| Slot | Colour | Hex |
+|------|--------|-----|
+| 0 | Green  | `#4ade80` |
+| 1 | Blue   | `#60a5fa` |
+| 2 | Amber  | `#fbbf24` |
+| 3 | Pink   | `#f472b6` |
+| 4 | Purple | `#c084fc` |
+| 5 | Orange | `#fb923c` |
+| 6 | Cyan   | `#22d3ee` |
+| 7 | Lime   | `#a3e635` |
 
 Assignment is round-robin. Colour is released when the agent leaves but not reused within the same session, to avoid confusion between past and present participants.
+
+**Departed agents**: when an agent stops or crashes, all of its historical records (agent output headers, routing footer aliases) are immediately re-rendered in `ColorDeparted` (`#6b7280`, muted grey). This repaint persists across terminal resizes. The effect signals that the output belongs to a past participant without losing the authorship structure of the record.
 
 ---
 
