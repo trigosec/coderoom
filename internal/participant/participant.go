@@ -42,5 +42,6 @@ type Participant struct {
 	Role       Role
 	Initiative Initiative
 	Status     Status
+	Color      string // terminal 256-colour code, e.g. "2" for green; empty means default
 	Agent      agent.Agent
 }
