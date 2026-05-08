@@ -76,6 +76,9 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 func (m Model) handleEnter() (Model, tea.Cmd) {
 	raw := m.input.Value()
 	m.input.Reset()
+	if strings.TrimSpace(raw) == "" {
+		return m, nil
+	}
 	action, err := Parse(raw)
 	if err != nil {
 		return m.appendLine("error: " + err.Error()), nil
