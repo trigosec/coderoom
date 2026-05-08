@@ -7,6 +7,17 @@ func (m Model) View() string {
 	if !m.ready {
 		return ""
 	}
-	sep := strings.Repeat("─", m.viewport.Width)
-	return m.viewport.View() + "\n" + sep + "\n" + m.input.View()
+	left := strings.Repeat(" ", marginH)
+	sep := left + strings.Repeat("─", m.viewport.Width)
+
+	var sb strings.Builder
+	// SplitSeq on an empty string still yields one element, so an empty viewport
+	// produces one blank padded line before the separator — acceptable at startup.
+	for line := range strings.SplitSeq(strings.TrimSuffix(m.viewport.View(), "\n"), "\n") {
+		sb.WriteString(left + line + "\n")
+	}
+	sb.WriteString(sep + "\n")
+	sb.WriteString(left + m.input.View() + "\n")
+	sb.WriteString(strings.Repeat("\n", marginV))
+	return sb.String()
 }

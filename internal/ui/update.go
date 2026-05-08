@@ -15,9 +15,18 @@ import (
 
 var logStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
-// chromeHeight is the number of terminal rows occupied outside the viewport:
-// one separator row and one input row. Adjust here if toolbox rows are added.
-const chromeHeight = 2
+const (
+	// marginH is the number of columns reserved on each horizontal side. Only a
+	// left prefix is applied in View(); the right margin is implicit because
+	// viewport, separator, and input are all sized to inner = width-2*marginH.
+	// If stale characters appear on the right, pad each rendered line to msg.Width.
+	marginH = 2
+	// marginV is the number of empty rows below the input.
+	marginV = 1
+	// chromeHeight is the number of terminal rows occupied outside the viewport:
+	// separator + input + bottom margin. Adjust here if toolbox rows are added.
+	chromeHeight = 2 + marginV
+)
 
 // Init starts the session event listener; called once by Bubble Tea on startup.
 func (m Model) Init() tea.Cmd {
@@ -59,14 +68,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 	h := msg.Height - chromeHeight
+	inner := max(msg.Width-2*marginH, 1)
+	h = max(h, 1)
 	if !m.ready {
-		m.viewport = viewport.New(msg.Width, h)
+		m.viewport = viewport.New(inner, h)
 		m.ready = true
 	} else {
-		m.viewport.Width = msg.Width
+		m.viewport.Width = inner
 		m.viewport.Height = h
 	}
-	m.input.Width = msg.Width
+	m.input.Width = inner
 	for i, line := range m.lines {
 		m.wrappedLines[i] = wrapLine(line, m.viewport.Width, m.linePrefixes[i])
 	}
