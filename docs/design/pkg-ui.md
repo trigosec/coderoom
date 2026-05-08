@@ -36,12 +36,13 @@ The toolbox sits below the input to keep the output→input flow uninterrupted. 
 
 ```go
 type Model struct {
-    session   *session.Session
-    events    <-chan session.Event
+    sess      *session.Session
+    queue     *eventQueue
     viewport  viewport.Model
     input     textinput.Model
     lines     []string        // accumulated rendered lines
-    streaming map[string]bool // agents currently mid-turn
+    streaming map[string]int  // alias → index in lines for agents mid-turn
+    agents    []string        // active aliases for /who
     cwd       string
     ready     bool            // true after first WindowSizeMsg
 }
@@ -53,23 +54,37 @@ type Model struct {
 
 ## Observer → Bubble Tea bridge
 
-The session observer runs on agent reader goroutines. Bubble Tea's `Update` runs on its own goroutine. The bridge is a buffered channel and a long-running `tea.Cmd`:
+The session observer runs on agent reader goroutines. Bubble Tea's `Update` runs on its own goroutine. The bridge is an `eventQueue` — a named type that owns all concurrency for this boundary — and a long-running `tea.Cmd`:
 
 ```go
 // sessionEventMsg wraps a session.Event as a Bubble Tea message.
 type sessionEventMsg session.Event
 
-// awaitEvent returns a Cmd that blocks until the next session event arrives.
+// awaitEvent returns a Cmd that blocks until the next event is available.
+// It receives queue.out — the output channel of eventQueue.
 func awaitEvent(ch <-chan session.Event) tea.Cmd {
     return func() tea.Msg {
-        return sessionEventMsg(<-ch)
+        e, ok := <-ch
+        if !ok {
+            return nil
+        }
+        return sessionEventMsg(e)
     }
 }
+
+// Usage in Init and Update:
+//   return awaitEvent(m.queue)
 ```
 
-The observer writes to the channel non-blocking (same pattern as `testObserver` in session tests). `Init` returns `awaitEvent(ch)` to start the loop. Each time `Update` handles a `sessionEventMsg` it returns `awaitEvent(ch)` again to re-arm.
+`eventQueue` owns an unbuffered input channel, an unbounded internal buffer (a plain slice), an output channel, and a pump goroutine that bridges them. `Push` on the input side completes quickly because the pump is always ready to receive. The consumer reads from the output side without ever blocking the producer.
 
-The channel is created by the TUI and passed to `session.WithObserver` at construction, decoupling the session package from the Bubble Tea import.
+```
+session.Observer.OnEvent → eventQueue.Push → [pump goroutine / []Event] → out → awaitEvent → Bubble Tea
+```
+
+No fixed-size buffers. No dropped events. If the UI falls behind, the internal slice grows; backpressure propagates naturally through the pump rather than through silent data loss.
+
+`channelObserver` is a thin wrapper that implements `session.Observer` by delegating to `eventQueue.Push`. `Init` returns `awaitEvent(queue.out)` to start the loop. Each time `Update` handles a `sessionEventMsg` it returns `awaitEvent(queue.out)` again to re-arm.
 
 ---
 
