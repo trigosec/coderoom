@@ -15,11 +15,14 @@ func (nopWriteCloser) Close() error { return nil }
 
 // newWithIO constructs a Client with pre-wired I/O and starts the readStdout
 // goroutine, mirroring what Start() does after the handshake. Used in tests.
-func newWithIO(stdin io.WriteCloser, stdout io.Reader) *Client {
+func newWithIO(stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Client {
+	if obs == nil {
+		obs = noopObserver{}
+	}
 	c := &Client{
 		stdin:        stdin,
 		reader:       bufio.NewReader(stdout),
-		obs:          noopObserver{},
+		obs:          obs,
 		stdoutEvents: make(chan readResult),
 		stderrLines:  make(chan string),
 	}
@@ -45,7 +48,7 @@ func TestCodexArgs_override(t *testing.T) {
 
 func TestRead_turnCompleted(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/completed\",\"params\":{}}\n")
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout)
+	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
 
 	ev, err := c.Read()
 	if err != nil {
@@ -58,7 +61,7 @@ func TestRead_turnCompleted(t *testing.T) {
 
 func TestRead_delta(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":\"hello\"}}\n")
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout)
+	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
 
 	ev, err := c.Read()
 	if err != nil {
@@ -71,7 +74,7 @@ func TestRead_delta(t *testing.T) {
 
 func TestRead_turnFailed(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/failed\",\"params\":{}}\n")
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout)
+	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
 
 	_, err := c.Read()
 	if err == nil {
@@ -85,7 +88,7 @@ func TestRead_skipsResponseLines(t *testing.T) {
 		"{\"id\":1,\"result\":{}}\n" +
 			"{\"method\":\"turn/completed\",\"params\":{}}\n",
 	)
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout)
+	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
 
 	ev, err := c.Read()
 	if err != nil {
@@ -102,7 +105,7 @@ func TestRead_skipsUnknownNotifications(t *testing.T) {
 		"{\"method\":\"turn/started\",\"params\":{}}\n" +
 			"{\"method\":\"turn/completed\",\"params\":{}}\n",
 	)
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout)
+	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
 
 	ev, err := c.Read()
 	if err != nil {
@@ -114,7 +117,7 @@ func TestRead_skipsUnknownNotifications(t *testing.T) {
 }
 
 func TestRead_returnsErrorOnEOF(t *testing.T) {
-	c := newWithIO(nopWriteCloser{io.Discard}, bytes.NewBuffer(nil))
+	c := newWithIO(nopWriteCloser{io.Discard}, bytes.NewBuffer(nil), nil)
 
 	_, err := c.Read()
 	if err == nil {
@@ -124,19 +127,20 @@ func TestRead_returnsErrorOnEOF(t *testing.T) {
 
 func TestRead_observerReceivesCalled(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/completed\",\"params\":{}}\n")
-	var received []string
-	obs := &testObserver{onReceive: func(msg string) { received = append(received, msg) }}
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout)
-	c.obs = obs
+	received := make(chan string, 1)
+	obs := &testObserver{onReceive: func(msg string) { received <- msg }}
+	c := newWithIO(nopWriteCloser{io.Discard}, stdout, obs)
 
 	if _, err := c.Read(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(received) != 1 {
-		t.Fatalf("expected 1 OnReceive call, got %d", len(received))
-	}
-	if !strings.Contains(received[0], "turn/completed") {
-		t.Errorf("observer got unexpected msg: %q", received[0])
+	select {
+	case msg := <-received:
+		if !strings.Contains(msg, "turn/completed") {
+			t.Errorf("observer got unexpected msg: %q", msg)
+		}
+	default:
+		t.Fatal("expected 1 OnReceive call, got 0")
 	}
 }
 
@@ -144,8 +148,7 @@ func TestWriteRequest_observerSendCalled(t *testing.T) {
 	var buf bytes.Buffer
 	var sent []string
 	obs := &testObserver{onSend: func(msg string) { sent = append(sent, msg) }}
-	c := newWithIO(nopWriteCloser{&buf}, bytes.NewBuffer(nil))
-	c.obs = obs
+	c := newWithIO(nopWriteCloser{&buf}, bytes.NewBuffer(nil), obs)
 
 	if err := c.writeRequest("turn/start", map[string]any{"threadId": "t1"}); err != nil {
 		t.Fatalf("writeRequest: %v", err)

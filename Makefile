@@ -27,7 +27,7 @@ test-integration:
 check-all: lint test-race test-integration
 
 .PHONY: check
-check: lint test
+check: lint test-race
 
 .PHONY: upgrade-codex
 upgrade-codex:
