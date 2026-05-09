@@ -1,0 +1,41 @@
+package ui
+
+import (
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/trigosec/coderoom/internal/session"
+)
+
+// makeReadyModel returns a Model that has processed one WindowSizeMsg so the
+// viewport is initialised and syncViewport calls are live.
+func makeReadyModel(t *testing.T) Model {
+	t.Helper()
+	m := New(".")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return next.(Model)
+}
+
+func makeReadyModelWithHeight(t *testing.T, height int) Model {
+	t.Helper()
+	m := New(".")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
+	return next.(Model)
+}
+
+// pushEvent sends a session event into the model via Update and returns the result.
+func pushEvent(m Model, e session.Event) Model {
+	next, _ := m.Update(sessionEventMsg(e))
+	return next.(Model)
+}
+
+// hasRecord reports whether any record of the given kind contains text in its body.
+func hasRecord(m Model, kind recordKind, text string) bool {
+	for _, r := range m.records {
+		if r.kind == kind && strings.Contains(r.body, text) {
+			return true
+		}
+	}
+	return false
+}
