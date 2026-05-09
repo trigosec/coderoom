@@ -54,7 +54,10 @@ func run() int {
 	}
 	opts = append(opts, ui.WithAgentFactory(factory))
 
-	if _, err := tea.NewProgram(ui.New(cwd, opts...), tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(
+		ui.New(cwd, opts...),
+		tea.WithAltScreen(),
+	).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

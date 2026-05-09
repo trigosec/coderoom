@@ -2,9 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/participant"
@@ -18,14 +22,24 @@ const (
 	marginH = 2
 	// marginV is the number of empty rows below the input.
 	marginV = 1
-	// chromeHeight is the number of terminal rows occupied outside the viewport:
-	// separator + input + bottom margin. Adjust here if toolbox rows are added.
-	chromeHeight = 2 + marginV
 )
+
+func chromeHeight(inputHeight int) int {
+	// separator + input + bottom margin
+	return 1 + inputHeight + marginV
+}
+
+func inputMaxHeight(totalHeight int) int {
+	return min(8, max(totalHeight/3, 1))
+}
+
+func desiredInputHeight(lineCount, maxHeight int) int {
+	return min(max(lineCount, 1), maxHeight)
+}
 
 // Init starts the session event listener; called once by Bubble Tea on startup.
 func (m Model) Init() tea.Cmd {
-	return awaitEvent(m.queue)
+	return tea.Batch(awaitEvent(m.queue), textarea.Blink)
 }
 
 // Update handles incoming messages and returns the next model state.
@@ -35,10 +49,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.WindowSizeMsg:
 		return m.handleResize(msg), nil
+	case editorComposeMsg:
+		return m.handleEditorCompose(msg), nil
 	case sessionEventMsg:
 		return m.handleEvent(session.Event(msg)), awaitEvent(m.queue)
+	default:
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 	}
-	return m, nil
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -46,7 +65,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case tea.KeyCtrlC:
 		m.sess.Shutdown()
 		return m, tea.Quit
+	case tea.KeyCtrlG:
+		return m.startEditorCompose()
 	case tea.KeyEnter:
+		if msg.Alt {
+			m.input.InsertRune('\n')
+			m = m.resizeForInput()
+			return m, nil
+		}
 		return m.handleEnter()
 	case tea.KeyPgUp:
 		m.viewport.HalfPageUp()
@@ -57,12 +83,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
+		m = m.resizeForInput()
 		return m, cmd
 	}
 }
 
 func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
-	h := msg.Height - chromeHeight
+	m.lastSize = msg
+	maxInputH := inputMaxHeight(msg.Height)
+	inputH := desiredInputHeight(m.input.LineCount(), maxInputH)
+	h := msg.Height - chromeHeight(inputH)
 	inner := max(msg.Width-2*marginH, 1)
 	h = max(h, 1)
 	if !m.ready {
@@ -72,7 +102,8 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 		m.viewport.Width = inner
 		m.viewport.Height = h
 	}
-	m.input.Width = inner
+	m.input.SetWidth(inner)
+	m.input.SetHeight(inputH)
 	colorFor := m.colorFor()
 	for i, r := range m.records {
 		m.renderedRecords[i] = renderRecord(r, m.viewport.Width, colorFor)
@@ -83,6 +114,7 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 func (m Model) handleEnter() (Model, tea.Cmd) {
 	raw := m.input.Value()
 	m.input.Reset()
+	m = m.resizeForInput()
 	if strings.TrimSpace(raw) == "" {
 		return m, nil
 	}
@@ -162,6 +194,7 @@ func (m Model) handleEvent(e session.Event) Model {
 }
 
 func (m Model) handleDelta(alias, text string) Model {
+	wasAtBottom := m.viewport.AtBottom()
 	colorFor := m.colorFor()
 	if idx, ok := m.streaming[alias]; ok {
 		m.records[idx].body += text
@@ -174,7 +207,9 @@ func (m Model) handleDelta(alias, text string) Model {
 		m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, colorFor))
 	}
 	m = m.syncViewport()
-	m.viewport.GotoBottom()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 	return m
 }
 
@@ -284,10 +319,13 @@ func (m Model) markDeparted(alias string) Model {
 }
 
 func (m Model) appendRecord(r record) Model {
+	wasAtBottom := m.viewport.AtBottom()
 	m.records = append(m.records, r)
 	m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.colorFor()))
 	m = m.syncViewport()
-	m.viewport.GotoBottom()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 	return m
 }
 
@@ -296,5 +334,87 @@ func (m Model) syncViewport() Model {
 		return m
 	}
 	m.viewport.SetContent(strings.Join(m.renderedRecords, "\n\n"))
+	return m
+}
+
+func (m Model) resizeForInput() Model {
+	if !m.ready {
+		return m
+	}
+	wasAtBottom := m.viewport.AtBottom()
+	maxInputH := inputMaxHeight(m.lastSize.Height)
+	inputH := desiredInputHeight(m.input.LineCount(), maxInputH)
+	if inputH != m.input.Height() {
+		m.input.SetHeight(inputH)
+		m.viewport.Height = max(m.lastSize.Height-chromeHeight(inputH), 1)
+		m = m.syncViewport()
+		if wasAtBottom {
+			m.viewport.GotoBottom()
+		}
+	}
+	return m
+}
+
+type editorComposeMsg struct {
+	prior    string
+	content  string
+	err      error
+	canceled bool
+}
+
+func (m Model) startEditorCompose() (Model, tea.Cmd) {
+	editor := os.Getenv("EDITOR")
+	if strings.TrimSpace(editor) == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if strings.TrimSpace(editor) == "" {
+		return m.appendRecord(record{
+			kind: recordKindSystem,
+			body: "error: no editor configured (set $EDITOR or $VISUAL)",
+		}), nil
+	}
+
+	prior := m.input.Value()
+	f, err := os.CreateTemp("", "coderoom-compose-*.md")
+	if err != nil {
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: compose: %v", err)}), nil
+	}
+	path := f.Name()
+	if _, err := f.WriteString(prior); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: compose: %v", err)}), nil
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: compose: %v", err)}), nil
+	}
+
+	args := strings.Fields(editor)
+	//nolint:gosec // $EDITOR/$VISUAL is explicitly user-configured; we execute it with a temp file path.
+	cmd := exec.Command(args[0], append(args[1:], path)...)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		defer func() { _ = os.Remove(path) }()
+		if err != nil {
+			return editorComposeMsg{prior: prior, canceled: true, err: err}
+		}
+		b, readErr := os.ReadFile(filepath.Clean(path))
+		if readErr != nil {
+			return editorComposeMsg{prior: prior, canceled: true, err: readErr}
+		}
+		content := string(b)
+		content = strings.TrimSuffix(content, "\n")
+		return editorComposeMsg{prior: prior, content: content}
+	})
+}
+
+func (m Model) handleEditorCompose(msg editorComposeMsg) Model {
+	if msg.canceled || msg.err != nil {
+		m.input.SetValue(msg.prior)
+		m = m.resizeForInput()
+		return m
+	}
+	m.input.SetValue(msg.content)
+	m = m.resizeForInput()
 	return m
 }

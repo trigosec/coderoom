@@ -3,7 +3,7 @@
 package ui
 
 import (
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/agent"
@@ -48,7 +48,7 @@ type Model struct {
 	sess            *session.Session
 	queue           *eventQueue
 	viewport        viewport.Model
-	input           textinput.Model
+	input           textarea.Model
 	records         []record
 	renderedRecords []string        // rendered form of each record; rebuilt on resize
 	streaming       map[string]int  // alias → index in records (agents mid-turn)
@@ -57,6 +57,7 @@ type Model struct {
 	palette         colorPalette
 	cwd             string
 	ready           bool // true after first WindowSizeMsg
+	lastSize        tea.WindowSizeMsg
 }
 
 // New creates a Model with its own session and event queue.
@@ -64,8 +65,13 @@ func New(cwd string, opts ...Option) Model {
 	q := newEventQueue()
 	sess := session.New(session.WithObserver(channelObserver{queue: q}))
 
-	ti := textinput.New()
-	ti.Prompt = "> "
+	ti := textarea.New()
+	ti.SetPromptFunc(2, func(lineIndex int) string {
+		if lineIndex == 0 {
+			return "> "
+		}
+		return "  "
+	})
 	ti.Focus()
 
 	m := Model{

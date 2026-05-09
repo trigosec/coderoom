@@ -17,7 +17,9 @@ func (m Model) View() string {
 		sb.WriteString(left + line + "\n")
 	}
 	sb.WriteString(sep + "\n")
-	sb.WriteString(left + m.input.View() + "\n")
+	for line := range strings.SplitSeq(strings.TrimSuffix(m.input.View(), "\n"), "\n") {
+		sb.WriteString(left + line + "\n")
+	}
 	sb.WriteString(strings.Repeat("\n", marginV))
 	return sb.String()
 }

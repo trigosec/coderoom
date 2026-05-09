@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,6 +18,13 @@ func makeReadyModel(t *testing.T) Model {
 	t.Helper()
 	m := New(".")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return next.(Model)
+}
+
+func makeReadyModelWithHeight(t *testing.T, height int) Model {
+	t.Helper()
+	m := New(".")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
 	return next.(Model)
 }
 
@@ -187,6 +196,205 @@ func TestHandleEnter_echoesUserInput(t *testing.T) {
 	}
 	if m.records[0].body != "/who" {
 		t.Errorf("expected body '/who', got %q", m.records[0].body)
+	}
+}
+
+func TestAltEnter_insertsNewlineWithoutSubmitting(t *testing.T) {
+	m := makeReadyModel(t)
+	m.input.SetValue("hello")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m2 := next.(Model)
+
+	if got := m2.input.Value(); got != "hello\n" {
+		t.Fatalf("expected Alt+Enter to insert newline, got %q", got)
+	}
+	if len(m2.records) != 0 {
+		t.Fatalf("expected no records (no submit) after Alt+Enter, got %d", len(m2.records))
+	}
+}
+
+func TestEnter_submitsAndClearsInput(t *testing.T) {
+	m := makeReadyModel(t)
+	m.input.SetValue("hello")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := next.(Model)
+
+	if got := m2.input.Value(); got != "" {
+		t.Fatalf("expected input cleared after submit, got %q", got)
+	}
+	if len(m2.records) == 0 || m2.records[0].kind != recordKindUserInput || m2.records[0].body != "hello" {
+		t.Fatalf("expected first record to echo submitted input; records: %v", m2.records)
+	}
+}
+
+func TestEnter_whitespaceOnlyDoesNotCreateRecord(t *testing.T) {
+	m := makeReadyModel(t)
+	m.input.SetValue("   \n\t ")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := next.(Model)
+
+	if got := m2.input.Value(); got != "" {
+		t.Fatalf("expected input cleared even for whitespace-only submit, got %q", got)
+	}
+	if len(m2.records) != 0 {
+		t.Fatalf("expected no records for whitespace-only submit, got %d", len(m2.records))
+	}
+}
+
+func TestPgDn_scrollsViewportAndDoesNotAffectInput(t *testing.T) {
+	m := makeReadyModelWithHeight(t, 10)
+	m.input.SetValue("draft")
+
+	for i := range 40 {
+		m = m.appendRecord(record{kind: recordKindSystem, body: "line " + strconv.Itoa(i)})
+	}
+	m.viewport.GotoTop()
+	start := m.viewport.YOffset
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	m2 := next.(Model)
+
+	if m2.viewport.YOffset <= start {
+		t.Fatalf("expected PgDn to scroll viewport down; before=%d after=%d", start, m2.viewport.YOffset)
+	}
+	if got := m2.input.Value(); got != "draft" {
+		t.Fatalf("expected PgDn not to change input, got %q", got)
+	}
+}
+
+func TestPgUp_scrollsViewportUpAndDoesNotAffectInput(t *testing.T) {
+	m := makeReadyModelWithHeight(t, 10)
+	m.input.SetValue("draft")
+
+	for i := range 40 {
+		m = m.appendRecord(record{kind: recordKindSystem, body: "line " + strconv.Itoa(i)})
+	}
+	m.viewport.GotoBottom()
+	start := m.viewport.YOffset
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m2 := next.(Model)
+
+	if m2.viewport.YOffset >= start {
+		t.Fatalf("expected PgUp to scroll viewport up; before=%d after=%d", start, m2.viewport.YOffset)
+	}
+	if got := m2.input.Value(); got != "draft" {
+		t.Fatalf("expected PgUp not to change input, got %q", got)
+	}
+}
+
+func TestDelta_whenAtBottom_keepsViewportAtBottom(t *testing.T) {
+	m := makeReadyModelWithHeight(t, 10)
+	for i := range 40 {
+		m = m.appendRecord(record{kind: recordKindSystem, body: "line " + strconv.Itoa(i)})
+	}
+	m.viewport.GotoBottom()
+	if !m.viewport.AtBottom() {
+		t.Fatal("expected to start at bottom")
+	}
+
+	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
+	if !m.viewport.AtBottom() {
+		t.Fatal("expected viewport to remain at bottom after delta when already at bottom")
+	}
+}
+
+func TestDelta_whenScrolledUp_doesNotForceViewportToBottom(t *testing.T) {
+	m := makeReadyModelWithHeight(t, 10)
+	for i := range 40 {
+		m = m.appendRecord(record{kind: recordKindSystem, body: "line " + strconv.Itoa(i)})
+	}
+	m.viewport.GotoTop()
+	if m.viewport.AtBottom() {
+		t.Fatal("expected not to be at bottom when positioned at top")
+	}
+	start := m.viewport.YOffset
+
+	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
+	if m.viewport.AtBottom() {
+		t.Fatal("expected viewport not to jump to bottom when user is scrolled up")
+	}
+	if m.viewport.YOffset != start {
+		t.Fatalf("expected viewport y-offset unchanged when scrolled up; before=%d after=%d", start, m.viewport.YOffset)
+	}
+}
+
+func TestInputHeight_isCappedAndDoesNotCollapseViewport(t *testing.T) {
+	m := makeReadyModelWithHeight(t, 30) // max input height = min(8, 30/3=10) => 8
+
+	m.input.SetValue(strings.Repeat("x\n", 20) + "x") // 21 lines
+	m = m.resizeForInput()
+
+	if got := m.input.Height(); got != 8 {
+		t.Fatalf("expected input height capped at 8, got %d", got)
+	}
+	if m.viewport.Height <= 0 {
+		t.Fatalf("expected viewport height to stay positive, got %d", m.viewport.Height)
+	}
+}
+
+func TestResizeForInput_preservesBottomAnchor(t *testing.T) {
+	m := makeReadyModelWithHeight(t, 12)
+	for i := range 50 {
+		m = m.appendRecord(record{kind: recordKindSystem, body: "line " + strconv.Itoa(i)})
+	}
+	m.viewport.GotoBottom()
+	if !m.viewport.AtBottom() {
+		t.Fatal("expected to start at bottom")
+	}
+
+	m.input.SetValue("a\nb\nc")
+	m = m.resizeForInput()
+	if !m.viewport.AtBottom() {
+		t.Fatal("expected resizeForInput to keep viewport anchored to bottom")
+	}
+}
+
+func TestCtrlG_withoutEditorAddsSystemRecordAndPreservesBuffer(t *testing.T) {
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	m := makeReadyModel(t)
+	m.input.SetValue("draft")
+
+	m2, _ := m.startEditorCompose()
+	if got := m2.input.Value(); got != "draft" {
+		t.Fatalf("expected input preserved when editor is unset, got %q", got)
+	}
+	if !hasRecord(m2, recordKindSystem, "no editor configured") {
+		t.Fatalf("expected system record about editor configuration; records: %v", m2.records)
+	}
+}
+
+func TestEditorCompose_cancelRestoresPriorBuffer(t *testing.T) {
+	m := makeReadyModel(t)
+	m.input.SetValue("before")
+
+	next, _ := m.Update(editorComposeMsg{
+		prior:    "before",
+		canceled: true,
+		err:      os.ErrInvalid,
+	})
+	m2 := next.(Model)
+	if got := m2.input.Value(); got != "before" {
+		t.Fatalf("expected cancel to restore prior buffer, got %q", got)
+	}
+}
+
+func TestEditorCompose_successReplacesBuffer(t *testing.T) {
+	m := makeReadyModel(t)
+	m.input.SetValue("before")
+
+	next, _ := m.Update(editorComposeMsg{
+		prior:   "before",
+		content: "after",
+	})
+	m2 := next.(Model)
+	if got := m2.input.Value(); got != "after" {
+		t.Fatalf("expected success to replace buffer, got %q", got)
 	}
 }
 
