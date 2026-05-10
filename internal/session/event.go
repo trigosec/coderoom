@@ -5,10 +5,11 @@ type Kind string
 
 // Session event kinds.
 const (
-	KindAgentStarted Kind = "agent.started"
-	KindAgentStopped Kind = "agent.stopped"
-	KindAgentCrashed Kind = "agent.crashed"
-	KindAgentLog     Kind = "agent.log" // diagnostic line from the agent process (e.g. stderr)
+	KindAgentStarting Kind = "agent.starting"
+	KindAgentStarted  Kind = "agent.started"
+	KindAgentStopped  Kind = "agent.stopped"
+	KindAgentCrashed  Kind = "agent.crashed"
+	KindAgentLog      Kind = "agent.log" // diagnostic line from the agent process (e.g. stderr)
 
 	KindBroadcast    Kind = "message.broadcast" // message to all agents
 	KindSharedSend   Kind = "message.shared"    // instruction to one agent, visible to all

@@ -22,6 +22,7 @@ type Session struct {
 	mu       sync.Mutex
 	registry *participant.Registry
 	agents   map[string]agentEntry
+	starting map[string]struct{}
 	obs      []Observer
 }
 
@@ -39,11 +40,31 @@ func New(opts ...Option) *Session {
 	s := &Session{
 		registry: participant.NewRegistry(),
 		agents:   make(map[string]agentEntry),
+		starting: make(map[string]struct{}),
 	}
 	for _, o := range opts {
 		o(s)
 	}
 	return s
+}
+
+func (s *Session) markStarting(alias string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.starting[alias]; ok {
+		return fmt.Errorf("participant %q already starting", alias)
+	}
+	if _, ok := s.registry.Get(alias); ok {
+		return fmt.Errorf("participant %q already registered", alias)
+	}
+	s.starting[alias] = struct{}{}
+	return nil
+}
+
+func (s *Session) clearStarting(alias string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.starting, alias)
 }
 
 // Execute dispatches a command. Must be called from a single goroutine.
@@ -76,12 +97,6 @@ func (s *Session) addParticipant(p *participant.Participant) error {
 		return fmt.Errorf("register participant: %w", err)
 	}
 	return nil
-}
-
-func (s *Session) removeParticipant(alias string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_ = s.registry.Remove(alias)
 }
 
 // detachParticipant removes the participant and its reader entry atomically,

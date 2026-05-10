@@ -25,23 +25,34 @@ type InviteCommand struct {
 }
 
 func (c InviteCommand) execute(s *Session) error {
-	p := &participant.Participant{
-		Alias:      c.Alias,
-		Role:       c.Role,
-		Initiative: c.Initiative,
-		Status:     participant.StatusRunning,
-		Color:      c.Color,
-		Agent:      c.Agent,
-	}
-	if err := s.addParticipant(p); err != nil {
+	if err := s.markStarting(c.Alias); err != nil {
 		return err
 	}
-	if err := c.Agent.Start(); err != nil {
-		s.removeParticipant(c.Alias)
-		return fmt.Errorf("start agent %q: %w", c.Alias, err)
-	}
-	s.startReader(c.Alias, c.Agent)
-	s.notify(Event{Kind: KindAgentStarted, Alias: c.Alias})
+	s.notify(Event{Kind: KindAgentStarting, Alias: c.Alias})
+	go func(alias string, a agent.Agent, role participant.Role, initiative participant.Initiative, color string) {
+		defer s.clearStarting(alias)
+		if err := a.Start(); err != nil {
+			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: fmt.Sprintf("start failed: %v", err)})
+			s.notify(Event{Kind: KindAgentCrashed, Alias: alias})
+			return
+		}
+		p := &participant.Participant{
+			Alias:      alias,
+			Role:       role,
+			Initiative: initiative,
+			Status:     participant.StatusRunning,
+			Color:      color,
+			Agent:      a,
+		}
+		if err := s.addParticipant(p); err != nil {
+			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: fmt.Sprintf("register failed: %v", err)})
+			s.notify(Event{Kind: KindAgentCrashed, Alias: alias})
+			_ = a.Stop()
+			return
+		}
+		s.startReader(alias, a)
+		s.notify(Event{Kind: KindAgentStarted, Alias: alias})
+	}(c.Alias, c.Agent, c.Role, c.Initiative, c.Color)
 	return nil
 }
 

@@ -75,15 +75,21 @@ func (o *testObserver) OnEvent(e session.Event) {
 
 func mustReceive(t *testing.T, ch <-chan session.Event, want session.Kind) session.Event {
 	t.Helper()
-	select {
-	case ev := <-ch:
-		if ev.Kind != want {
-			t.Fatalf("expected kind %q, got %q", want, ev.Kind)
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if want == session.KindAgentStarted && ev.Kind == session.KindAgentStarting {
+				continue
+			}
+			if ev.Kind != want {
+				t.Fatalf("expected kind %q, got %q", want, ev.Kind)
+			}
+			return ev
+		case <-deadline:
+			t.Fatalf("timed out waiting for %q event", want)
+			return session.Event{}
 		}
-		return ev
-	case <-time.After(time.Second):
-		t.Fatalf("timed out waiting for %q event", want)
-		return session.Event{}
 	}
 }
 
@@ -109,11 +115,13 @@ func TestInvite_emitsAgentStarted(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarting)
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 }
 
 func TestInvite_colorStoredOnParticipant(t *testing.T) {
-	s := session.New()
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
 	a := newMockAgent()
 	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
 
@@ -127,6 +135,8 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InviteCommand: %v", err)
 	}
+	mustReceive(t, obs.ch, session.KindAgentStarting)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
 	p, ok := s.Participant("ada")
 	if !ok {
 		t.Fatal("participant not found after invite")
@@ -155,6 +165,7 @@ func TestStop_emitsAgentStopped(t *testing.T) {
 	a := newMockAgent()
 
 	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarting)
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
 	if err := s.Execute(session.StopCommand{Alias: "ada"}); err != nil {

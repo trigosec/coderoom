@@ -33,6 +33,14 @@ func TestHandleEvent_agentStarted(t *testing.T) {
 	}
 }
 
+func TestHandleEvent_agentStarting(t *testing.T) {
+	m := makeReadyModel(t)
+	m = pushEvent(m, session.Event{Kind: session.KindAgentStarting, Alias: "ada"})
+	if !hasRecord(m, recordKindSystem, "[ada starting]") {
+		t.Errorf("expected [ada starting] system record; records: %v", m.records)
+	}
+}
+
 func TestHandleEvent_agentStopped(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarted, Alias: "ada"})

@@ -224,17 +224,33 @@ func (m Model) colorFor() func(string) string {
 }
 
 func (m Model) handleEvent(e session.Event) Model {
+	if next, ok := m.handleAgentLifecycleEvent(e); ok {
+		return next
+	}
+	return m.handleMessageEvent(e)
+}
+
+func (m Model) handleAgentLifecycleEvent(e session.Event) (Model, bool) {
 	switch e.Kind {
+	case session.KindAgentStarting:
+		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " starting]"}), true
 	case session.KindAgentStarted:
-		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " joined]"})
+		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " joined]"}), true
 	case session.KindAgentStopped:
 		delete(m.streaming, e.Alias)
 		m = m.markDeparted(e.Alias)
-		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " left]"})
+		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " left]"}), true
 	case session.KindAgentCrashed:
 		delete(m.streaming, e.Alias)
 		m = m.markDeparted(e.Alias)
-		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " crashed]"})
+		return m.appendRecord(record{kind: recordKindSystem, body: "[" + e.Alias + " crashed]"}), true
+	default:
+		return m, false
+	}
+}
+
+func (m Model) handleMessageEvent(e session.Event) Model {
+	switch e.Kind {
 	case session.KindBroadcast:
 		return m.appendRecord(record{kind: recordKindSystem, body: "[all] " + e.Text})
 	case session.KindSharedSend:
@@ -248,8 +264,9 @@ func (m Model) handleEvent(e session.Event) Model {
 	case session.KindDone:
 		delete(m.streaming, e.Alias)
 		return m
+	default:
+		return m
 	}
-	return m
 }
 
 func (m Model) handleDelta(alias, text string) Model {
