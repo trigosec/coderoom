@@ -1,4 +1,4 @@
-# Package design: selection and copy while scrolling
+# Package design: selection and copy while scrolling (open)
 
 This document explores how Code Room could support convenient text selection and
 copy while also supporting viewport scrolling. It describes two options and
@@ -117,4 +117,3 @@ Start with Option B1 (external pager/export). It delivers the biggest UX win for
 copy/search/navigation with minimal risk. If users strongly want mouse wheel
 scrolling + drag selection inside the UI, revisit Option A with a dedicated
 copy/selection design.
-
