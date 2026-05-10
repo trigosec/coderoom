@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 )
@@ -61,10 +62,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlO {
+		return m.toggleFocus()
+	}
+
+	// PgUp/PgDn always scroll the viewport, regardless of focus.
+	if msg.Type == tea.KeyPgUp {
+		m.viewport.HalfPageUp()
+		return m, nil
+	}
+	if msg.Type == tea.KeyPgDown {
+		m.viewport.HalfPageDown()
+		return m, nil
+	}
+
+	if m.focus == focusViewport {
+		return m.handleViewportKey(msg)
+	}
+	return m.handleComposerKey(msg)
+}
+
+func (m Model) toggleFocus() (Model, tea.Cmd) {
+	if m.focus == focusComposer {
+		m.focus = focusViewport
+		m.input.Blur()
+		return m, nil
+	}
+	m.focus = focusComposer
+	cmd := m.input.Focus()
+	return m, cmd
+}
+
+func (m Model) handleComposerKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC:
-		m.sess.Shutdown()
-		return m, tea.Quit
+		if m.input.Value() == "" {
+			return m, nil
+		}
+		m.input.Reset()
+		m = m.resizeForInput()
+		return m, nil
 	case tea.KeyCtrlG:
 		return m.startEditorCompose()
 	case tea.KeyEnter:
@@ -74,16 +111,38 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.handleEnter()
-	case tea.KeyPgUp:
-		m.viewport.HalfPageUp()
-		return m, nil
-	case tea.KeyPgDown:
-		m.viewport.HalfPageDown()
-		return m, nil
+	case tea.KeyEsc:
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		m = m.resizeForInput()
+		return m, cmd
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		m = m.resizeForInput()
+		return m, cmd
+	}
+}
+
+func (m Model) handleViewportKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return m, nil
+	case tea.KeyCtrlG:
+		return m.openEditorWithTranscript()
+	case tea.KeyHome:
+		m.viewport.GotoTop()
+		return m, nil
+	case tea.KeyEnd:
+		m.viewport.GotoBottom()
+		return m, nil
+	case tea.KeyEsc:
+		m.focus = focusComposer
+		cmd := m.input.Focus()
+		return m, cmd
+	default:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 	}
 }
@@ -417,4 +476,48 @@ func (m Model) handleEditorCompose(msg editorComposeMsg) Model {
 	m.input.SetValue(msg.content)
 	m = m.resizeForInput()
 	return m
+}
+
+func (m Model) openEditorWithTranscript() (Model, tea.Cmd) {
+	editor := os.Getenv("EDITOR")
+	if strings.TrimSpace(editor) == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if strings.TrimSpace(editor) == "" {
+		return m.appendRecord(record{
+			kind: recordKindSystem,
+			body: "error: no editor configured (set $EDITOR or $VISUAL)",
+		}), nil
+	}
+
+	content := strings.Join(m.renderedRecords, "\n\n")
+	content = ansi.Strip(content)
+
+	f, err := os.CreateTemp("", "coderoom-transcript-*.txt")
+	if err != nil {
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: transcript export: %v", err)}), nil
+	}
+	path := f.Name()
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: transcript export: %v", err)}), nil
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: transcript export: %v", err)}), nil
+	}
+	if err := os.Chmod(path, 0o400); err != nil {
+		_ = os.Remove(path)
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: transcript export: %v", err)}), nil
+	}
+
+	args := strings.Fields(editor)
+	//nolint:gosec // $EDITOR/$VISUAL is explicitly user-configured; we execute it with a temp file path.
+	cmd := exec.Command(args[0], append(args[1:], path)...)
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		defer func() { _ = os.Remove(path) }()
+		_ = err
+		return nil
+	})
 }

@@ -68,6 +68,55 @@ func TestEnter_whitespaceOnlyDoesNotCreateRecord(t *testing.T) {
 	}
 }
 
+func TestCtrlC_clearsComposerOnlyWhenFocused(t *testing.T) {
+	m := makeReadyModel(t)
+	m.input.SetValue("draft")
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m2 := next.(Model)
+	if cmd != nil {
+		t.Fatalf("expected Ctrl+C not to quit, got non-nil cmd")
+	}
+	if got := m2.input.Value(); got != "" {
+		t.Fatalf("expected Ctrl+C to clear composer, got %q", got)
+	}
+
+	next, _ = m2.Update(tea.KeyMsg{Type: tea.KeyCtrlO}) // focus viewport
+	m3 := next.(Model)
+	m3.input.SetValue("draft2")
+
+	next, cmd = m3.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m4 := next.(Model)
+	if cmd != nil {
+		t.Fatalf("expected Ctrl+C not to quit in viewport focus, got non-nil cmd")
+	}
+	if got := m4.input.Value(); got != "draft2" {
+		t.Fatalf("expected Ctrl+C no-op in viewport focus, got %q", got)
+	}
+}
+
+func TestCtrlO_toggleBackFocusesComposer(t *testing.T) {
+	m := makeReadyModel(t)
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m2 := next.(Model)
+	if m2.focus != focusViewport {
+		t.Fatalf("expected focusViewport after first Ctrl+O, got %v", m2.focus)
+	}
+	if cmd != nil {
+		t.Fatal("expected no cmd when blurring textarea on focus switch")
+	}
+
+	next, cmd = m2.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m3 := next.(Model)
+	if m3.focus != focusComposer {
+		t.Fatalf("expected focusComposer after second Ctrl+O, got %v", m3.focus)
+	}
+	if cmd == nil {
+		t.Fatal("expected a cmd from Focusing textarea on focus switch back")
+	}
+}
+
 func TestInputHeight_isCappedAndDoesNotCollapseViewport(t *testing.T) {
 	m := makeReadyModelWithHeight(t, 30) // max input height = min(8, 30/3=10) => 8
 

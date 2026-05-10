@@ -49,6 +49,7 @@ type Model struct {
 	queue           *eventQueue
 	viewport        viewport.Model
 	input           textarea.Model
+	focus           focusTarget
 	records         []record
 	renderedRecords []string        // rendered form of each record; rebuilt on resize
 	streaming       map[string]int  // alias → index in records (agents mid-turn)
@@ -59,6 +60,13 @@ type Model struct {
 	ready           bool // true after first WindowSizeMsg
 	lastSize        tea.WindowSizeMsg
 }
+
+type focusTarget int
+
+const (
+	focusComposer focusTarget = iota
+	focusViewport
+)
 
 // New creates a Model with its own session and event queue.
 func New(cwd string, opts ...Option) Model {
@@ -78,6 +86,7 @@ func New(cwd string, opts ...Option) Model {
 		sess:            sess,
 		queue:           q,
 		input:           ti,
+		focus:           focusComposer,
 		records:         []record{},
 		renderedRecords: []string{},
 		streaming:       make(map[string]int),

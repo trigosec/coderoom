@@ -8,7 +8,11 @@ func (m Model) View() string {
 		return ""
 	}
 	left := strings.Repeat(" ", marginH)
-	sep := left + strings.Repeat("─", m.viewport.Width)
+	sepLabel := "compose"
+	if m.focus == focusViewport {
+		sepLabel = "history"
+	}
+	sep := left + labeledSeparator(m.viewport.Width, sepLabel)
 
 	var sb strings.Builder
 	// SplitSeq on an empty string still yields one element, so an empty viewport
@@ -22,4 +26,17 @@ func (m Model) View() string {
 	}
 	sb.WriteString(strings.Repeat("\n", marginV))
 	return sb.String()
+}
+
+func labeledSeparator(width int, label string) string {
+	if width <= 0 {
+		return ""
+	}
+	mid := " " + label + " "
+	if len(mid) >= width {
+		return strings.Repeat("─", width)
+	}
+	leftCount := (width - len(mid)) / 2
+	rightCount := width - len(mid) - leftCount
+	return strings.Repeat("─", leftCount) + mid + strings.Repeat("─", rightCount)
 }
