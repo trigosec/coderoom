@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestHandleEnter_echoesUserInput(t *testing.T) {
@@ -26,6 +27,7 @@ func TestHandleEnter_echoesUserInput(t *testing.T) {
 func TestAltEnter_insertsNewlineWithoutSubmitting(t *testing.T) {
 	m := makeReadyModel(t)
 	m.input.SetValue("hello")
+	m.input = updateInputDecorations(m.input)
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
 	m2 := next.(Model)
@@ -38,9 +40,33 @@ func TestAltEnter_insertsNewlineWithoutSubmitting(t *testing.T) {
 	}
 }
 
+func TestInputPromptNumbers_shownOnlyForMultiline(t *testing.T) {
+	m := makeReadyModel(t)
+	m.input.SetWidth(40)
+	m.input.SetHeight(3)
+	m.input = updateInputDecorations(m.input)
+	if strings.Contains(ansi.Strip(m.input.View()), "❯   1 ") {
+		t.Fatal("expected single-line input to hide prompt line numbers by default")
+	}
+
+	m.input.SetValue("a\nb")
+	m.input = updateInputDecorations(m.input)
+	view := ansi.Strip(m.input.View())
+	if !strings.Contains(view, "❯   1 ") || !strings.Contains(view, "❯   2 ") {
+		t.Fatalf("expected prompt to show numbers for multiline input, got:\n%s", view)
+	}
+
+	m.input.SetValue("a")
+	m.input = updateInputDecorations(m.input)
+	if strings.Contains(ansi.Strip(m.input.View()), "❯   1 ") {
+		t.Fatal("expected prompt line numbers hidden again when returning to single line")
+	}
+}
+
 func TestEnter_submitsAndClearsInput(t *testing.T) {
 	m := makeReadyModel(t)
 	m.input.SetValue("hello")
+	m.input = updateInputDecorations(m.input)
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m2 := next.(Model)

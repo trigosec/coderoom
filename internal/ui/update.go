@@ -38,6 +38,25 @@ func desiredInputHeight(lineCount, maxHeight int) int {
 	return min(max(lineCount, 1), maxHeight)
 }
 
+func updateInputDecorations(input textarea.Model) textarea.Model {
+	if input.LineCount() >= 2 {
+		input.ShowLineNumbers = false
+		input.SetPromptFunc(6, func(lineIndex int) string {
+			// ❯   1 a
+			// ❯   2 b
+			return fmt.Sprintf("❯%4d ", lineIndex+1)
+		})
+		return input
+	}
+	input.ShowLineNumbers = false
+	input.SetPromptFunc(6, func(_ int) string {
+		// Keep the text column aligned with the multi-line prompt:
+		// single-line: ❯     a
+		return "❯     "
+	})
+	return input
+}
+
 // Init starts the session event listener; called once by Bubble Tea on startup.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(awaitEvent(m.queue), textarea.Blink)
@@ -149,6 +168,7 @@ func (m Model) handleViewportKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 	m.lastSize = msg
+	m.input = updateInputDecorations(m.input)
 	maxInputH := inputMaxHeight(msg.Height)
 	inputH := desiredInputHeight(m.input.LineCount(), maxInputH)
 	h := msg.Height - chromeHeight(inputH)
@@ -417,6 +437,7 @@ func (m Model) resizeForInput() Model {
 	if !m.ready {
 		return m
 	}
+	m.input = updateInputDecorations(m.input)
 	wasAtBottom := m.viewport.AtBottom()
 	maxInputH := inputMaxHeight(m.lastSize.Height)
 	inputH := desiredInputHeight(m.input.LineCount(), maxInputH)

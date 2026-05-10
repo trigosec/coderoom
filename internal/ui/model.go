@@ -74,12 +74,8 @@ func New(cwd string, opts ...Option) Model {
 	sess := session.New(session.WithObserver(channelObserver{queue: q}))
 
 	ti := textarea.New()
-	ti.SetPromptFunc(2, func(lineIndex int) string {
-		if lineIndex == 0 {
-			return "> "
-		}
-		return "  "
-	})
+	ti.ShowLineNumbers = false
+	ti = updateInputDecorations(ti)
 	ti.Focus()
 
 	m := Model{
