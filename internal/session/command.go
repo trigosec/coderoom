@@ -25,34 +25,33 @@ type InviteCommand struct {
 }
 
 func (c InviteCommand) execute(s *Session) error {
-	if err := s.markStarting(c.Alias); err != nil {
+	p := &participant.Participant{
+		Alias:      c.Alias,
+		Role:       c.Role,
+		Initiative: c.Initiative,
+		Color:      c.Color,
+	}
+	p.MarkStarting(s.now())
+	if err := s.addParticipant(p); err != nil {
 		return err
 	}
 	s.notify(Event{Kind: KindAgentStarting, Alias: c.Alias})
-	go func(alias string, a agent.Agent, role participant.Role, initiative participant.Initiative, color string) {
-		defer s.clearStarting(alias)
+	go func(alias string, a agent.Agent) {
 		if err := a.Start(); err != nil {
 			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: fmt.Sprintf("start failed: %v", err)})
+			s.withParticipant(alias, func(p *participant.Participant) {
+				p.MarkCrashed(s.now())
+			})
 			s.notify(Event{Kind: KindAgentCrashed, Alias: alias})
 			return
 		}
-		p := &participant.Participant{
-			Alias:      alias,
-			Role:       role,
-			Initiative: initiative,
-			Status:     participant.StatusRunning,
-			Color:      color,
-			Agent:      a,
-		}
-		if err := s.addParticipant(p); err != nil {
-			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: fmt.Sprintf("register failed: %v", err)})
-			s.notify(Event{Kind: KindAgentCrashed, Alias: alias})
-			_ = a.Stop()
-			return
-		}
+		s.withParticipant(alias, func(p *participant.Participant) {
+			p.Agent = a
+			p.MarkIdle(s.now())
+		})
 		s.startReader(alias, a)
 		s.notify(Event{Kind: KindAgentStarted, Alias: alias})
-	}(c.Alias, c.Agent, c.Role, c.Initiative, c.Color)
+	}(c.Alias, c.Agent)
 	return nil
 }
 
@@ -82,7 +81,7 @@ type BroadcastCommand struct {
 func (c BroadcastCommand) execute(s *Session) error {
 	s.notify(Event{Kind: KindBroadcast, Text: c.Text})
 	var errs []error
-	for _, p := range s.participants() {
+	for _, p := range s.RoutableParticipants() {
 		if err := p.Agent.Send(c.Text); err != nil {
 			errs = append(errs, fmt.Errorf("broadcast to %q: %w", p.Alias, err))
 		}
@@ -102,16 +101,25 @@ type SharedSendCommand struct {
 }
 
 func (c SharedSendCommand) execute(s *Session) error {
-	p, ok := s.lookupParticipant(c.Alias)
-	if !ok {
+	var a agent.Agent
+	if ok := s.withParticipant(c.Alias, func(p *participant.Participant) {
+		if p.Agent == nil || p.Status == participant.StatusStarting || p.Status == participant.StatusCrashed {
+			return
+		}
+		a = p.Agent
+		p.MarkWorking(s.now())
+	}); !ok {
 		return fmt.Errorf("participant %q not found", c.Alias)
 	}
-	if err := p.Agent.Send(c.TextDirect); err != nil {
+	if a == nil {
+		return fmt.Errorf("participant %q not ready", c.Alias)
+	}
+	if err := a.Send(c.TextDirect); err != nil {
 		return fmt.Errorf("send to %q: %w", c.Alias, err)
 	}
 	s.notify(Event{Kind: KindSharedSend, Alias: c.Alias, Text: c.TextDirect})
 	var errs []error
-	for _, other := range s.participants() {
+	for _, other := range s.RoutableParticipants() {
 		if other.Alias == c.Alias {
 			continue
 		}

@@ -5,7 +5,7 @@ cells directly beneath the composer. The intent is to make the room feel “live
 without forcing the user to read the transcript to understand what agents are
 doing.
 
-Status: design proposal (not yet implemented).
+Status: implemented (Phase 1).
 
 ## Goals
 
@@ -13,6 +13,23 @@ Status: design proposal (not yet implemented).
 - Avoid distracting horizontal jitter while timers tick.
 - Fit naturally under the composer as part of the toolbox area.
 - Scale from 0 → many participants with predictable layout.
+
+## Ownership
+
+To keep state consistent across the system, **activity state** lives with the
+participant/session model, while **presentation** lives in the UI.
+
+Session/participant owns:
+
+- Participant status: `idle | starting | working | crashed`
+- `since` timestamp for the current status
+- Allowed state transitions (enforced centrally)
+
+UI owns:
+
+- Glyph mapping (e.g. `●/◌/⏹◆/✖`)
+- Spinner animation (alternating glyphs) and the 1Hz tick loop
+- Elapsed formatting and layout (cell width, alias truncation, overflow)
 
 ## Layout
 

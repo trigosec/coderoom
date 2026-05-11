@@ -6,6 +6,7 @@ package session
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
@@ -22,8 +23,8 @@ type Session struct {
 	mu       sync.Mutex
 	registry *participant.Registry
 	agents   map[string]agentEntry
-	starting map[string]struct{}
 	obs      []Observer
+	now      func() time.Time
 }
 
 // Option configures a Session at construction time.
@@ -40,7 +41,7 @@ func New(opts ...Option) *Session {
 	s := &Session{
 		registry: participant.NewRegistry(),
 		agents:   make(map[string]agentEntry),
-		starting: make(map[string]struct{}),
+		now:      time.Now,
 	}
 	for _, o := range opts {
 		o(s)
@@ -48,23 +49,16 @@ func New(opts ...Option) *Session {
 	return s
 }
 
-func (s *Session) markStarting(alias string) error {
+// Roster returns a snapshot of participants for UI display.
+func (s *Session) Roster() []participant.Participant {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.starting[alias]; ok {
-		return fmt.Errorf("participant %q already starting", alias)
+	ps := s.registry.List()
+	out := make([]participant.Participant, len(ps))
+	for i, p := range ps {
+		out[i] = *p
 	}
-	if _, ok := s.registry.Get(alias); ok {
-		return fmt.Errorf("participant %q already registered", alias)
-	}
-	s.starting[alias] = struct{}{}
-	return nil
-}
-
-func (s *Session) clearStarting(alias string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.starting, alias)
+	return out
 }
 
 // Execute dispatches a command. Must be called from a single goroutine.
@@ -72,15 +66,28 @@ func (s *Session) Execute(cmd Command) error {
 	return cmd.execute(s)
 }
 
+func (s *Session) snapshotAgentsToStop() []agent.Agent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps := s.registry.List()
+	out := make([]agent.Agent, 0, len(ps))
+	for _, p := range ps {
+		if p.Agent == nil {
+			continue
+		}
+		out = append(out, p.Agent)
+	}
+	return out
+}
+
 // Shutdown stops all agents in the session. Errors from individual agents are
 // silently discarded; the goal is best-effort cleanup on process exit.
 func (s *Session) Shutdown() {
-	for _, p := range s.participants() {
-		participant, ok := s.detachParticipant(p.Alias)
-		if !ok {
-			continue
-		}
-		_ = participant.Agent.Stop()
+	// Note: participants in StatusStarting may not have Agent set yet (we only
+	// assign it after a successful Start()). Those in-flight processes are not
+	// currently stoppable via Session.Shutdown.
+	for _, a := range s.snapshotAgentsToStop() {
+		_ = a.Stop()
 	}
 }
 
@@ -130,6 +137,17 @@ func (s *Session) lookupParticipant(alias string) (*participant.Participant, boo
 	return s.registry.Get(alias)
 }
 
+func (s *Session) withParticipant(alias string, fn func(*participant.Participant)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.registry.Get(alias)
+	if !ok {
+		return false
+	}
+	fn(p)
+	return true
+}
+
 func (s *Session) participants() []*participant.Participant {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,6 +173,27 @@ func (s *Session) Participants() []participant.Participant {
 	return out
 }
 
+// HasAnyActivityParticipants reports whether any participant is in a status
+// that requires the activity monitor to tick.
+func (s *Session) HasAnyActivityParticipants() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.registry.HasStarting() || s.registry.HasWorking() || s.registry.HasCrashed()
+}
+
+// RoutableParticipants returns a snapshot of participants that are safe to send
+// messages to (agent started and not crashed).
+func (s *Session) RoutableParticipants() []participant.Participant {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps := s.registry.ListAvailable()
+	out := make([]participant.Participant, len(ps))
+	for i, p := range ps {
+		out[i] = *p
+	}
+	return out
+}
+
 // readLoop runs in a goroutine per agent, forwarding agent.Event values to the
 // observers. When Read returns an error it emits KindAgentStopped (if the stop
 // channel was closed) or KindAgentCrashed, then exits.
@@ -168,6 +207,12 @@ func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 				kind = KindAgentStopped
 			default:
 			}
+			if kind == KindAgentCrashed {
+				ok := s.withParticipant(alias, func(p *participant.Participant) {
+					p.MarkCrashed(s.now())
+				})
+				_ = ok
+			}
 			s.notify(Event{Kind: kind, Alias: alias})
 			return
 		}
@@ -175,9 +220,17 @@ func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: ev.Log})
 		}
 		if ev.Delta != "" {
+			s.withParticipant(alias, func(p *participant.Participant) {
+				if p.Status != participant.StatusWorking {
+					p.MarkWorking(s.now())
+				}
+			})
 			s.notify(Event{Kind: KindDelta, Alias: alias, Text: ev.Delta})
 		}
 		if ev.Done {
+			s.withParticipant(alias, func(p *participant.Participant) {
+				p.MarkIdle(s.now())
+			})
 			s.notify(Event{Kind: KindDone, Alias: alias})
 		}
 	}

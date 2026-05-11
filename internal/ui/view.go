@@ -24,6 +24,8 @@ func (m Model) View() string {
 	for line := range strings.SplitSeq(strings.TrimSuffix(m.input.View(), "\n"), "\n") {
 		sb.WriteString(left + line + "\n")
 	}
+	sb.WriteString(left + strings.Repeat("─", m.viewport.Width) + "\n")
+	sb.WriteString(left + m.renderParticipantCells(m.viewport.Width, m.now(), m.sess.Roster()) + "\n")
 	sb.WriteString(strings.Repeat("\n", marginV))
 	return sb.String()
 }

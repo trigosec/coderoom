@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"time"
+
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -50,6 +52,7 @@ type Model struct {
 	viewport        viewport.Model
 	input           textarea.Model
 	focus           focusTarget
+	tickActive      bool
 	records         []record
 	renderedRecords []string        // rendered form of each record; rebuilt on resize
 	streaming       map[string]int  // alias → index in records (agents mid-turn)
@@ -59,6 +62,7 @@ type Model struct {
 	cwd             string
 	ready           bool // true after first WindowSizeMsg
 	lastSize        tea.WindowSizeMsg
+	now             func() time.Time
 }
 
 type focusTarget int
@@ -88,6 +92,7 @@ func New(cwd string, opts ...Option) Model {
 		streaming:       make(map[string]int),
 		departed:        make(map[string]bool),
 		cwd:             cwd,
+		now:             time.Now,
 	}
 	for _, o := range opts {
 		o(&m)

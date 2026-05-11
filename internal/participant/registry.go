@@ -53,3 +53,75 @@ func (r *Registry) List() []*Participant {
 	}
 	return result
 }
+
+// ListAvailable returns participants that are safe to send messages to.
+// This includes only participants whose agent has started and that are not
+// currently in StatusStarting or StatusCrashed.
+// Order is unspecified.
+func (r *Registry) ListAvailable() []*Participant {
+	var out []*Participant
+	for _, p := range r.participants {
+		if p.Agent == nil {
+			continue
+		}
+		if p.Status == StatusStarting || p.Status == StatusCrashed {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// ListStarting returns all participants currently in StatusStarting.
+// Order is unspecified.
+func (r *Registry) ListStarting() []*Participant {
+	var out []*Participant
+	for _, p := range r.participants {
+		if p.Status == StatusStarting {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ListCrashed returns all participants currently in StatusCrashed.
+// Order is unspecified.
+func (r *Registry) ListCrashed() []*Participant {
+	var out []*Participant
+	for _, p := range r.participants {
+		if p.Status == StatusCrashed {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ListWorking returns all participants currently in StatusWorking.
+// Order is unspecified.
+func (r *Registry) ListWorking() []*Participant {
+	var out []*Participant
+	for _, p := range r.participants {
+		if p.Status == StatusWorking {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (r *Registry) hasStatus(s Status) bool {
+	for _, p := range r.participants {
+		if p.Status == s {
+			return true
+		}
+	}
+	return false
+}
+
+// HasStarting reports whether any participant is currently in StatusStarting.
+func (r *Registry) HasStarting() bool { return r.hasStatus(StatusStarting) }
+
+// HasCrashed reports whether any participant is currently in StatusCrashed.
+func (r *Registry) HasCrashed() bool { return r.hasStatus(StatusCrashed) }
+
+// HasWorking reports whether any participant is currently in StatusWorking.
+func (r *Registry) HasWorking() bool { return r.hasStatus(StatusWorking) }

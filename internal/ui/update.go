@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -15,6 +16,8 @@ import (
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 )
+
+type activityTickMsg time.Time
 
 const (
 	// marginH is the number of columns reserved on each horizontal side. Only a
@@ -71,8 +74,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleResize(msg), nil
 	case editorComposeMsg:
 		return m.handleEditorCompose(msg), nil
+	case activityTickMsg:
+		next, cmd := m.handleActivityTick(time.Time(msg))
+		return next, cmd
 	case sessionEventMsg:
-		return m.handleEvent(session.Event(msg)), awaitEvent(m.queue)
+		next, cmd := m.handleEvent(session.Event(msg))
+		return next, tea.Batch(cmd, awaitEvent(m.queue))
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -200,7 +207,7 @@ func (m Model) handleEnter() (Model, tea.Cmd) {
 	action, err := Parse(raw)
 	var routing []string
 	if err == nil {
-		routing = routingFor(action, m.sess.Participants())
+		routing = routingFor(action, m.sess.RoutableParticipants())
 	}
 	m = m.appendRecord(record{kind: recordKindUserInput, body: raw, routing: routing})
 	if err != nil {
@@ -243,11 +250,15 @@ func (m Model) colorFor() func(string) string {
 	}
 }
 
-func (m Model) handleEvent(e session.Event) Model {
-	if next, ok := m.handleAgentLifecycleEvent(e); ok {
-		return next
+func (m Model) handleEvent(e session.Event) (Model, tea.Cmd) {
+	var next Model
+	if out, ok := m.handleAgentLifecycleEvent(e); ok {
+		next = out
+	} else {
+		next = m.handleMessageEvent(e)
 	}
-	return m.handleMessageEvent(e)
+	next, cmd := next.ensureActivityTick()
+	return next, cmd
 }
 
 func (m Model) handleAgentLifecycleEvent(e session.Event) (Model, bool) {
@@ -287,6 +298,38 @@ func (m Model) handleMessageEvent(e session.Event) Model {
 	default:
 		return m
 	}
+}
+
+func (m Model) wantsActivityTick() bool {
+	return m.sess.HasAnyActivityParticipants()
+}
+
+func rosterWantsTick(ps []participant.Participant) bool {
+	for _, p := range ps {
+		switch p.Status {
+		case participant.StatusStarting, participant.StatusWorking, participant.StatusCrashed:
+			return true
+		case participant.StatusIdle:
+			// no tick needed
+		}
+	}
+	return false
+}
+
+func (m Model) ensureActivityTick() (Model, tea.Cmd) {
+	if m.tickActive || !m.wantsActivityTick() {
+		return m, nil
+	}
+	m.tickActive = true
+	return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return activityTickMsg(t) })
+}
+
+func (m Model) handleActivityTick(_ time.Time) (Model, tea.Cmd) {
+	if !m.wantsActivityTick() {
+		m.tickActive = false
+		return m, nil
+	}
+	return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return activityTickMsg(t) })
 }
 
 func (m Model) handleDelta(alias, text string) Model {
@@ -366,7 +409,7 @@ func (m Model) sendToAgent(alias, text string) (Model, tea.Cmd) {
 }
 
 func (m Model) broadcastAll(text string) (Model, tea.Cmd) {
-	if len(m.sess.Participants()) == 0 {
+	if len(m.sess.RoutableParticipants()) == 0 {
 		return m.appendRecord(record{kind: recordKindSystem, body: "[no agents — use /invite <alias> to start one]"}), nil
 	}
 	if err := m.sess.Execute(session.BroadcastCommand{Text: text}); err != nil {
@@ -392,7 +435,7 @@ func (m Model) showHelp() Model {
 	body := "[help]\n" +
 		"  /invite <alias>   start an agent\n" +
 		"  /stop <alias>     stop an agent\n" +
-		"  /who              list active agents\n" +
+		"  /who              list agents\n" +
 		"  /help             show this message\n" +
 		"  @<alias> <text>   send to one agent\n" +
 		"  <text>            broadcast to all agents\n" +
