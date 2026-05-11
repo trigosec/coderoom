@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/agent"
@@ -53,6 +54,9 @@ func run() int {
 		}
 	}
 	opts = append(opts, ui.WithAgentFactory(factory))
+	if strings.TrimSpace(os.Getenv("CODEROOM_DEBUG")) == "1" {
+		opts = append(opts, ui.WithDebug(true))
+	}
 
 	if _, err := tea.NewProgram(
 		ui.New(cwd, opts...),

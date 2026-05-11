@@ -171,7 +171,7 @@ func TestRoutingFor(t *testing.T) {
 
 func TestBroadcastAll_noAgentsShowsHint(t *testing.T) {
 	m := makeReadyModel(t)
-	m, _ = m.broadcastAll("hello")
+	m = m.broadcastAll("hello")
 	if !hasRecord(m, recordKindSystem, "no agents") {
 		t.Errorf("expected no-agents hint in system records; records: %v", m.records)
 	}

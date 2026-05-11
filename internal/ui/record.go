@@ -31,7 +31,7 @@ var (
 )
 
 const (
-	promptPrefix = "> "
+	promptPrefix = "❯ "
 	logPrefix    = "▸ "
 	agentBullet  = "● "
 	routingArrow = "→ "

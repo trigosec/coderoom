@@ -21,6 +21,12 @@ func WithAgentFactory(f func(alias, cwd string) agent.Agent) Option {
 	return func(m *Model) { m.agentFactory = f }
 }
 
+// WithDebug enables developer debugging features (debug commands and optional
+// overlays). Intended to be wired to CODEROOM_DEBUG=1 in the CLI.
+func WithDebug(enabled bool) Option {
+	return func(m *Model) { m.debug = enabled }
+}
+
 // sessionEventMsg wraps a session.Event as a Bubble Tea message.
 type sessionEventMsg session.Event
 
@@ -52,6 +58,8 @@ type Model struct {
 	viewport        viewport.Model
 	input           textarea.Model
 	focus           focusTarget
+	debug           bool
+	debugRowNums    bool
 	tickActive      bool
 	records         []record
 	renderedRecords []string        // rendered form of each record; rebuilt on resize

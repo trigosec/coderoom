@@ -28,9 +28,11 @@ const (
 	marginV = 1
 )
 
+const toolboxHeight = 2 // separator + participant cells row
+
 func chromeHeight(inputHeight int) int {
-	// separator + input + bottom margin
-	return 1 + inputHeight + marginV
+	// viewport separator + input + toolbox + bottom margin
+	return 1 + inputHeight + toolboxHeight + marginV
 }
 
 func inputMaxHeight(totalHeight int) int {
@@ -156,6 +158,12 @@ func (m Model) handleViewportKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyCtrlG:
 		return m.openEditorWithTranscript()
+	case tea.KeyUp:
+		m.viewport.ScrollUp(1)
+		return m, nil
+	case tea.KeyDown:
+		m.viewport.ScrollDown(1)
+		return m, nil
 	case tea.KeyHome:
 		m.viewport.GotoTop()
 		return m, nil
@@ -353,15 +361,54 @@ func (m Model) handleDelta(alias, text string) Model {
 }
 
 func (m Model) executeAction(a Action) (Model, tea.Cmd) {
+	if out, ok := m.executeAgentAction(a); ok {
+		return out, nil
+	}
+	if out, ok := m.executeDebugAction(a); ok {
+		return out, nil
+	}
+	return m.executeUIAction(a)
+}
+
+func (m Model) executeAgentAction(a Action) (Model, bool) {
 	switch act := a.(type) {
 	case Invite:
-		return m.inviteAgent(act.Alias)
+		out := m.inviteAgent(act.Alias)
+		return out, true
 	case Stop:
-		return m.stopAgent(act.Alias)
+		out := m.stopAgent(act.Alias)
+		return out, true
 	case Send:
-		return m.sendToAgent(act.Alias, act.Text)
+		out := m.sendToAgent(act.Alias, act.Text)
+		return out, true
 	case Broadcast:
-		return m.broadcastAll(act.Text)
+		out := m.broadcastAll(act.Text)
+		return out, true
+	default:
+		return m, false
+	}
+}
+
+func (m Model) executeDebugAction(a Action) (Model, bool) {
+	switch a.(type) {
+	case DebugView:
+		if !m.debug {
+			return m.appendRecord(record{kind: recordKindSystem, body: "error: debug commands disabled (set CODEROOM_DEBUG=1)"}), true
+		}
+		return m.debugView(), true
+	case DebugRows:
+		if !m.debug {
+			return m.appendRecord(record{kind: recordKindSystem, body: "error: debug commands disabled (set CODEROOM_DEBUG=1)"}), true
+		}
+		m.debugRowNums = !m.debugRowNums
+		return m, true
+	default:
+		return m, false
+	}
+}
+
+func (m Model) executeUIAction(a Action) (Model, tea.Cmd) {
+	switch a.(type) {
 	case Who:
 		return m.showWho(), nil
 	case Help:
@@ -369,11 +416,12 @@ func (m Model) executeAction(a Action) (Model, tea.Cmd) {
 	case Quit:
 		m.sess.Shutdown()
 		return m, tea.Quit
+	default:
+		return m, nil
 	}
-	return m, nil
 }
 
-func (m Model) inviteAgent(alias string) (Model, tea.Cmd) {
+func (m Model) inviteAgent(alias string) Model {
 	color, nextPalette := m.palette.Next()
 	err := m.sess.Execute(session.InviteCommand{
 		Alias:      alias,
@@ -383,39 +431,39 @@ func (m Model) inviteAgent(alias string) (Model, tea.Cmd) {
 		Color:      color,
 	})
 	if err != nil {
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: invite %q: %v", alias, err)}), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: invite %q: %v", alias, err)})
 	}
 	m.palette = nextPalette
-	return m, nil
+	return m
 }
 
-func (m Model) stopAgent(alias string) (Model, tea.Cmd) {
+func (m Model) stopAgent(alias string) Model {
 	if err := m.sess.Execute(session.StopCommand{Alias: alias}); err != nil {
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: stop %q: %v", alias, err)}), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: stop %q: %v", alias, err)})
 	}
-	return m, nil
+	return m
 }
 
-func (m Model) sendToAgent(alias, text string) (Model, tea.Cmd) {
+func (m Model) sendToAgent(alias, text string) Model {
 	err := m.sess.Execute(session.SharedSendCommand{
 		Alias:         alias,
 		TextDirect:    text,
 		TextListeners: fmt.Sprintf("@%s: %s", alias, text),
 	})
 	if err != nil {
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: send to %q: %v", alias, err)}), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: send to %q: %v", alias, err)})
 	}
-	return m, nil
+	return m
 }
 
-func (m Model) broadcastAll(text string) (Model, tea.Cmd) {
+func (m Model) broadcastAll(text string) Model {
 	if len(m.sess.RoutableParticipants()) == 0 {
-		return m.appendRecord(record{kind: recordKindSystem, body: "[no agents — use /invite <alias> to start one]"}), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: "[no agents — use /invite <alias> to start one]"})
 	}
 	if err := m.sess.Execute(session.BroadcastCommand{Text: text}); err != nil {
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: broadcast: %v", err)}), nil
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: broadcast: %v", err)})
 	}
-	return m, nil
+	return m
 }
 
 func (m Model) showWho() Model {
@@ -432,14 +480,41 @@ func (m Model) showWho() Model {
 }
 
 func (m Model) showHelp() Model {
-	body := "[help]\n" +
-		"  /invite <alias>   start an agent\n" +
-		"  /stop <alias>     stop an agent\n" +
-		"  /who              list agents\n" +
-		"  /help             show this message\n" +
-		"  @<alias> <text>   send to one agent\n" +
-		"  <text>            broadcast to all agents\n" +
-		"  /quit             exit"
+	var b strings.Builder
+	b.WriteString("[help]\n")
+	b.WriteString("  /invite <alias>   start an agent\n")
+	b.WriteString("  /stop <alias>     stop an agent\n")
+	b.WriteString("  /who              list agents\n")
+	if m.debug {
+		b.WriteString("  /debugview        print viewport debug\n")
+		b.WriteString("  /debugrows        toggle row number overlay\n")
+	}
+	b.WriteString("  /help             show this message\n")
+	b.WriteString("  @<alias> <text>   send to one agent\n")
+	b.WriteString("  <text>            broadcast to all agents\n")
+	b.WriteString("  /quit             exit")
+	return m.appendRecord(record{kind: recordKindSystem, body: b.String()})
+}
+
+func (m Model) debugView() Model {
+	if !m.ready {
+		return m.appendRecord(record{kind: recordKindSystem, body: "[debug] not ready"})
+	}
+	view := ansi.Strip(strings.TrimSuffix(m.viewport.View(), "\n"))
+	lines := []string{}
+	if view != "" {
+		lines = strings.Split(view, "\n")
+	}
+	if len(lines) > 8 {
+		lines = lines[:8]
+	}
+	body := "[debug]\n" +
+		fmt.Sprintf("  y=%d h=%d rec=%d ln=%d\n", m.viewport.YOffset, m.viewport.Height, len(m.records), len(m.renderedRecords)) +
+		"  viewTop:\n"
+	for _, line := range lines {
+		body += "    " + line + "\n"
+	}
+	body = strings.TrimSuffix(body, "\n")
 	return m.appendRecord(record{kind: recordKindSystem, body: body})
 }
 
@@ -472,7 +547,10 @@ func (m Model) syncViewport() Model {
 	if !m.ready {
 		return m
 	}
-	m.viewport.SetContent(strings.Join(m.renderedRecords, "\n\n"))
+	// Avoid inserting blank separator lines between records. In small terminals
+	// those blank lines can consume the entire viewport and make it appear as if
+	// older records (like the first echoed command) are missing.
+	m.viewport.SetContent(strings.Join(m.renderedRecords, "\n"))
 	return m
 }
 
