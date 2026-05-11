@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trigosec/coderoom/internal/ui/inlinefmt"
 )
 
 type recordKind int
@@ -68,15 +69,21 @@ const agentBodyIndent = "  "
 func renderAgentOutput(r record, width int, colors func(string) string) string {
 	color := colors(r.alias)
 	var header string
+	var spanStyle lipgloss.Style
 	if color != "" {
-		header = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(agentBullet+r.alias) + ":"
+		spanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+		header = spanStyle.Render(agentBullet+r.alias) + ":"
 	} else {
 		header = agentBullet + r.alias + ":"
 	}
 	if r.body == "" {
 		return header
 	}
-	body := wrapLine(agentBodyIndent+r.body, width, agentBodyIndent)
+	bodyText := r.body
+	if color != "" {
+		bodyText = inlinefmt.Format(bodyText, spanStyle)
+	}
+	body := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
 	return header + "\n\n" + body
 }
 

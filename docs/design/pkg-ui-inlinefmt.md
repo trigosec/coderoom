@@ -5,7 +5,7 @@ records. The goal is to make LLM output more readable by applying lightweight
 visual treatment to the emphasis and quotation conventions that models naturally
 produce.
 
-Status: design proposal (not yet implemented).
+Status: implemented (Phase 1).
 
 ## Goals
 
@@ -124,8 +124,8 @@ The boundary characters (leading whitespace/bracket and trailing
 whitespace/punctuation) are **consumed** by the match and must be reproduced
 literally in the styled output; only the `'…'` span itself is coloured.
 
-**Known limitation:** quoted text that contains an apostrophe (e.g. `'it won't
-work'`) will not match. This is acceptable in Phase 1.
+Note: quoted text may contain apostrophes (e.g. `'it won't work'`) as long as
+the closing quote satisfies the boundary rule.
 
 **Examples:**
 

@@ -1,0 +1,206 @@
+// Package inlinefmt implements lightweight, inline styling for agent output.
+//
+// Phase 1 intentionally keeps formatting delimiters visible and applies
+// participant-colored styling to the entire span including delimiters.
+package inlinefmt
+
+import (
+	"strings"
+	"unicode/utf8"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+type spanType int
+
+const (
+	spanCode spanType = iota
+	spanBold
+	spanItalic
+	spanQuoteDoubleASCII
+	spanQuoteSingleASCII
+	spanQuotePaired
+)
+
+type candidate struct {
+	typ   spanType
+	open  string
+	close string
+}
+
+// Priority order (see docs/design/pkg-ui-inlinefmt.md):
+// 1) code, 2) bold, 3) italic, 4) ASCII double quote, 5) ASCII single quote,
+// 6) paired quote delimiters.
+var candidates = []candidate{
+	{typ: spanCode, open: "`", close: "`"},
+	{typ: spanBold, open: "**", close: "**"},
+	{typ: spanItalic, open: "*", close: "*"},
+	{typ: spanQuoteDoubleASCII, open: `"`, close: `"`},
+	{typ: spanQuoteSingleASCII, open: `'`, close: `'`},
+	{typ: spanQuotePaired, open: "“", close: "”"},
+	{typ: spanQuotePaired, open: "‘", close: "’"},
+	{typ: spanQuotePaired, open: "«", close: "»"},
+	{typ: spanQuotePaired, open: "‹", close: "›"},
+}
+
+// Format applies lightweight inline formatting to s.
+//
+// Formatting is "flat": nested spans are not styled. The formatter scans
+// left-to-right and styles multiple spans sequentially. At each opening
+// delimiter position, it chooses the first delimiter type (by priority) that
+// can be closed within the remaining text.
+func Format(s string, base lipgloss.Style) string {
+	if s == "" {
+		return s
+	}
+
+	var out strings.Builder
+	for i := 0; i < len(s); {
+		openPos, ok := nextOpenerIndex(s, i)
+		if !ok {
+			out.WriteString(s[i:])
+			break
+		}
+		if openPos > i {
+			out.WriteString(s[i:openPos])
+			i = openPos
+		}
+
+		rendered, advance, matched := tryMatchAt(s, i, base)
+		if matched {
+			out.WriteString(rendered)
+			i += advance
+			continue
+		}
+
+		consume := consumeUnclosableAt(s, i)
+		out.WriteString(s[i : i+consume])
+		i += consume
+	}
+	return out.String()
+}
+
+func nextOpenerIndex(s string, start int) (int, bool) {
+	best := -1
+	for _, c := range candidates {
+		j := strings.Index(s[start:], c.open)
+		if j < 0 {
+			continue
+		}
+		j += start
+		if best < 0 || j < best {
+			best = j
+		}
+	}
+	if best < 0 {
+		return 0, false
+	}
+	return best, true
+}
+
+func tryMatchAt(s string, i int, base lipgloss.Style) (string, int, bool) {
+	for _, c := range candidates {
+		if !strings.HasPrefix(s[i:], c.open) {
+			continue
+		}
+		end, ok := matchSpanEnd(s, i, c)
+		if !ok {
+			continue
+		}
+		span := s[i:end]
+		return renderSpan(span, c.typ, base), end - i, true
+	}
+	return "", 0, false
+}
+
+func renderSpan(span string, typ spanType, base lipgloss.Style) string {
+	switch typ {
+	case spanBold:
+		return base.Bold(true).Render(span)
+	case spanItalic:
+		return base.Italic(true).Render(span)
+	default:
+		return base.Render(span)
+	}
+}
+
+func consumeUnclosableAt(s string, i int) int {
+	consume := 0
+	for _, c := range candidates {
+		if strings.HasPrefix(s[i:], c.open) {
+			consume = max(consume, len(c.open))
+		}
+	}
+	if consume > 0 {
+		return consume
+	}
+	_, size := utf8.DecodeRuneInString(s[i:])
+	if size <= 0 {
+		size = 1
+	}
+	return size
+}
+
+func matchSpanEnd(s string, openAt int, c candidate) (int, bool) {
+	openLen := len(c.open)
+	closeLen := len(c.close)
+	searchFrom := openAt + openLen
+
+	switch c.typ {
+	case spanQuoteSingleASCII:
+		// Apply the boundary rule: only treat ' as a quote at token boundaries.
+		if !isSingleQuoteBoundaryBefore(s, openAt) {
+			return 0, false
+		}
+		for j := strings.Index(s[searchFrom:], c.close); j >= 0; j = strings.Index(s[searchFrom:], c.close) {
+			j += searchFrom
+			// Reject empty spans like "''".
+			if j == searchFrom {
+				searchFrom = j + closeLen
+				continue
+			}
+			if isSingleQuoteBoundaryAfter(s, j+closeLen) {
+				return j + closeLen, true
+			}
+			searchFrom = j + closeLen
+		}
+		return 0, false
+	default:
+		j := strings.Index(s[searchFrom:], c.close)
+		// Require non-empty content; prevents cases like "**bold*" being parsed
+		// as italic "**" (empty span).
+		if j <= 0 {
+			return 0, false
+		}
+		return searchFrom + j + closeLen, true
+	}
+}
+
+func isSingleQuoteBoundaryBefore(s string, quoteAt int) bool {
+	if quoteAt == 0 {
+		return true
+	}
+	// Note: this uses byte indexing. If the character before the quote is
+	// multi-byte, prev will be a continuation byte and will not match any ASCII
+	// boundary characters, which is acceptable for Phase 1.
+	prev := s[quoteAt-1]
+	switch prev {
+	case ' ', '\t', '\n', '(', '[', '{':
+		return true
+	default:
+		return false
+	}
+}
+
+func isSingleQuoteBoundaryAfter(s string, afterQuote int) bool {
+	if afterQuote >= len(s) {
+		return true
+	}
+	next := s[afterQuote]
+	switch next {
+	case ' ', '\t', '\n', ',', '.', ':', ';', '!', '?', ')', ']', '}':
+		return true
+	default:
+		return false
+	}
+}
