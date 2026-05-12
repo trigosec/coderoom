@@ -4,6 +4,7 @@ package codex_test
 
 import (
 	"encoding/json"
+	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
 )
+
+var updateSchemas = flag.Bool("update-schemas", false, "update Codex JSON schema snapshots in testdata/schemas/")
 
 // TestSchemaSnapshot regenerates Codex JSON schemas and compares them against
 // the snapshots in testdata/schemas/. Only the schemas in testdata are checked —
@@ -41,12 +44,21 @@ func TestSchemaSnapshot(t *testing.T) {
 			t.Errorf("read testdata %s: %v", name, err)
 			continue
 		}
-		got, err := os.ReadFile(filepath.Join(tmp, "v2", name))
+		gotPath := filepath.Join(tmp, "v2", name)
+		got, err := os.ReadFile(gotPath)
 		if err != nil {
 			t.Errorf("schema %s missing from generated output: %v", name, err)
 			continue
 		}
+		got = canonicalJSON(t, got)
+		want = canonicalJSON(t, want)
 		if !jsonDeepEqual(got, want) {
+			if *updateSchemas {
+				if err := os.WriteFile(filepath.Join("testdata", "schemas", name), got, 0o644); err != nil {
+					t.Fatalf("update snapshot %s: %v", name, err)
+				}
+				continue
+			}
 			t.Errorf("schema %s changed; update testdata/schemas/ to accept the new contract", name)
 		}
 	}
@@ -107,6 +119,23 @@ func jsonDeepEqual(a, b []byte) bool {
 	return json.Unmarshal(a, &av) == nil &&
 		json.Unmarshal(b, &bv) == nil &&
 		reflect.DeepEqual(av, bv)
+}
+
+func canonicalJSON(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		// Preserve verbatim so the test fails loudly rather than rewriting
+		// something we couldn't parse.
+		return b
+	}
+	// MarshalIndent provides a stable key order for objects (encoding/json
+	// sorts map keys) and normalizes insignificant whitespace.
+	out, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return b
+	}
+	return append(out, '\n')
 }
 
 func codexPackage() string {

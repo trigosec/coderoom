@@ -19,15 +19,21 @@ fi
 
 echo "current: $CURRENT"
 echo "latest:  $LATEST"
+echo "(filter: stable semver releases only)"
 
 # Fetch all published versions between current and latest (exclusive of current).
 VERSIONS=$(node -e "
 const versions = $(npm view @openai/codex versions --json 2>/dev/null);
 const current = '$CURRENT';
 const latest = '$LATEST';
-const idx = versions.indexOf(current);
-const end = versions.indexOf(latest);
-console.log(versions.slice(idx + 1, end + 1).join('\n'));
+// npm includes pre-releases (alpha/beta) and platform-suffixed builds.
+// For schema/integration validation we only care about stable npm versions.
+const stable = versions.filter(v => /^\\d+\\.\\d+\\.\\d+$/.test(v));
+const idx = stable.indexOf(current);
+const end = stable.indexOf(latest);
+if (idx === -1) throw new Error('current version not found in stable list: ' + current);
+if (end === -1) throw new Error('latest version not found in stable list: ' + latest);
+console.log(stable.slice(idx + 1, end + 1).join('\\n'));
 ")
 
 if [ -z "$VERSIONS" ]; then
@@ -42,6 +48,11 @@ echo ""
 
 for VERSION in $VERSIONS; do
     echo "--- testing @openai/codex@$VERSION ---"
+    # First, ensure schema snapshots are updated for this version if needed.
+    if ! CODEX_VERSION_OVERRIDE=$VERSION go test -tags integration ./internal/agent/codex/... -run TestSchemaSnapshot ; then
+        echo "schema snapshots changed; updating testdata/schemas/ for $VERSION"
+        CODEX_VERSION_OVERRIDE=$VERSION go test -tags integration ./internal/agent/codex/... -run TestSchemaSnapshot -update-schemas
+    fi
     CODEX_VERSION_OVERRIDE=$VERSION go test -tags integration ./internal/agent/codex/...
     echo "ok"
 done
