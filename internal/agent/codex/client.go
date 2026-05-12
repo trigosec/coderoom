@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/linestream"
 )
 
 // readResult carries the outcome of a single stdout notification.
@@ -31,7 +32,7 @@ type Client struct {
 	stdin        io.WriteCloser
 	reader       *bufio.Reader
 	stdoutEvents chan readResult // meaningful stdout events from the readStdout goroutine
-	stderrLines  chan string     // diagnostic lines from the readStderr goroutine
+	stderrLines  chan string     // diagnostic chunks from the readStderr goroutine
 	msgID        int
 	threadID     string
 	obs          ProtocolObserver
@@ -330,33 +331,8 @@ func (c *Client) readResponse() (json.RawMessage, error) {
 // blocking on stderrLines — diagnostic output at shutdown is not worth a
 // goroutine leak.
 func (c *Client) readStderr(r io.Reader) {
-	in := make(chan string)
-	go func() {
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			in <- scanner.Text()
-		}
-		close(in)
-	}()
-	var buf []string
-	for {
-		if len(buf) == 0 {
-			line, ok := <-in
-			if !ok {
-				return
-			}
-			buf = append(buf, line)
-		} else {
-			select {
-			case line, ok := <-in:
-				if !ok {
-					return // process exited; discard remaining buf to avoid goroutine leak
-				}
-				buf = append(buf, line)
-			case c.stderrLines <- buf[0]:
-				buf = buf[1:]
-			}
-		}
+	for chunk := range linestream.BatchReader(r) {
+		c.stderrLines <- chunk
 	}
 }
 

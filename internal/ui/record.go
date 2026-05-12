@@ -46,9 +46,26 @@ func renderRecord(r record, width int, colors func(string) string) string {
 	case recordKindSystem:
 		return systemStyle.Render(ansi.Wrap(r.body, width, ""))
 	case recordKindLog:
-		return logStyle.Render(wrapLine(logPrefix+r.body, width, logPrefix))
+		return logStyle.Render(renderLogBody(r.body, width))
 	}
 	return r.body
+}
+
+func renderLogBody(body string, width int) string {
+	if body == "" {
+		return ""
+	}
+	parts := strings.Split(body, "\n")
+	out := make([]string, 0, len(parts))
+	for i, line := range parts {
+		// If body ends with a trailing newline, strings.Split includes a final
+		// empty element; skip it to avoid rendering an orphaned "▸ " line.
+		if i == len(parts)-1 && line == "" {
+			continue
+		}
+		out = append(out, wrapLine(logPrefix+line, width, logPrefix))
+	}
+	return strings.Join(out, "\n")
 }
 
 func renderUserInput(r record, width int, colors func(string) string) string {
