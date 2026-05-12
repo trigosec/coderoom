@@ -37,8 +37,18 @@ type InviteCommand struct {
     Initiative participant.Initiative
 }
 
-// StopCommand stops and removes an agent from the session.
-type StopCommand struct {
+// CancelCommand interrupts in-flight work for an agent but keeps it in the
+// registry/room (the agent remains "joined").
+//
+// Semantics:
+// - Best-effort: not all agent backends support true cancellation.
+// - Does not remove history/records; it only affects ongoing execution.
+type CancelCommand struct {
+    Alias string
+}
+
+// RemoveCommand stops and removes an agent from the session (hard stop).
+type RemoveCommand struct {
     Alias string
 }
 
@@ -121,7 +131,7 @@ The relationship between session events and the persistent event log (`internal/
 
 The reader goroutine loops on `agent.Read()`, translating `agent.Event` values into session `Event` values and calling `observer.OnEvent`. When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent context cancellation) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
 
-`StopCommand` removes the participant from the registry, cancels the reader goroutine's context (so it will emit `KindAgentStopped` rather than `KindAgentCrashed` when it exits), then calls `agent.Stop`.
+`RemoveCommand` removes the participant from the registry, cancels the reader goroutine's context (so it will emit `KindAgentStopped` rather than `KindAgentCrashed` when it exits), then calls `agent.Stop`.
 
 ---
 
@@ -139,7 +149,7 @@ Shared room visibility is a property of the event kind. The TUI renders `KindBro
 
 ## Concurrency model
 
-- One goroutine per agent (the reader loop) — spawned on `InviteCommand`, exits on agent death or `StopCommand`.
+- One goroutine per agent (the reader loop) — spawned on `InviteCommand`, exits on agent death or `RemoveCommand`.
 - `Execute` runs on the caller's goroutine (the TUI's input loop).
 - Reader goroutines call `observer.OnEvent` directly; the observer must not block.
 - The registry and session state are accessed from both `Execute` and reader goroutines. A mutex protects shared access.

@@ -22,7 +22,7 @@ It is **not** responsible for session logic, message routing, or agent lifecycle
 ├─────────────────────────────────┤
 │ > _                             │  ← text input
 ├─────────────────────────────────┤
-│ ada (builder) · /invite /stop … │  ← toolbox (collapsed, Phase 2+)
+│ ada (builder) · /invite /cancel … │  ← toolbox (collapsed, Phase 2+)
 └─────────────────────────────────┘
 ```
 
@@ -115,7 +115,8 @@ Input is parsed on submit (Enter):
 | Input | Command | Notes |
 |---|---|---|
 | `/invite <alias>` | `InviteCommand` | |
-| `/stop <alias>` | `StopCommand` | |
+| `/cancel <alias>` | `CancelCommand` | Soft stop: cancels in-flight work for the agent but keeps it in the room |
+| `/remove <alias>` | `RemoveCommand` | Hard stop: removes the agent from the room and stops its process |
 | `/who` | — | Renders current roster inline; no session command needed |
 | `/help` | — | Renders available commands inline |
 | `@<alias> <text>` | `SharedSendCommand` | |
@@ -123,6 +124,18 @@ Input is parsed on submit (Enter):
 | `/quit` | `session.Shutdown()` + `tea.Quit` | Best-effort stop all agents before exit |
 
 `/who` and `/help` are handled entirely in the TUI — they append a formatted block to `lines` without touching the session. Validation errors (empty alias, unknown command) are also appended to `lines` as inline messages rather than using a separate error state.
+
+### Command semantics (room model)
+
+- `/invite <alias>` adds the agent to the shared room and starts its process.
+- `/cancel <alias>` is a **soft stop**: it attempts to interrupt the agent's
+  in-flight work but keeps the agent in the room (joined).
+- `/remove <alias>` is a **hard stop**: it removes the agent from the room and
+  stops its underlying process.
+
+Open questions (deferred to implementation):
+- What "stop" means per backend (true cancel vs best-effort stop/restart).
+- How to surface "stop not supported" in the UI without noise.
 
 ---
 
