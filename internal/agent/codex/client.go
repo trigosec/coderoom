@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
@@ -27,15 +28,47 @@ type readResult struct {
 // Calls must not be made concurrently, except Stop() which may be called
 // from another goroutine to interrupt a blocked Read().
 type Client struct {
-	cwd          string
-	cmd          *exec.Cmd
-	stdin        io.WriteCloser
-	reader       *bufio.Reader
-	stdoutEvents chan readResult // meaningful stdout events from the readStdout goroutine
-	stderrLines  chan string     // diagnostic chunks from the readStderr goroutine
-	msgID        int
-	threadID     string
-	obs          ProtocolObserver
+	// proc holds the OS process and stdio pipes.
+	proc struct {
+		cwd string
+		cmd *exec.Cmd
+
+		stdin  io.WriteCloser
+		stdout *bufio.Reader
+	}
+
+	// ch holds the output queues consumed by Read().
+	ch struct {
+		stdoutEvents chan readResult // meaningful stdout events from the readStdout goroutine
+		stderrLines  chan string     // diagnostic chunks from the readStderr goroutine
+	}
+
+	// rpc serializes requests written to stdin and assigns request IDs.
+	rpc struct {
+		mu    sync.Mutex
+		msgID int
+		obs   ProtocolObserver
+	}
+
+	// turn tracks the in-flight turn lifecycle within the current thread.
+	turn struct {
+		mu       sync.Mutex
+		threadID string
+		state    turnState
+	}
+}
+
+type turnStateKind uint8
+
+const (
+	turnIdle turnStateKind = iota
+	turnInflightUnknownID
+	turnInflightKnownID
+)
+
+type turnState struct {
+	kind   turnStateKind
+	turnID string
 }
 
 // Option configures a Client at construction time.
@@ -43,17 +76,16 @@ type Option func(*Client)
 
 // WithObserver attaches a ProtocolObserver that receives every raw JSON line.
 func WithObserver(obs ProtocolObserver) Option {
-	return func(c *Client) { c.obs = obs }
+	return func(c *Client) { c.rpc.obs = obs }
 }
 
 // New returns a Client that will run Codex in the given working directory.
 func New(cwd string, opts ...Option) *Client {
-	c := &Client{
-		cwd:          cwd,
-		obs:          noopObserver{},
-		stdoutEvents: make(chan readResult),
-		stderrLines:  make(chan string),
-	}
+	c := &Client{}
+	c.proc.cwd = cwd
+	c.rpc.obs = noopObserver{}
+	c.ch.stdoutEvents = make(chan readResult)
+	c.ch.stderrLines = make(chan string)
 	for _, o := range opts {
 		o(c)
 	}
@@ -82,9 +114,9 @@ func (c *Client) Start() error {
 		return fmt.Errorf("codex start: %w", err)
 	}
 
-	c.cmd = cmd
-	c.stdin = stdin
-	c.reader = bufio.NewReader(stdout)
+	c.proc.cmd = cmd
+	c.proc.stdin = stdin
+	c.proc.stdout = bufio.NewReader(stdout)
 	go c.readStderr(stderr)
 
 	if err := c.initialize(); err != nil {
@@ -96,18 +128,58 @@ func (c *Client) Start() error {
 		_ = c.Stop()
 		return err
 	}
-	c.threadID = threadID
+	c.turn.mu.Lock()
+	c.turn.threadID = threadID
+	c.turn.state = turnState{kind: turnIdle}
+	c.turn.mu.Unlock()
 	go c.readStdout()
 	return nil
+}
+
+// Interrupt requests the Codex process to stop its current in-flight work.
+// If a turn is active, send a turn/interrupt request.
+func (c *Client) Interrupt() error {
+	c.turn.mu.Lock()
+	threadID := c.turn.threadID
+	state := c.turn.state
+	c.turn.mu.Unlock()
+
+	// if the turn is being established, there is no active work being done
+	// and we don't know the turn ID yet, so we can't send turn/interrupt.
+	if state.kind == turnInflightUnknownID {
+		return nil
+	}
+	if threadID == "" || state.turnID == "" {
+		return agent.ErrNoActiveTurn
+	}
+	return c.writeRequest("turn/interrupt", map[string]any{
+		"threadId": threadID,
+		"turnId":   state.turnID,
+	})
 }
 
 // Send writes a turn/start request to stdin and returns immediately.
 // It does not read from stdout. Notifications arrive via Read().
 func (c *Client) Send(prompt string) error {
-	return c.writeRequest("turn/start", map[string]any{
-		"threadId": c.threadID,
+	c.turn.mu.Lock()
+	if c.turn.state.kind != turnIdle {
+		c.turn.mu.Unlock()
+		return agent.ErrTurnInProgress
+	}
+	c.turn.state = turnState{kind: turnInflightUnknownID}
+	threadID := c.turn.threadID
+	c.turn.mu.Unlock()
+
+	err := c.writeRequest("turn/start", map[string]any{
+		"threadId": threadID,
 		"input":    []map[string]any{{"type": "text", "text": prompt}},
 	})
+	if err != nil {
+		c.turn.mu.Lock()
+		c.turn.state = turnState{kind: turnIdle}
+		c.turn.mu.Unlock()
+	}
+	return err
 }
 
 // Read blocks until a meaningful event is ready — either a stdout-derived
@@ -117,12 +189,12 @@ func (c *Client) Send(prompt string) error {
 // will arrive.
 func (c *Client) Read() (agent.Event, error) {
 	select {
-	case r, ok := <-c.stdoutEvents:
+	case r, ok := <-c.ch.stdoutEvents:
 		if !ok {
 			return agent.Event{}, fmt.Errorf("codex: process exited")
 		}
 		return r.ev, r.err
-	case line := <-c.stderrLines:
+	case line := <-c.ch.stderrLines:
 		return agent.Event{Log: line}, nil
 	}
 }
@@ -134,7 +206,7 @@ func (c *Client) Read() (agent.Event, error) {
 // if the consumer is gone the remaining items are dropped, but the closed
 // channel still signals Read() that no further events will arrive.
 func (c *Client) readStdout() {
-	defer close(c.stdoutEvents)
+	defer close(c.ch.stdoutEvents)
 	in := make(chan readResult)
 	go c.scanStdout(in)
 	var buf []readResult
@@ -151,14 +223,14 @@ func (c *Client) readStdout() {
 				if !ok {
 					for _, pending := range buf {
 						select {
-						case c.stdoutEvents <- pending:
+						case c.ch.stdoutEvents <- pending:
 						default:
 						}
 					}
 					return
 				}
 				buf = append(buf, r)
-			case c.stdoutEvents <- buf[0]:
+			case c.ch.stdoutEvents <- buf[0]:
 				buf = buf[1:]
 			}
 		}
@@ -170,14 +242,14 @@ func (c *Client) readStdout() {
 // terminal error (turn/failed, IO error) is encountered.
 func (c *Client) scanStdout(in chan<- readResult) {
 	for {
-		raw, err := c.reader.ReadString('\n')
+		raw, err := c.proc.stdout.ReadString('\n')
 		if err != nil {
 			in <- readResult{err: fmt.Errorf("codex stdout: %w", err)}
 			close(in)
 			return
 		}
 		raw = strings.TrimRight(raw, "\r\n")
-		c.obs.OnReceive(raw)
+		c.rpc.obs.OnReceive(raw)
 		var msg rpcMsg
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
 			continue
@@ -185,6 +257,7 @@ func (c *Client) scanStdout(in chan<- readResult) {
 		if msg.Method == "" {
 			continue
 		}
+		c.noteNotification(msg)
 		ev, ok, err := translateNotification(msg)
 		if err != nil {
 			in <- readResult{err: err}
@@ -194,6 +267,34 @@ func (c *Client) scanStdout(in chan<- readResult) {
 		if ok {
 			in <- readResult{ev: ev}
 		}
+	}
+}
+
+func (c *Client) noteNotification(msg rpcMsg) {
+	switch msg.Method {
+	case "turn/started":
+		var p struct {
+			ThreadID string `json:"threadId"`
+			Turn     struct {
+				ID string `json:"id"`
+			} `json:"turn"`
+		}
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			return
+		}
+		if p.ThreadID == "" || p.Turn.ID == "" {
+			return
+		}
+		c.turn.mu.Lock()
+		// Ignore stray turns from other threads.
+		if c.turn.threadID == p.ThreadID {
+			c.turn.state = turnState{kind: turnInflightKnownID, turnID: p.Turn.ID}
+		}
+		c.turn.mu.Unlock()
+	case "turn/completed", "turn/failed":
+		c.turn.mu.Lock()
+		c.turn.state = turnState{kind: turnIdle}
+		c.turn.mu.Unlock()
 	}
 }
 
@@ -223,14 +324,14 @@ const stopGracePeriod = 5 * time.Second
 // If the process does not exit within stopGracePeriod it is killed.
 // May be called from a different goroutine to interrupt a blocked Read().
 func (c *Client) Stop() error {
-	if c.stdin != nil {
-		_ = c.stdin.Close()
+	if c.proc.stdin != nil {
+		_ = c.proc.stdin.Close()
 	}
-	if c.cmd == nil || c.cmd.Process == nil {
+	if c.proc.cmd == nil || c.proc.cmd.Process == nil {
 		return nil
 	}
 	done := make(chan error, 1)
-	go func() { done <- c.cmd.Wait() }()
+	go func() { done <- c.proc.cmd.Wait() }()
 
 	timer := time.NewTimer(stopGracePeriod)
 	defer timer.Stop()
@@ -241,7 +342,7 @@ func (c *Client) Stop() error {
 		}
 		return nil
 	case <-timer.C:
-		_ = c.cmd.Process.Kill()
+		_ = c.proc.cmd.Process.Kill()
 		<-done
 		return nil
 	}
@@ -259,7 +360,7 @@ func (c *Client) initialize() error {
 }
 
 func (c *Client) startThread() (string, error) {
-	if err := c.writeRequest("thread/start", map[string]any{"cwd": c.cwd}); err != nil {
+	if err := c.writeRequest("thread/start", map[string]any{"cwd": c.proc.cwd}); err != nil {
 		return "", err
 	}
 	raw, err := c.readResponse()
@@ -280,17 +381,20 @@ func (c *Client) startThread() (string, error) {
 // writeRequest serialises a JSON-RPC request, notifies the observer, and
 // writes it to stdin.
 func (c *Client) writeRequest(method string, params any) error {
-	c.msgID++
+	c.rpc.mu.Lock()
+	defer c.rpc.mu.Unlock()
+
+	c.rpc.msgID++
 	b, err := json.Marshal(map[string]any{
 		"method": method,
-		"id":     c.msgID,
+		"id":     c.rpc.msgID,
 		"params": params,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal rpc: %w", err)
 	}
-	c.obs.OnSend(string(b))
-	if _, err := fmt.Fprintf(c.stdin, "%s\n", b); err != nil {
+	c.rpc.obs.OnSend(string(b))
+	if _, err := fmt.Fprintf(c.proc.stdin, "%s\n", b); err != nil {
 		return fmt.Errorf("write rpc: %w", err)
 	}
 	return nil
@@ -300,12 +404,12 @@ func (c *Client) writeRequest(method string, params any) error {
 // Notification lines encountered during the handshake are logged and discarded.
 func (c *Client) readResponse() (json.RawMessage, error) {
 	for {
-		raw, err := c.reader.ReadString('\n')
+		raw, err := c.proc.stdout.ReadString('\n')
 		if err != nil {
 			return nil, fmt.Errorf("codex stdout: %w", err)
 		}
 		raw = strings.TrimRight(raw, "\r\n")
-		c.obs.OnReceive(raw)
+		c.rpc.obs.OnReceive(raw)
 		var msg rpcMsg
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
 			continue
@@ -314,8 +418,8 @@ func (c *Client) readResponse() (json.RawMessage, error) {
 			// Notification during handshake — unexpected but non-fatal; discard.
 			continue
 		}
-		if *msg.ID != c.msgID {
-			return nil, fmt.Errorf("codex: unexpected response id %d (expected %d)", *msg.ID, c.msgID)
+		if *msg.ID != c.rpc.msgID {
+			return nil, fmt.Errorf("codex: unexpected response id %d (expected %d)", *msg.ID, c.rpc.msgID)
 		}
 		if msg.Error != nil {
 			return nil, fmt.Errorf("rpc error: %s", msg.Error)
@@ -332,7 +436,7 @@ func (c *Client) readResponse() (json.RawMessage, error) {
 // goroutine leak.
 func (c *Client) readStderr(r io.Reader) {
 	for chunk := range linestream.BatchReader(r) {
-		c.stderrLines <- chunk
+		c.ch.stderrLines <- chunk
 	}
 }
 

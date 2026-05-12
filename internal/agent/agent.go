@@ -3,8 +3,18 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+)
+
+var (
+	// ErrTurnInProgress is returned when a new turn is started while a prior turn
+	// is still in flight.
+	ErrTurnInProgress = errors.New("turn already in progress")
+	// ErrNoActiveTurn is returned when an operation requires an in-flight turn
+	// (for example, Interrupt) but none is currently active.
+	ErrNoActiveTurn = errors.New("no active turn")
 )
 
 // Event is a semantic unit of output from an agent turn.
@@ -25,6 +35,12 @@ type Agent interface {
 	// Read blocks until the next meaningful event arrives from the agent.
 	// Returns an error if the process has exited or the turn has failed.
 	Read() (Event, error)
+	// Interrupt requests the agent to stop its current in-flight work.
+	// Best-effort: implementations may use protocol-level cancellation or send
+	// an OS interrupt signal (e.g. SIGINT) to the underlying process.
+	// Interrupt must not terminate the agent process unless there is no safe
+	// alternative.
+	Interrupt() error
 	// Stop kills the process and blocks until it is fully reaped.
 	// May be called from a different goroutine to interrupt a blocked Read.
 	Stop() error

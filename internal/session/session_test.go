@@ -32,6 +32,9 @@ func newMockAgent(events ...agent.Event) *mockAgent {
 }
 
 func (m *mockAgent) Start() error { return m.startErr }
+func (m *mockAgent) Interrupt() error {
+	return nil
+}
 func (m *mockAgent) Stop() error {
 	m.once.Do(func() { close(m.ch) })
 	return m.stopErr
