@@ -3,6 +3,8 @@ package ui
 import (
 	"os"
 	"testing"
+
+	"github.com/trigosec/coderoom/internal/ui/editor"
 )
 
 func TestCtrlG_withoutEditorAddsSystemRecordAndPreservesBuffer(t *testing.T) {
@@ -25,10 +27,11 @@ func TestEditorCompose_cancelRestoresPriorBuffer(t *testing.T) {
 	m := makeReadyModel(t)
 	m.input.SetValue("before")
 
-	next, _ := m.Update(editorComposeMsg{
-		prior:    "before",
-		canceled: true,
-		err:      os.ErrInvalid,
+	next, _ := m.Update(editor.Response{
+		Purpose:   editor.PurposeCompose,
+		PriorText: "before",
+		Canceled:  true,
+		Err:       os.ErrInvalid,
 	})
 	m2 := next.(Model)
 	if got := m2.input.Value(); got != "before" {
@@ -40,12 +43,29 @@ func TestEditorCompose_successReplacesBuffer(t *testing.T) {
 	m := makeReadyModel(t)
 	m.input.SetValue("before")
 
-	next, _ := m.Update(editorComposeMsg{
-		prior:   "before",
-		content: "after",
+	next, _ := m.Update(editor.Response{
+		Purpose:   editor.PurposeCompose,
+		PriorText: "before",
+		NewText:   "after",
 	})
 	m2 := next.(Model)
 	if got := m2.input.Value(); got != "after" {
 		t.Fatalf("expected success to replace buffer, got %q", got)
+	}
+}
+
+func TestEditorResponse_transcriptDoesNotMutateComposer(t *testing.T) {
+	m := makeReadyModel(t)
+	m.input.SetValue("draft")
+
+	next, _ := m.Update(editor.Response{
+		Purpose:  editor.PurposeTranscript,
+		NewText:  "ignored",
+		Err:      nil,
+		Canceled: false,
+	})
+	m2 := next.(Model)
+	if got := m2.input.Value(); got != "draft" {
+		t.Fatalf("expected transcript response to not mutate composer, got %q", got)
 	}
 }

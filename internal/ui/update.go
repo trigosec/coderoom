@@ -2,9 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -15,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
+	"github.com/trigosec/coderoom/internal/ui/editor"
 )
 
 type activityTickMsg time.Time
@@ -74,8 +72,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.WindowSizeMsg:
 		return m.handleResize(msg), nil
-	case editorComposeMsg:
-		return m.handleEditorCompose(msg), nil
+	case editor.Response:
+		return m.handleEditorResult(msg), nil
 	case activityTickMsg:
 		next, cmd := m.handleActivityTick(time.Time(msg))
 		return next, cmd
@@ -573,110 +571,51 @@ func (m Model) resizeForInput() Model {
 	return m
 }
 
-type editorComposeMsg struct {
-	prior    string
-	content  string
-	err      error
-	canceled bool
-}
-
 func (m Model) startEditorCompose() (Model, tea.Cmd) {
-	editor := os.Getenv("EDITOR")
-	if strings.TrimSpace(editor) == "" {
-		editor = os.Getenv("VISUAL")
-	}
-	if strings.TrimSpace(editor) == "" {
-		return m.appendRecord(record{
-			kind: recordKindSystem,
-			body: "error: no editor configured (set $EDITOR or $VISUAL)",
-		}), nil
-	}
-
 	prior := m.input.Value()
-	f, err := os.CreateTemp("", "coderoom-compose-*.md")
-	if err != nil {
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: compose: %v", err)}), nil
-	}
-	path := f.Name()
-	if _, err := f.WriteString(prior); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: compose: %v", err)}), nil
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: compose: %v", err)}), nil
-	}
-
-	args := strings.Fields(editor)
-	//nolint:gosec // $EDITOR/$VISUAL is explicitly user-configured; we execute it with a temp file path.
-	cmd := exec.Command(args[0], append(args[1:], path)...)
-	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-		defer func() { _ = os.Remove(path) }()
-		if err != nil {
-			return editorComposeMsg{prior: prior, canceled: true, err: err}
-		}
-		b, readErr := os.ReadFile(filepath.Clean(path))
-		if readErr != nil {
-			return editorComposeMsg{prior: prior, canceled: true, err: readErr}
-		}
-		content := string(b)
-		content = strings.TrimSuffix(content, "\n")
-		return editorComposeMsg{prior: prior, content: content}
+	cmd, err := editor.OpenTempFileInEditor(editor.Request{
+		Purpose:          editor.PurposeCompose,
+		PriorText:        prior,
+		InitialText:      prior,
+		TempPattern:      "coderoom-compose-*.md",
+		TrimFinalNewline: true,
 	})
+	if err != nil {
+		return m.appendRecord(record{kind: recordKindSystem, body: "error: " + err.Error()}), nil
+	}
+	return m, cmd
 }
 
-func (m Model) handleEditorCompose(msg editorComposeMsg) Model {
-	if msg.canceled || msg.err != nil {
-		m.input.SetValue(msg.prior)
-		m = m.resizeForInput()
+func (m Model) handleEditorResult(msg editor.Response) Model {
+	switch msg.Purpose {
+	case editor.PurposeCompose:
+		if msg.Canceled || msg.Err != nil {
+			m.input.SetValue(msg.PriorText)
+			return m.resizeForInput()
+		}
+		m.input.SetValue(msg.NewText)
+		return m.resizeForInput()
+	case editor.PurposeTranscript:
+		// Transcript export does not mutate the model; the effect is purely
+		// external (opening a read-only temp file in the user's editor).
+		return m
+	default:
+		// Unknown purposes are ignored to avoid corrupting the user's input.
 		return m
 	}
-	m.input.SetValue(msg.content)
-	m = m.resizeForInput()
-	return m
 }
 
 func (m Model) openEditorWithTranscript() (Model, tea.Cmd) {
-	editor := os.Getenv("EDITOR")
-	if strings.TrimSpace(editor) == "" {
-		editor = os.Getenv("VISUAL")
-	}
-	if strings.TrimSpace(editor) == "" {
-		return m.appendRecord(record{
-			kind: recordKindSystem,
-			body: "error: no editor configured (set $EDITOR or $VISUAL)",
-		}), nil
-	}
-
 	content := strings.Join(m.renderedRecords, "\n\n")
 	content = ansi.Strip(content)
-
-	f, err := os.CreateTemp("", "coderoom-transcript-*.txt")
-	if err != nil {
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: transcript export: %v", err)}), nil
-	}
-	path := f.Name()
-	if _, err := f.WriteString(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: transcript export: %v", err)}), nil
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: transcript export: %v", err)}), nil
-	}
-	if err := os.Chmod(path, 0o400); err != nil {
-		_ = os.Remove(path)
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: transcript export: %v", err)}), nil
-	}
-
-	args := strings.Fields(editor)
-	//nolint:gosec // $EDITOR/$VISUAL is explicitly user-configured; we execute it with a temp file path.
-	cmd := exec.Command(args[0], append(args[1:], path)...)
-	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-		defer func() { _ = os.Remove(path) }()
-		_ = err
-		return nil
+	cmd, err := editor.OpenTempFileInEditor(editor.Request{
+		Purpose:     editor.PurposeTranscript,
+		InitialText: content,
+		TempPattern: "coderoom-transcript-*.txt",
+		ReadOnly:    true,
 	})
+	if err != nil {
+		return m.appendRecord(record{kind: recordKindSystem, body: "error: " + err.Error()}), nil
+	}
+	return m, cmd
 }
