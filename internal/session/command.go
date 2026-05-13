@@ -71,6 +71,26 @@ func (c StopCommand) execute(s *Session) error {
 	return nil
 }
 
+// CancelCommand requests an agent to interrupt its current in-flight work.
+// The agent remains in the session.
+type CancelCommand struct {
+	Alias string
+}
+
+func (c CancelCommand) execute(s *Session) error {
+	p, ok := s.lookupParticipant(c.Alias)
+	if !ok {
+		return fmt.Errorf("participant %q not found", c.Alias)
+	}
+	if p.Agent == nil || p.Status == participant.StatusStarting || p.Status == participant.StatusCrashed {
+		return fmt.Errorf("participant %q not ready", c.Alias)
+	}
+	if err := p.Agent.Interrupt(); err != nil {
+		return fmt.Errorf("interrupt %q: %w", c.Alias, err)
+	}
+	return nil
+}
+
 // BroadcastCommand sends a message to the shared room and to all agents.
 // All agents receive the broadcast; initiative governs whether they may
 // take action without being explicitly addressed.

@@ -376,6 +376,9 @@ func (m Model) executeAgentAction(a Action) (Model, bool) {
 	case Stop:
 		out := m.stopAgent(act.Alias)
 		return out, true
+	case Cancel:
+		out := m.cancelAgent(act.Alias)
+		return out, true
 	case Send:
 		out := m.sendToAgent(act.Alias, act.Text)
 		return out, true
@@ -442,6 +445,13 @@ func (m Model) stopAgent(alias string) Model {
 	return m
 }
 
+func (m Model) cancelAgent(alias string) Model {
+	if err := m.sess.Execute(session.CancelCommand{Alias: alias}); err != nil {
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: cancel %q: %v", alias, err)})
+	}
+	return m.appendRecord(record{kind: recordKindSystem, body: "[→ " + alias + "] cancel requested"})
+}
+
 func (m Model) sendToAgent(alias, text string) Model {
 	err := m.sess.Execute(session.SharedSendCommand{
 		Alias:         alias,
@@ -482,6 +492,7 @@ func (m Model) showHelp() Model {
 	b.WriteString("[help]\n")
 	b.WriteString("  /invite <alias>   start an agent\n")
 	b.WriteString("  /stop <alias>     stop an agent\n")
+	b.WriteString("  /cancel <alias>   interrupt an agent's current turn\n")
 	b.WriteString("  /who              list agents\n")
 	if m.debug {
 		b.WriteString("  /debugview        print viewport debug\n")

@@ -150,7 +150,7 @@ func (c *Client) Interrupt() error {
 		return nil
 	}
 	if threadID == "" || state.turnID == "" {
-		return agent.ErrNoActiveTurn
+		return nil
 	}
 	return c.writeRequest("turn/interrupt", map[string]any{
 		"threadId": threadID,

@@ -12,9 +12,6 @@ var (
 	// ErrTurnInProgress is returned when a new turn is started while a prior turn
 	// is still in flight.
 	ErrTurnInProgress = errors.New("turn already in progress")
-	// ErrNoActiveTurn is returned when an operation requires an in-flight turn
-	// (for example, Interrupt) but none is currently active.
-	ErrNoActiveTurn = errors.New("no active turn")
 )
 
 // Event is a semantic unit of output from an agent turn.

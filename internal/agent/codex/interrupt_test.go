@@ -1,19 +1,16 @@
 package codex
 
 import (
-	"errors"
 	"io"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/trigosec/coderoom/internal/agent"
 )
 
 func TestInterrupt_noopWhenNotStarted(t *testing.T) {
 	c := New(".")
-	if err := c.Interrupt(); !errors.Is(err, agent.ErrNoActiveTurn) {
-		t.Fatalf("expected ErrNoActiveTurn, got %v", err)
+	if err := c.Interrupt(); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
 	}
 }
 

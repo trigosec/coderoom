@@ -14,13 +14,15 @@ import (
 // mockAgent is a controllable agent.Agent for tests.
 // Pre-load events at construction; Stop() closes the read channel.
 type mockAgent struct {
-	once     sync.Once
-	ch       chan agent.Event
-	mu       sync.Mutex
-	sends    []string
-	startErr error
-	stopErr  error
-	sendErr  error
+	once         sync.Once
+	ch           chan agent.Event
+	mu           sync.Mutex
+	sends        []string
+	startErr     error
+	stopErr      error
+	sendErr      error
+	interruptErr error
+	interrupts   int
 }
 
 func newMockAgent(events ...agent.Event) *mockAgent {
@@ -33,7 +35,10 @@ func newMockAgent(events ...agent.Event) *mockAgent {
 
 func (m *mockAgent) Start() error { return m.startErr }
 func (m *mockAgent) Interrupt() error {
-	return nil
+	m.mu.Lock()
+	m.interrupts++
+	m.mu.Unlock()
+	return m.interruptErr
 }
 func (m *mockAgent) Stop() error {
 	m.once.Do(func() { close(m.ch) })
@@ -51,6 +56,16 @@ func (m *mockAgent) Read() (agent.Event, error) {
 		return agent.Event{}, errors.New("agent closed")
 	}
 	return ev, nil
+}
+
+type gateAgent struct {
+	startGate chan struct{}
+	*mockAgent
+}
+
+func (g *gateAgent) Start() error {
+	<-g.startGate
+	return g.mockAgent.Start()
 }
 
 // testObserver collects events and exposes a channel for synchronisation.
@@ -83,6 +98,9 @@ func mustReceive(t *testing.T, ch <-chan session.Event, want session.Kind) sessi
 		select {
 		case ev := <-ch:
 			if want == session.KindAgentStarted && ev.Kind == session.KindAgentStarting {
+				continue
+			}
+			if want == session.KindAgentCrashed && ev.Kind == session.KindAgentLog {
 				continue
 			}
 			if ev.Kind != want {
@@ -120,6 +138,67 @@ func TestInvite_emitsAgentStarted(t *testing.T) {
 	invite(t, s, "ada", a)
 	mustReceive(t, obs.ch, session.KindAgentStarting)
 	mustReceive(t, obs.ch, session.KindAgentStarted)
+}
+
+func TestCancel_interruptsAgent(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a := newMockAgent()
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarting)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.CancelCommand{Alias: "ada"}); err != nil {
+		t.Fatalf("CancelCommand: %v", err)
+	}
+	a.mu.Lock()
+	got := a.interrupts
+	a.mu.Unlock()
+	if got != 1 {
+		t.Fatalf("expected 1 interrupt call, got %d", got)
+	}
+}
+
+func TestCancel_notReadyWhileStarting(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	base := newMockAgent()
+	g := &gateAgent{startGate: make(chan struct{}), mockAgent: base}
+	t.Cleanup(func() { _ = s.Execute(session.StopCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada", g)
+	mustReceive(t, obs.ch, session.KindAgentStarting)
+
+	if err := s.Execute(session.CancelCommand{Alias: "ada"}); err == nil {
+		t.Fatalf("expected error cancelling starting agent")
+	}
+
+	close(g.startGate)
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+}
+
+func TestCancel_notReadyWhenCrashed(t *testing.T) {
+	obs := newTestObserver()
+	s := session.New(session.WithObserver(obs))
+	a := newMockAgent()
+	a.startErr = errors.New("boom")
+
+	invite(t, s, "ada", a)
+	mustReceive(t, obs.ch, session.KindAgentStarting)
+	mustReceive(t, obs.ch, session.KindAgentCrashed)
+
+	if err := s.Execute(session.CancelCommand{Alias: "ada"}); err == nil {
+		t.Fatalf("expected error cancelling crashed agent")
+	}
+}
+
+func TestCancel_unknownAlias(t *testing.T) {
+	s := session.New()
+	if err := s.Execute(session.CancelCommand{Alias: "nobody"}); err == nil {
+		t.Fatalf("expected error for unknown participant")
+	}
 }
 
 func TestInvite_colorStoredOnParticipant(t *testing.T) {

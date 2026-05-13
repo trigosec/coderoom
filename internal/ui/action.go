@@ -17,6 +17,9 @@ type Invite struct{ Alias string }
 // Stop stops and removes an agent from the session.
 type Stop struct{ Alias string }
 
+// Cancel requests an agent to interrupt its current work.
+type Cancel struct{ Alias string }
+
 // Send sends a message to one agent in the shared room (@alias text).
 type Send struct {
 	Alias string
@@ -43,6 +46,7 @@ type DebugRows struct{}
 
 func (Invite) isAction()    {}
 func (Stop) isAction()      {}
+func (Cancel) isAction()    {}
 func (Send) isAction()      {}
 func (Broadcast) isAction() {}
 func (Who) isAction()       {}
@@ -81,6 +85,12 @@ func parseSlash(line string) (Action, error) {
 			return nil, fmt.Errorf("usage: /stop <alias>")
 		}
 		return Stop{Alias: rest}, nil
+	}
+	if cmd == "/cancel" {
+		if rest == "" {
+			return nil, fmt.Errorf("usage: /cancel <alias>")
+		}
+		return Cancel{Alias: rest}, nil
 	}
 
 	if a, ok := parseSlashNoArgs(cmd); ok {
