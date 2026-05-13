@@ -149,13 +149,13 @@ func TestWriteRequest_observerSendCalled(t *testing.T) {
 	obs := &testObserver{onSend: func(msg string) { sent = append(sent, msg) }}
 	c := newWithIO(nopWriteCloser{&buf}, bytes.NewBuffer(nil), obs)
 
-	if err := c.writeRequest("turn/start", map[string]any{"threadId": "t1"}); err != nil {
+	if err := c.writeRequest(methodTurnStart, turnStartParams{ThreadID: "t1"}); err != nil {
 		t.Fatalf("writeRequest: %v", err)
 	}
 	if len(sent) != 1 {
 		t.Fatalf("expected 1 OnSend call, got %d", len(sent))
 	}
-	if !strings.Contains(sent[0], "turn/start") {
+	if !strings.Contains(sent[0], methodTurnStart) {
 		t.Errorf("observer got unexpected msg: %q", sent[0])
 	}
 	if strings.Contains(buf.String(), "\n") && !strings.HasSuffix(buf.String(), "\n") {

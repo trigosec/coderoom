@@ -152,9 +152,9 @@ func (c *Client) Interrupt() error {
 	if threadID == "" || state.turnID == "" {
 		return nil
 	}
-	return c.writeRequest(methodTurnInterrupt, map[string]any{
-		"threadId": threadID,
-		"turnId":   state.turnID,
+	return c.writeRequest(methodTurnInterrupt, turnInterruptParams{
+		ThreadID: threadID,
+		TurnID:   state.turnID,
 	})
 }
 
@@ -170,9 +170,9 @@ func (c *Client) Send(prompt string) error {
 	threadID := c.turn.threadID
 	c.turn.mu.Unlock()
 
-	err := c.writeRequest(methodTurnStart, map[string]any{
-		"threadId": threadID,
-		"input":    []map[string]any{{"type": "text", "text": prompt}},
+	err := c.writeRequest(methodTurnStart, turnStartParams{
+		ThreadID: threadID,
+		Input:    []turnInput{{Type: "text", Text: prompt}},
 	})
 	if err != nil {
 		c.turn.mu.Lock()
@@ -250,7 +250,7 @@ func (c *Client) scanStdout(in chan<- readResult) {
 		}
 		raw = strings.TrimRight(raw, "\r\n")
 		c.rpc.obs.OnReceive(raw)
-		var msg rpcMsg
+		var msg rpcEnvelope
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
 			continue
 		}
@@ -270,15 +270,10 @@ func (c *Client) scanStdout(in chan<- readResult) {
 	}
 }
 
-func (c *Client) noteNotification(msg rpcMsg) {
+func (c *Client) noteNotification(msg rpcEnvelope) {
 	switch msg.Method {
 	case methodTurnStarted:
-		var p struct {
-			ThreadID string `json:"threadId"`
-			Turn     struct {
-				ID string `json:"id"`
-			} `json:"turn"`
-		}
+		var p turnStartedParams
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
 			return
 		}
@@ -300,12 +295,10 @@ func (c *Client) noteNotification(msg rpcMsg) {
 
 // translateNotification maps a known Codex notification to an agent.Event.
 // Returns ok=false for unknown notifications (caller should discard and continue).
-func translateNotification(msg rpcMsg) (agent.Event, bool, error) {
+func translateNotification(msg rpcEnvelope) (agent.Event, bool, error) {
 	switch msg.Method {
 	case methodAgentDelta:
-		var p struct {
-			Delta string `json:"delta"`
-		}
+		var p deltaParams
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
 			return agent.Event{}, false, fmt.Errorf("parse delta params: %w", err)
 		}
@@ -349,10 +342,11 @@ func (c *Client) Stop() error {
 }
 
 func (c *Client) initialize() error {
-	if err := c.writeRequest(methodInitialize, map[string]any{
-		"clientInfo":   map[string]any{"name": "coderoom", "version": "0.1.0"},
-		"capabilities": map[string]any{"experimentalApi": true},
-	}); err != nil {
+	var params initializeParams
+	params.ClientInfo.Name = "coderoom"
+	params.ClientInfo.Version = "0.1.0"
+	params.Capabilities.ExperimentalAPI = true
+	if err := c.writeRequest(methodInitialize, params); err != nil {
 		return err
 	}
 	_, err := c.readResponse()
@@ -360,18 +354,14 @@ func (c *Client) initialize() error {
 }
 
 func (c *Client) startThread() (string, error) {
-	if err := c.writeRequest(methodThreadStart, map[string]any{"cwd": c.proc.cwd}); err != nil {
+	if err := c.writeRequest(methodThreadStart, threadStartParams{Cwd: c.proc.cwd}); err != nil {
 		return "", err
 	}
 	raw, err := c.readResponse()
 	if err != nil {
 		return "", err
 	}
-	var r struct {
-		Thread struct {
-			ID string `json:"id"`
-		} `json:"thread"`
-	}
+	var r threadStartResult
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return "", fmt.Errorf("parse thread result: %w", err)
 	}
@@ -385,10 +375,10 @@ func (c *Client) writeRequest(method string, params any) error {
 	defer c.rpc.mu.Unlock()
 
 	c.rpc.msgID++
-	b, err := json.Marshal(map[string]any{
-		"method": method,
-		"id":     c.rpc.msgID,
-		"params": params,
+	b, err := json.Marshal(rpcRequest{
+		Method: method,
+		ID:     c.rpc.msgID,
+		Params: params,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal rpc: %w", err)
@@ -410,7 +400,7 @@ func (c *Client) readResponse() (json.RawMessage, error) {
 		}
 		raw = strings.TrimRight(raw, "\r\n")
 		c.rpc.obs.OnReceive(raw)
-		var msg rpcMsg
+		var msg rpcEnvelope
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
 			continue
 		}
