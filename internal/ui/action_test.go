@@ -13,7 +13,7 @@ func TestParse_slashCommands(t *testing.T) {
 	}{
 		{"/invite ada", ui.Invite{Alias: "ada"}},
 		{"/invite   ada  ", ui.Invite{Alias: "ada"}},
-		{"/stop ada", ui.Stop{Alias: "ada"}},
+		{"/remove ada", ui.Remove{Alias: "ada"}},
 		{"/cancel ada", ui.Cancel{Alias: "ada"}},
 		{"/who", ui.Who{}},
 		{"/help", ui.Help{}},
@@ -68,8 +68,8 @@ func TestParse_errors(t *testing.T) {
 	}{
 		{"/invite"},
 		{"/invite   "},
-		{"/stop"},
-		{"/stop   "},
+		{"/remove"},
+		{"/remove   "},
 		{"/cancel"},
 		{"/cancel   "},
 		{"@ada"},

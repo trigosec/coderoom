@@ -373,8 +373,8 @@ func (m Model) executeAgentAction(a Action) (Model, bool) {
 	case Invite:
 		out := m.inviteAgent(act.Alias)
 		return out, true
-	case Stop:
-		out := m.stopAgent(act.Alias)
+	case Remove:
+		out := m.removeAgent(act.Alias)
 		return out, true
 	case Cancel:
 		out := m.cancelAgent(act.Alias)
@@ -438,9 +438,9 @@ func (m Model) inviteAgent(alias string) Model {
 	return m
 }
 
-func (m Model) stopAgent(alias string) Model {
-	if err := m.sess.Execute(session.StopCommand{Alias: alias}); err != nil {
-		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: stop %q: %v", alias, err)})
+func (m Model) removeAgent(alias string) Model {
+	if err := m.sess.Execute(session.RemoveCommand{Alias: alias}); err != nil {
+		return m.appendRecord(record{kind: recordKindSystem, body: fmt.Sprintf("error: remove %q: %v", alias, err)})
 	}
 	return m
 }
@@ -491,7 +491,7 @@ func (m Model) showHelp() Model {
 	var b strings.Builder
 	b.WriteString("[help]\n")
 	b.WriteString("  /invite <alias>   start an agent\n")
-	b.WriteString("  /stop <alias>     stop an agent\n")
+	b.WriteString("  /remove <alias>   remove an agent\n")
 	b.WriteString("  /cancel <alias>   interrupt an agent's current turn\n")
 	b.WriteString("  /who              list agents\n")
 	if m.debug {

@@ -55,18 +55,18 @@ func (c InviteCommand) execute(s *Session) error {
 	return nil
 }
 
-// StopCommand stops and removes an agent from the session.
-type StopCommand struct {
+// RemoveCommand stops and removes an agent from the session.
+type RemoveCommand struct {
 	Alias string
 }
 
-func (c StopCommand) execute(s *Session) error {
+func (c RemoveCommand) execute(s *Session) error {
 	p, ok := s.detachParticipant(c.Alias)
 	if !ok {
 		return fmt.Errorf("participant %q not found", c.Alias)
 	}
 	if err := p.Agent.Stop(); err != nil {
-		return fmt.Errorf("stop agent %q: %w", c.Alias, err)
+		return fmt.Errorf("remove agent %q: %w", c.Alias, err)
 	}
 	return nil
 }

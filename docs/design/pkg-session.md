@@ -133,6 +133,8 @@ The reader goroutine loops on `agent.Read()`, translating `agent.Event` values i
 
 `RemoveCommand` removes the participant from the registry, cancels the reader goroutine's context (so it will emit `KindAgentStopped` rather than `KindAgentCrashed` when it exits), then calls `agent.Stop`.
 
+`CancelCommand` looks up the participant and rejects it if the agent is still starting or has crashed. It calls `agent.Interrupt()`, which is best-effort — the call returns nil for all no-op cases (no active turn, or the backend does not support cancellation). The agent remains in the registry and its reader goroutine continues running.
+
 ---
 
 ## Message routing

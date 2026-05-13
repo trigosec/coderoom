@@ -14,8 +14,8 @@ type Action interface {
 // Invite invites a new agent into the session.
 type Invite struct{ Alias string }
 
-// Stop stops and removes an agent from the session.
-type Stop struct{ Alias string }
+// Remove stops and removes an agent from the session.
+type Remove struct{ Alias string }
 
 // Cancel requests an agent to interrupt its current work.
 type Cancel struct{ Alias string }
@@ -45,7 +45,7 @@ type DebugView struct{}
 type DebugRows struct{}
 
 func (Invite) isAction()    {}
-func (Stop) isAction()      {}
+func (Remove) isAction()    {}
 func (Cancel) isAction()    {}
 func (Send) isAction()      {}
 func (Broadcast) isAction() {}
@@ -80,11 +80,11 @@ func parseSlash(line string) (Action, error) {
 		}
 		return Invite{Alias: rest}, nil
 	}
-	if cmd == "/stop" {
+	if cmd == "/remove" {
 		if rest == "" {
-			return nil, fmt.Errorf("usage: /stop <alias>")
+			return nil, fmt.Errorf("usage: /remove <alias>")
 		}
-		return Stop{Alias: rest}, nil
+		return Remove{Alias: rest}, nil
 	}
 	if cmd == "/cancel" {
 		if rest == "" {

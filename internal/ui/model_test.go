@@ -190,7 +190,7 @@ func TestShowWho_noAgents(t *testing.T) {
 func TestShowHelp_coversAllCommands(t *testing.T) {
 	m := makeReadyModel(t)
 	m = m.showHelp()
-	for _, cmd := range []string{"/invite", "/stop", "/who", "/help", "@<alias>", "/quit"} {
+	for _, cmd := range []string{"/invite", "/remove", "/cancel", "/who", "/help", "@<alias>", "/quit"} {
 		if !hasRecord(m, recordKindSystem, cmd) {
 			t.Errorf("help output missing %q; records: %v", cmd, m.records)
 		}

@@ -72,8 +72,8 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	}
 	drainUntil(t, events, session.KindDone, 60*time.Second)
 
-	if err := s.Execute(session.StopCommand{Alias: "ada"}); err != nil {
-		t.Fatalf("stop: %v", err)
+	if err := s.Execute(session.RemoveCommand{Alias: "ada"}); err != nil {
+		t.Fatalf("remove: %v", err)
 	}
 	drainUntil(t, events, session.KindAgentStopped, 10*time.Second)
 
