@@ -4,10 +4,10 @@ import "encoding/json"
 
 // rpcRequest is a minimal JSON-RPC request envelope (newline-delimited JSON).
 // Codex does not require the jsonrpc version field in practice.
-type rpcRequest struct {
+type rpcRequest[T any] struct {
 	Method string `json:"method"`
 	ID     int    `json:"id"`
-	Params any    `json:"params,omitempty"`
+	Params T      `json:"params,omitempty"`
 }
 
 type initializeParams struct {

@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
@@ -152,7 +151,7 @@ func (c *Client) Interrupt() error {
 	if threadID == "" || state.turnID == "" {
 		return nil
 	}
-	return c.writeRequest(methodTurnInterrupt, turnInterruptParams{
+	return rpcWrite(c, methodTurnInterrupt, turnInterruptParams{
 		ThreadID: threadID,
 		TurnID:   state.turnID,
 	})
@@ -170,7 +169,7 @@ func (c *Client) Send(prompt string) error {
 	threadID := c.turn.threadID
 	c.turn.mu.Unlock()
 
-	err := c.writeRequest(methodTurnStart, turnStartParams{
+	err := rpcWrite(c, methodTurnStart, turnStartParams{
 		ThreadID: threadID,
 		Input:    []turnInput{{Type: "text", Text: prompt}},
 	})
@@ -242,17 +241,15 @@ func (c *Client) readStdout() {
 // terminal error (turn/failed, IO error) is encountered.
 func (c *Client) scanStdout(in chan<- readResult) {
 	for {
-		raw, err := c.proc.stdout.ReadString('\n')
+		msg, err := rpcRead(c)
 		if err != nil {
-			in <- readResult{err: fmt.Errorf("codex stdout: %w", err)}
+			if nonJSON, ok := isNonJSONStdoutLine(err); ok {
+				in <- readResult{ev: agent.Event{Log: nonJSON.FormatLogLine()}}
+				continue
+			}
+			in <- readResult{err: err}
 			close(in)
 			return
-		}
-		raw = strings.TrimRight(raw, "\r\n")
-		c.rpc.obs.OnReceive(raw)
-		var msg rpcEnvelope
-		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-			continue
 		}
 		if msg.Method == "" {
 			continue
@@ -346,7 +343,7 @@ func (c *Client) initialize() error {
 	params.ClientInfo.Name = "coderoom"
 	params.ClientInfo.Version = "0.1.0"
 	params.Capabilities.ExperimentalAPI = true
-	if err := c.writeRequest(methodInitialize, params); err != nil {
+	if err := rpcWrite(c, methodInitialize, params); err != nil {
 		return err
 	}
 	_, err := c.readResponse()
@@ -354,7 +351,7 @@ func (c *Client) initialize() error {
 }
 
 func (c *Client) startThread() (string, error) {
-	if err := c.writeRequest(methodThreadStart, threadStartParams{Cwd: c.proc.cwd}); err != nil {
+	if err := rpcWrite(c, methodThreadStart, threadStartParams{Cwd: c.proc.cwd}); err != nil {
 		return "", err
 	}
 	raw, err := c.readResponse()
@@ -368,41 +365,17 @@ func (c *Client) startThread() (string, error) {
 	return r.Thread.ID, nil
 }
 
-// writeRequest serialises a JSON-RPC request, notifies the observer, and
-// writes it to stdin.
-func (c *Client) writeRequest(method string, params any) error {
-	c.rpc.mu.Lock()
-	defer c.rpc.mu.Unlock()
-
-	c.rpc.msgID++
-	b, err := json.Marshal(rpcRequest{
-		Method: method,
-		ID:     c.rpc.msgID,
-		Params: params,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal rpc: %w", err)
-	}
-	c.rpc.obs.OnSend(string(b))
-	if _, err := fmt.Fprintf(c.proc.stdin, "%s\n", b); err != nil {
-		return fmt.Errorf("write rpc: %w", err)
-	}
-	return nil
-}
-
 // readResponse reads lines until it finds an RPC response (ID-bearing).
 // Notification lines encountered during the handshake are logged and discarded.
 func (c *Client) readResponse() (json.RawMessage, error) {
 	for {
-		raw, err := c.proc.stdout.ReadString('\n')
+		msg, err := rpcRead(c)
 		if err != nil {
-			return nil, fmt.Errorf("codex stdout: %w", err)
-		}
-		raw = strings.TrimRight(raw, "\r\n")
-		c.rpc.obs.OnReceive(raw)
-		var msg rpcEnvelope
-		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
-			continue
+			if _, ok := isNonJSONStdoutLine(err); ok {
+				// Ignore non-JSON noise during handshake.
+				continue
+			}
+			return nil, err
 		}
 		if msg.ID == nil {
 			// Notification during handshake — unexpected but non-fatal; discard.
