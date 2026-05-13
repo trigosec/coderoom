@@ -19,9 +19,9 @@ func newWithIO(stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Cl
 	if obs == nil {
 		obs = noopObserver{}
 	}
-	c := &Client{}
-	c.proc.stdin = stdin
-	c.proc.stdout = bufio.NewReader(stdout)
+	c := &Client{proc: newProc("test")}
+	c.proc.codexIn = stdin
+	c.proc.codexOut = bufio.NewReader(stdout)
 	c.rpc.obs = obs
 	c.ch.stdoutEvents = make(chan readResult)
 	c.ch.stderrLines = make(chan string)

@@ -4,12 +4,8 @@
 package codex
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -28,13 +24,7 @@ type readResult struct {
 // from another goroutine to interrupt a blocked Read().
 type Client struct {
 	// proc holds the OS process and stdio pipes.
-	proc struct {
-		cwd string
-		cmd *exec.Cmd
-
-		stdin  io.WriteCloser
-		stdout *bufio.Reader
-	}
+	proc *process
 
 	// ch holds the output queues consumed by Read().
 	ch struct {
@@ -42,7 +32,7 @@ type Client struct {
 		stderrLines  chan string     // diagnostic chunks from the readStderr goroutine
 	}
 
-	// rpc serializes requests written to stdin and assigns request IDs.
+	// rpc serializes requests written to codex stdin and assigns request IDs.
 	rpc struct {
 		mu    sync.Mutex
 		msgID int
@@ -80,8 +70,7 @@ func WithObserver(obs ProtocolObserver) Option {
 
 // New returns a Client that will run Codex in the given working directory.
 func New(cwd string, opts ...Option) *Client {
-	c := &Client{}
-	c.proc.cwd = cwd
+	c := &Client{proc: newProc(cwd)}
 	c.rpc.obs = noopObserver{}
 	c.ch.stdoutEvents = make(chan readResult)
 	c.ch.stderrLines = make(chan string)
@@ -94,29 +83,12 @@ func New(cwd string, opts ...Option) *Client {
 // Start launches the Codex app-server and completes the initialize and
 // thread/start handshakes. It must be called before Send or Read.
 func (c *Client) Start() error {
-	args := codexArgs()
-	cmd := exec.Command(args[0], args[1:]...)
-
-	stdin, err := cmd.StdinPipe()
+	err := c.proc.start()
 	if err != nil {
-		return fmt.Errorf("codex stdin pipe: %w", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("codex stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("codex stderr pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("codex start: %w", err)
+		return err
 	}
 
-	c.proc.cmd = cmd
-	c.proc.stdin = stdin
-	c.proc.stdout = bufio.NewReader(stdout)
-	go c.readStderr(stderr)
+	go c.readStderr()
 
 	if err := c.initialize(); err != nil {
 		_ = c.Stop()
@@ -314,8 +286,8 @@ const stopGracePeriod = 5 * time.Second
 // If the process does not exit within stopGracePeriod it is killed.
 // May be called from a different goroutine to interrupt a blocked Read().
 func (c *Client) Stop() error {
-	if c.proc.stdin != nil {
-		_ = c.proc.stdin.Close()
+	if c.proc.codexIn != nil {
+		_ = c.proc.codexIn.Close()
 	}
 	if c.proc.cmd == nil || c.proc.cmd.Process == nil {
 		return nil
@@ -397,18 +369,9 @@ func (c *Client) readResponse() (json.RawMessage, error) {
 // closes (process exited), remaining buffered lines are discarded rather than
 // blocking on stderrLines — diagnostic output at shutdown is not worth a
 // goroutine leak.
-func (c *Client) readStderr(r io.Reader) {
+func (c *Client) readStderr() {
+	r := c.proc.codexErr
 	for chunk := range linestream.BatchReader(r) {
 		c.ch.stderrLines <- chunk
 	}
-}
-
-// codexArgs returns the command and arguments for the Codex app-server.
-// CODEX_VERSION_OVERRIDE pins a specific npm version for integration testing.
-func codexArgs() []string {
-	pkg := "@openai/codex"
-	if v := os.Getenv("CODEX_VERSION_OVERRIDE"); v != "" {
-		pkg = "@openai/codex@" + v
-	}
-	return []string{"npx", pkg, "app-server"}
 }

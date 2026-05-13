@@ -47,7 +47,7 @@ func rpcWrite[T any](c *Client, method string, params T) error {
 		return fmt.Errorf("marshal rpc: %w", err)
 	}
 	c.rpc.obs.OnSend(string(b))
-	if _, err := fmt.Fprintf(c.proc.stdin, "%s\n", b); err != nil {
+	if _, err := fmt.Fprintf(c.proc.codexIn, "%s\n", b); err != nil {
 		return fmt.Errorf("write rpc: %w", err)
 	}
 	return nil
@@ -56,7 +56,7 @@ func rpcWrite[T any](c *Client, method string, params T) error {
 // rpcRead reads one newline-delimited JSON message from the Codex process
 // stdout and decodes it into an rpcEnvelope.
 func rpcRead(c *Client) (rpcEnvelope, error) {
-	raw, err := c.proc.stdout.ReadString('\n')
+	raw, err := c.proc.codexOut.ReadString('\n')
 	if err != nil {
 		return rpcEnvelope{}, fmt.Errorf("codex stdout: %w", err)
 	}
