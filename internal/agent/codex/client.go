@@ -152,7 +152,7 @@ func (c *Client) Interrupt() error {
 	if threadID == "" || state.turnID == "" {
 		return nil
 	}
-	return c.writeRequest("turn/interrupt", map[string]any{
+	return c.writeRequest(methodTurnInterrupt, map[string]any{
 		"threadId": threadID,
 		"turnId":   state.turnID,
 	})
@@ -170,7 +170,7 @@ func (c *Client) Send(prompt string) error {
 	threadID := c.turn.threadID
 	c.turn.mu.Unlock()
 
-	err := c.writeRequest("turn/start", map[string]any{
+	err := c.writeRequest(methodTurnStart, map[string]any{
 		"threadId": threadID,
 		"input":    []map[string]any{{"type": "text", "text": prompt}},
 	})
@@ -272,7 +272,7 @@ func (c *Client) scanStdout(in chan<- readResult) {
 
 func (c *Client) noteNotification(msg rpcMsg) {
 	switch msg.Method {
-	case "turn/started":
+	case methodTurnStarted:
 		var p struct {
 			ThreadID string `json:"threadId"`
 			Turn     struct {
@@ -291,7 +291,7 @@ func (c *Client) noteNotification(msg rpcMsg) {
 			c.turn.state = turnState{kind: turnInflightKnownID, turnID: p.Turn.ID}
 		}
 		c.turn.mu.Unlock()
-	case "turn/completed", "turn/failed":
+	case methodTurnCompleted, methodTurnFailed:
 		c.turn.mu.Lock()
 		c.turn.state = turnState{kind: turnIdle}
 		c.turn.mu.Unlock()
@@ -302,7 +302,7 @@ func (c *Client) noteNotification(msg rpcMsg) {
 // Returns ok=false for unknown notifications (caller should discard and continue).
 func translateNotification(msg rpcMsg) (agent.Event, bool, error) {
 	switch msg.Method {
-	case "item/agentMessage/delta":
+	case methodAgentDelta:
 		var p struct {
 			Delta string `json:"delta"`
 		}
@@ -310,9 +310,9 @@ func translateNotification(msg rpcMsg) (agent.Event, bool, error) {
 			return agent.Event{}, false, fmt.Errorf("parse delta params: %w", err)
 		}
 		return agent.Event{Delta: p.Delta}, true, nil
-	case "turn/completed":
+	case methodTurnCompleted:
 		return agent.Event{Done: true}, true, nil
-	case "turn/failed":
+	case methodTurnFailed:
 		return agent.Event{}, false, fmt.Errorf("turn failed: %s", msg.Params)
 	}
 	return agent.Event{}, false, nil
@@ -349,7 +349,7 @@ func (c *Client) Stop() error {
 }
 
 func (c *Client) initialize() error {
-	if err := c.writeRequest("initialize", map[string]any{
+	if err := c.writeRequest(methodInitialize, map[string]any{
 		"clientInfo":   map[string]any{"name": "coderoom", "version": "0.1.0"},
 		"capabilities": map[string]any{"experimentalApi": true},
 	}); err != nil {
@@ -360,7 +360,7 @@ func (c *Client) initialize() error {
 }
 
 func (c *Client) startThread() (string, error) {
-	if err := c.writeRequest("thread/start", map[string]any{"cwd": c.proc.cwd}); err != nil {
+	if err := c.writeRequest(methodThreadStart, map[string]any{"cwd": c.proc.cwd}); err != nil {
 		return "", err
 	}
 	raw, err := c.readResponse()
