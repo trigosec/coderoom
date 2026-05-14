@@ -92,13 +92,7 @@ func (c *Client) Start() error {
 	}
 
 	c.initRead()
-	if err := c.initialize(); err != nil {
-		close(c.read.events)
-		c.read.events = nil
-		_ = c.Stop()
-		return err
-	}
-	threadID, err := c.startThread()
+	threadID, err := rpcHandshake(c)
 	if err != nil {
 		close(c.read.events)
 		c.read.events = nil
@@ -325,33 +319,6 @@ func (c *Client) Stop() error {
 		<-done
 		return nil
 	}
-}
-
-func (c *Client) initialize() error {
-	var params initializeParams
-	params.ClientInfo.Name = "coderoom"
-	params.ClientInfo.Version = "0.1.0"
-	params.Capabilities.ExperimentalAPI = true
-	if err := rpcWrite(c, methodInitialize, params); err != nil {
-		return err
-	}
-	_, err := c.readResponse()
-	return err
-}
-
-func (c *Client) startThread() (string, error) {
-	if err := rpcWrite(c, methodThreadStart, threadStartParams{Cwd: c.proc.cwd}); err != nil {
-		return "", err
-	}
-	raw, err := c.readResponse()
-	if err != nil {
-		return "", err
-	}
-	var r threadStartResult
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return "", fmt.Errorf("parse thread result: %w", err)
-	}
-	return r.Thread.ID, nil
 }
 
 // readResponse reads lines until it finds an RPC response (ID-bearing).

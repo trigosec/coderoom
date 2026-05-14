@@ -53,6 +53,34 @@ func rpcWrite[T any](c *Client, method string, params T) error {
 	return nil
 }
 
+// rpcHandshake performs the initialize and thread/start handshake sequence and
+// returns the active thread ID.
+func rpcHandshake(c *Client) (string, error) {
+	var init initializeParams
+	init.ClientInfo.Name = "coderoom"
+	init.ClientInfo.Version = "0.1.0"
+	init.Capabilities.ExperimentalAPI = true
+	if err := rpcWrite(c, methodInitialize, init); err != nil {
+		return "", err
+	}
+	if _, err := c.readResponse(); err != nil {
+		return "", err
+	}
+
+	if err := rpcWrite(c, methodThreadStart, threadStartParams{Cwd: c.proc.cwd}); err != nil {
+		return "", err
+	}
+	raw, err := c.readResponse()
+	if err != nil {
+		return "", err
+	}
+	var r threadStartResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return "", fmt.Errorf("parse thread result: %w", err)
+	}
+	return r.Thread.ID, nil
+}
+
 // rpcRead reads one newline-delimited JSON message from the Codex process
 // stdout and decodes it into an rpcEnvelope.
 func rpcRead(c *Client) (rpcEnvelope, error) {
