@@ -25,7 +25,7 @@ func newWithIO(stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Cl
 	c.proc.codexOut = bufio.NewReader(stdout)
 	c.proc.codexErr = bytes.NewBuffer(nil)
 	c.rpc.obs = obs
-	c.read.events = make(chan readEvent)
+	c.initRead()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {

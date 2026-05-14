@@ -71,11 +71,16 @@ func WithObserver(obs ProtocolObserver) Option {
 func New(cwd string, opts ...Option) *Client {
 	c := &Client{proc: newProc(cwd)}
 	c.rpc.obs = noopObserver{}
-	c.read.events = make(chan readEvent)
 	for _, o := range opts {
 		o(c)
 	}
 	return c
+}
+
+func (c *Client) initRead() {
+	if c.read.events == nil {
+		c.read.events = make(chan readEvent)
+	}
 }
 
 // Start launches the Codex app-server and completes the initialize and
@@ -86,12 +91,17 @@ func (c *Client) Start() error {
 		return err
 	}
 
+	c.initRead()
 	if err := c.initialize(); err != nil {
+		close(c.read.events)
+		c.read.events = nil
 		_ = c.Stop()
 		return err
 	}
 	threadID, err := c.startThread()
 	if err != nil {
+		close(c.read.events)
+		c.read.events = nil
 		_ = c.Stop()
 		return err
 	}
@@ -168,6 +178,9 @@ func (c *Client) Send(prompt string) error {
 // read.events channel means the process has exited and no further events
 // will arrive.
 func (c *Client) Read() (agent.Event, error) {
+	if c.read.events == nil {
+		return agent.Event{}, fmt.Errorf("codex: client not started")
+	}
 	r, ok := <-c.read.events
 	if !ok {
 		return agent.Event{}, fmt.Errorf("codex: process exited")
