@@ -13,8 +13,8 @@ import (
 	"github.com/trigosec/coderoom/internal/linestream"
 )
 
-// readResult carries the outcome of a single stdout notification.
-type readResult struct {
+// readEvent carries the outcome of a single stdout notification.
+type readEvent struct {
 	ev  agent.Event
 	err error
 }
@@ -27,9 +27,8 @@ type Client struct {
 	proc *process
 
 	// ch holds the output queues consumed by Read().
-	ch struct {
-		stdoutEvents chan readResult // meaningful stdout events from the readStdout goroutine
-		stderrLines  chan string     // diagnostic chunks from the readStderr goroutine
+	read struct {
+		events chan readEvent // events from the readStdout and readStderr goroutines
 	}
 
 	// rpc serializes requests written to codex stdin and assigns request IDs.
@@ -72,8 +71,7 @@ func WithObserver(obs ProtocolObserver) Option {
 func New(cwd string, opts ...Option) *Client {
 	c := &Client{proc: newProc(cwd)}
 	c.rpc.obs = noopObserver{}
-	c.ch.stdoutEvents = make(chan readResult)
-	c.ch.stderrLines = make(chan string)
+	c.read.events = make(chan readEvent)
 	for _, o := range opts {
 		o(c)
 	}
@@ -88,8 +86,6 @@ func (c *Client) Start() error {
 		return err
 	}
 
-	go c.readStderr()
-
 	if err := c.initialize(); err != nil {
 		_ = c.Stop()
 		return err
@@ -103,7 +99,20 @@ func (c *Client) Start() error {
 	c.turn.threadID = threadID
 	c.turn.state = turnState{kind: turnIdle}
 	c.turn.mu.Unlock()
-	go c.readStdout()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		c.readStdout()
+	}()
+	go func() {
+		defer wg.Done()
+		c.readStderr()
+	}()
+	go func() {
+		wg.Wait()
+		close(c.read.events)
+	}()
 	return nil
 }
 
@@ -156,31 +165,26 @@ func (c *Client) Send(prompt string) error {
 // Read blocks until a meaningful event is ready — either a stdout-derived
 // notification (Delta, Done) or a queued stderr line (Log). Both sources are
 // waited on simultaneously so neither can stall the other. A closed
-// stdoutEvents channel means the process has exited and no further events
+// read.events channel means the process has exited and no further events
 // will arrive.
 func (c *Client) Read() (agent.Event, error) {
-	select {
-	case r, ok := <-c.ch.stdoutEvents:
-		if !ok {
-			return agent.Event{}, fmt.Errorf("codex: process exited")
-		}
-		return r.ev, r.err
-	case line := <-c.ch.stderrLines:
-		return agent.Event{Log: line}, nil
+	r, ok := <-c.read.events
+	if !ok {
+		return agent.Event{}, fmt.Errorf("codex: process exited")
 	}
+	return r.ev, r.err
 }
 
-// readStdout bridges the stdout pipe to stdoutEvents via an unbounded internal
+// readStdout bridges the stdout pipe to read.events via an unbounded internal
 // buffer. Memory grows if the consumer falls behind; acceptable for a local
-// CLI tool where stdout throughput is bounded by the agent's output rate. stdoutEvents is closed when the pump exits so Read() can detect
-// process exit. The drain on pipe-close is best-effort (non-blocking send):
-// if the consumer is gone the remaining items are dropped, but the closed
-// channel still signals Read() that no further events will arrive.
+// CLI tool where stdout throughput is bounded by the agent's output rate.
+//
+// readStdout does not close read.events directly because stderr also writes to
+// it. Start() closes read.events after both workers exit.
 func (c *Client) readStdout() {
-	defer close(c.ch.stdoutEvents)
-	in := make(chan readResult)
+	in := make(chan readEvent)
 	go c.scanStdout(in)
-	var buf []readResult
+	var buf []readEvent
 	for {
 		if len(buf) == 0 {
 			r, ok := <-in
@@ -194,32 +198,32 @@ func (c *Client) readStdout() {
 				if !ok {
 					for _, pending := range buf {
 						select {
-						case c.ch.stdoutEvents <- pending:
+						case c.read.events <- pending:
 						default:
 						}
 					}
 					return
 				}
 				buf = append(buf, r)
-			case c.ch.stdoutEvents <- buf[0]:
+			case c.read.events <- buf[0]:
 				buf = buf[1:]
 			}
 		}
 	}
 }
 
-// scanStdout reads raw stdout lines, translates them to readResult values, and
+// scanStdout reads raw stdout lines, translates them to readEvent values, and
 // sends meaningful ones on in. It closes in when the pipe closes or a
 // terminal error (turn/failed, IO error) is encountered.
-func (c *Client) scanStdout(in chan<- readResult) {
+func (c *Client) scanStdout(in chan<- readEvent) {
 	for {
 		msg, err := rpcRead(c)
 		if err != nil {
 			if nonJSON, ok := isNonJSONStdoutLine(err); ok {
-				in <- readResult{ev: agent.Event{Log: nonJSON.FormatLogLine()}}
+				in <- readEvent{ev: agent.Event{Log: nonJSON.FormatLogLine()}}
 				continue
 			}
-			in <- readResult{err: err}
+			in <- readEvent{err: err}
 			close(in)
 			return
 		}
@@ -229,12 +233,12 @@ func (c *Client) scanStdout(in chan<- readResult) {
 		c.noteNotification(msg)
 		ev, ok, err := translateNotification(msg)
 		if err != nil {
-			in <- readResult{err: err}
+			in <- readEvent{err: err}
 			close(in)
 			return
 		}
 		if ok {
-			in <- readResult{ev: ev}
+			in <- readEvent{ev: ev}
 		}
 	}
 }
@@ -363,15 +367,15 @@ func (c *Client) readResponse() (json.RawMessage, error) {
 	}
 }
 
-// readStderr bridges the process stderr pipe to stderrLines via an unbounded
+// readStderr bridges the process stderr pipe to read.events via an unbounded
 // internal buffer (same trade-off as readStdout: memory grows if the consumer
 // falls behind, acceptable for a local CLI). When the pipe
 // closes (process exited), remaining buffered lines are discarded rather than
-// blocking on stderrLines — diagnostic output at shutdown is not worth a
+// blocking on read.events — diagnostic output at shutdown is not worth a
 // goroutine leak.
 func (c *Client) readStderr() {
 	r := c.proc.codexErr
 	for chunk := range linestream.BatchReader(r) {
-		c.ch.stderrLines <- chunk
+		c.read.events <- readEvent{ev: agent.Event{Log: chunk}}
 	}
 }

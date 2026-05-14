@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -22,10 +23,23 @@ func newWithIO(stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Cl
 	c := &Client{proc: newProc("test")}
 	c.proc.codexIn = stdin
 	c.proc.codexOut = bufio.NewReader(stdout)
+	c.proc.codexErr = bytes.NewBuffer(nil)
 	c.rpc.obs = obs
-	c.ch.stdoutEvents = make(chan readResult)
-	c.ch.stderrLines = make(chan string)
-	go c.readStdout()
+	c.read.events = make(chan readEvent)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		c.readStdout()
+	}()
+	go func() {
+		defer wg.Done()
+		c.readStderr()
+	}()
+	go func() {
+		wg.Wait()
+		close(c.read.events)
+	}()
 	return c
 }
 
