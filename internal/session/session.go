@@ -194,44 +194,72 @@ func (s *Session) RoutableParticipants() []participant.Participant {
 	return out
 }
 
-// readLoop runs in a goroutine per agent, forwarding agent.Event values to the
+// readLoop runs in a goroutine per agent, forwarding agent.Message values to the
 // observers. When Read returns an error it emits KindAgentStopped (if the stop
 // channel was closed) or KindAgentCrashed, then exits.
 func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 	for {
-		ev, err := a.Read()
+		msg, err := a.Read()
 		if err != nil {
-			kind := KindAgentCrashed
-			select {
-			case <-stop:
-				kind = KindAgentStopped
-			default:
-			}
-			if kind == KindAgentCrashed {
-				ok := s.withParticipant(alias, func(p *participant.Participant) {
-					p.MarkCrashed(s.now())
-				})
-				_ = ok
-			}
-			s.notify(Event{Kind: kind, Alias: alias})
+			s.handleAgentReadError(stop, alias)
 			return
 		}
-		if ev.Log != "" {
-			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: ev.Log})
-		}
-		if ev.Delta != "" {
-			s.withParticipant(alias, func(p *participant.Participant) {
-				if p.Status != participant.StatusWorking {
-					p.MarkWorking(s.now())
-				}
-			})
-			s.notify(Event{Kind: KindDelta, Alias: alias, Text: ev.Delta})
-		}
-		if ev.Done {
-			s.withParticipant(alias, func(p *participant.Participant) {
-				p.MarkIdle(s.now())
-			})
-			s.notify(Event{Kind: KindDone, Alias: alias})
-		}
+		s.handleAgentMessage(alias, msg)
 	}
+}
+
+func (s *Session) handleAgentReadError(stop <-chan struct{}, alias string) {
+	kind := s.kindForReadError(stop)
+	if kind == KindAgentCrashed {
+		s.withParticipant(alias, func(p *participant.Participant) {
+			p.MarkCrashed(s.now())
+		})
+	}
+	s.notify(Event{Kind: kind, Alias: alias})
+}
+
+func (s *Session) kindForReadError(stop <-chan struct{}) Kind {
+	select {
+	case <-stop:
+		return KindAgentStopped
+	default:
+		return KindAgentCrashed
+	}
+}
+
+func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
+	switch msg.Kind {
+	case agent.MessageLog:
+		s.handleAgentLog(alias, msg.Text)
+	case agent.MessageDelta:
+		s.handleAgentDelta(alias, msg.Text)
+	case agent.MessageDone:
+		s.handleAgentDone(alias)
+	}
+}
+
+func (s *Session) handleAgentLog(alias string, text string) {
+	if text == "" {
+		return
+	}
+	s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: text})
+}
+
+func (s *Session) handleAgentDelta(alias string, text string) {
+	if text == "" {
+		return
+	}
+	s.withParticipant(alias, func(p *participant.Participant) {
+		if p.Status != participant.StatusWorking {
+			p.MarkWorking(s.now())
+		}
+	})
+	s.notify(Event{Kind: KindDelta, Alias: alias, Text: text})
+}
+
+func (s *Session) handleAgentDone(alias string) {
+	s.withParticipant(alias, func(p *participant.Participant) {
+		p.MarkIdle(s.now())
+	})
+	s.notify(Event{Kind: KindDone, Alias: alias})
 }

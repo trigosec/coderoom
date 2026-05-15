@@ -2,7 +2,7 @@
 
 This document covers two packages designed together:
 
-- **`internal/agent`** — the `Agent` interface, shared types (`Event`), and the `SendAndWait` free function.
+- **`internal/agent`** — the `Agent` interface, shared types (`Message`), and the `SendAndWait` free function.
 - **`internal/agent/codex`** — the Codex implementation of `Agent`: a thin process wrapper around the Codex app-server.
 
 ---
@@ -12,16 +12,23 @@ This document covers two packages designed together:
 ### Agent interface
 
 ```go
-type Event struct {
-    Delta string // text fragment; empty on non-delta events
-    Done  bool   // true on the final event of a turn
-    Log   string // diagnostic line from the agent process (e.g. captured from stderr); empty on other events
+type MessageKind string
+
+const (
+    MessageDelta MessageKind = "delta" // streaming text fragment
+    MessageDone  MessageKind = "done"  // final message of a turn
+    MessageLog   MessageKind = "log"   // diagnostic line from the agent process (e.g. stderr)
+)
+
+type Message struct {
+    Kind MessageKind
+    Text string
 }
 
 type Agent interface {
     Start() error
     Send(prompt string) error
-    Read() (Event, error)
+    Read() (Message, error)
     Stop() error
 }
 ```
@@ -36,9 +43,9 @@ Errors — both IO errors and turn failures — are returned as the `error` retu
 func SendAndWait(a Agent, prompt string) (string, error)
 ```
 
-It calls `Send` then loops `Read` until `Event.Done` is true, accumulating `Event.Delta` values. `Event.Log` lines are silently discarded — `SendAndWait` returns only the agent's text output, not diagnostic noise. Because `Read()` returns a semantic type, `SendAndWait` requires no backend knowledge.
+It calls `Send` then loops `Read` until it observes `MessageDone`, accumulating `MessageDelta` values. `MessageLog` messages are silently discarded — `SendAndWait` returns only the agent's text output, not diagnostic noise. Because `Read()` returns a semantic type, `SendAndWait` requires no backend knowledge.
 
-`Send` + `Read` are the low-level primitives for callers that need to process output as it streams, including `Event.Log` lines.
+`Send` + `Read` are the low-level primitives for callers that need to process output as it streams, including `MessageLog` messages.
 
 ---
 
@@ -58,23 +65,23 @@ The API follows the same model as the `http` package: calls are blocking. If the
 |---|---|
 | `Start()` | Launches the process; blocks until initialize + thread/start handshakes complete |
 | `Send(prompt)` | Writes the turn/start request to stdin and returns immediately — no stdout read |
-| `Read()` | Blocks until a meaningful event is ready; translates Codex notifications into `agent.Event` |
+| `Read()` | Blocks until a meaningful message is ready; translates Codex notifications into `agent.Message` |
 | `Stop()` | Closes stdin and waits for the process to exit; kills if it hangs |
 
 `Send` is a pure write. It does not read stdout.
 
-`Read()` blocks until it can return a meaningful event — either a stdout-derived notification (`Delta`, `Done`) or a queued stderr line (`Log`). At most one field is non-zero per returned event. Unknown or unrecognised notifications are discarded; the observer records them.
+`Read()` blocks until it can return a meaningful message — either a stdout-derived notification (`delta`, `done`) or a queued stderr line (`log`). Unknown or unrecognised notifications are discarded; the observer records them.
 
 The Codex-specific mapping is:
 
-| Source | Event |
+| Source | Message |
 |---|---|
-| `item/agentMessage/delta` notification | `{Delta: "..."}` |
-| `turn/completed` notification | `{Done: true}` |
+| `item/agentMessage/delta` notification | `{Kind: MessageDelta, Text: "..."}` |
+| `turn/completed` notification | `{Kind: MessageDone, Text: ""}` |
 | `turn/failed` notification | error returned from `Read()` |
-| stderr line from the process | `{Log: "..."}` |
+| stderr line from the process | `{Kind: MessageLog, Text: "..."}` |
 
-Stderr is captured via a dedicated pipe and read by a background goroutine started in `Start()`. Lines are queued internally and surfaced through `Read()` alongside stdout-derived events. This keeps the `Read()` interface as the single point of consumption for all agent output.
+Stderr is captured via a dedicated pipe and read by a background goroutine started in `Start()`. Lines are queued internally and surfaced through `Read()` alongside stdout-derived messages. This keeps the `Read()` interface as the single point of consumption for all agent output.
 
 ### Protocol observer
 
@@ -156,5 +163,5 @@ This package owns:
 
 - Process lifecycle (start, kill, reap)
 - JSON-RPC framing over stdio
-- Translating Codex notifications into `agent.Event`
+- Translating Codex notifications into `agent.Message`
 - Wire-level observability (`ProtocolObserver`)

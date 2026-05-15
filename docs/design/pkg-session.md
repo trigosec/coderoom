@@ -129,7 +129,7 @@ The relationship between session events and the persistent event log (`internal/
 
 `InviteCommand` calls `registry.Add` then `agent.Start`. On success, it emits `KindAgentStarted` and launches a reader goroutine for that agent.
 
-The reader goroutine loops on `agent.Read()`, translating `agent.Event` values into session `Event` values and calling `observer.OnEvent`. When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent context cancellation) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
+The reader goroutine loops on `agent.Read()`, translating `agent.Message` values into session `Event` values and calling `observer.OnEvent`. When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent context cancellation) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
 
 `RemoveCommand` removes the participant from the registry, cancels the reader goroutine's context (so it will emit `KindAgentStopped` rather than `KindAgentCrashed` when it exits), then calls `agent.Stop`.
 

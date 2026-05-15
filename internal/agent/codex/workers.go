@@ -10,7 +10,7 @@ import (
 type workerFn = func(ctx context.Context, c *Client)
 
 // readCodexErrWorker reads the Codex process stderr stream and emits each
-// coalesced chunk as a Log event on c.read.events.
+// coalesced chunk as a log message on c.read.messages.
 //
 // This worker is long-lived and is expected to be started from Client.Start().
 // It exits when ctx is canceled or when codex stderr closes.
@@ -20,68 +20,68 @@ func readCodexErrWorker(ctx context.Context, c *Client) {
 		select {
 		case <-ctx.Done():
 			return
-		case c.read.events <- readEvent{ev: agent.Event{Log: chunk}}:
+		case c.read.messages <- readMessage{msg: agent.Message{Kind: agent.MessageLog, Text: chunk}}:
 		}
 	}
 }
 
-// readCodexOut reads raw stdout lines, translates them to readEvent values, and
-// sends meaningful ones on bufEvents.
+// readCodexOut reads raw stdout lines, translates them to readMessage values,
+// and sends meaningful ones on bufMessages.
 func readCodexOutWorker(ctx context.Context, c *Client) {
 	for {
 		msg, err := rpcRead(c)
 		if err != nil {
 			if nonJSON, ok := isNonJSONStdoutLine(err); ok {
-				readEv := readEvent{ev: agent.Event{Log: nonJSON.FormatLogLine()}}
-				if !sendBufEvent(ctx, c, readEv) {
+				readMsg := readMessage{msg: agent.Message{Kind: agent.MessageLog, Text: nonJSON.FormatLogLine()}}
+				if !sendBufMessage(ctx, c, readMsg) {
 					return
 				}
 				continue
 			}
-			readEv := readEvent{err: err}
-			sendBufEvent(ctx, c, readEv)
+			readMsg := readMessage{err: err}
+			sendBufMessage(ctx, c, readMsg)
 			return
 		}
 		if msg.Method == "" {
 			continue
 		}
 		c.noteNotification(msg)
-		ev, ok, err := translateNotification(msg)
+		agentMsg, ok, err := translateNotification(msg)
 		if err != nil {
-			readEv := readEvent{err: err}
-			sendBufEvent(ctx, c, readEv)
+			readMsg := readMessage{err: err}
+			sendBufMessage(ctx, c, readMsg)
 			return
 		}
 		if ok {
-			readEv := readEvent{ev: ev}
-			if !sendBufEvent(ctx, c, readEv) {
+			readMsg := readMessage{msg: agentMsg}
+			if !sendBufMessage(ctx, c, readMsg) {
 				return
 			}
 		}
 	}
 }
 
-func sendBufEvent(ctx context.Context, c *Client, ev readEvent) bool {
+func sendBufMessage(ctx context.Context, c *Client, msg readMessage) bool {
 	select {
-	case c.read.bufEvents <- ev:
+	case c.read.bufMessages <- msg:
 		return true
 	case <-ctx.Done():
 		return false
 	}
 }
 
-// bufferEventsWorker bridges the stdout pipe to read.events via an unbounded internal
+// bufferMessagesWorker bridges the stdout pipe to read.messages via an unbounded internal
 // buffer. Memory grows if the consumer falls behind; acceptable for a local
 // CLI tool where stdout throughput is bounded by the agent's output rate.
 //
-// bufferEventsWorker does not close read.events directly because stderr also writes to
-// it. Start() closes read.events after both workers exit.
-func bufferEventsWorker(ctx context.Context, c *Client) {
-	var buf []readEvent
+// bufferMessagesWorker does not close read.messages directly because stderr also writes to
+// it. Start() closes read.messages after both workers exit.
+func bufferMessagesWorker(ctx context.Context, c *Client) {
+	var buf []readMessage
 	for {
 		if len(buf) == 0 {
 			select {
-			case r, ok := <-c.read.bufEvents:
+			case r, ok := <-c.read.bufMessages:
 				if !ok {
 					return
 				}
@@ -91,26 +91,26 @@ func bufferEventsWorker(ctx context.Context, c *Client) {
 			}
 		} else {
 			select {
-			case r, ok := <-c.read.bufEvents:
+			case r, ok := <-c.read.bufMessages:
 				if !ok {
-					drainEventBuffer(c, buf)
+					drainMessageBuffer(c, buf)
 					return
 				}
 				buf = append(buf, r)
-			case c.read.events <- buf[0]:
+			case c.read.messages <- buf[0]:
 				buf = buf[1:]
 			case <-ctx.Done():
-				drainEventBuffer(c, buf)
+				drainMessageBuffer(c, buf)
 				return
 			}
 		}
 	}
 }
 
-func drainEventBuffer(c *Client, buf []readEvent) {
+func drainMessageBuffer(c *Client, buf []readMessage) {
 	for _, pending := range buf {
 		select {
-		case c.read.events <- pending:
+		case c.read.messages <- pending:
 		default:
 		}
 	}

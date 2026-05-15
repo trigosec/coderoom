@@ -10,11 +10,11 @@ import (
 
 type fakeAgent struct{}
 
-func (fakeAgent) Start() error               { return nil }
-func (fakeAgent) Send(string) error          { return nil }
-func (fakeAgent) Read() (agent.Event, error) { return agent.Event{}, errors.New("no events") }
-func (fakeAgent) Interrupt() error           { return nil }
-func (fakeAgent) Stop() error                { return nil }
+func (fakeAgent) Start() error                 { return nil }
+func (fakeAgent) Send(string) error            { return nil }
+func (fakeAgent) Read() (agent.Message, error) { return agent.Message{}, errors.New("no messages") }
+func (fakeAgent) Interrupt() error             { return nil }
+func (fakeAgent) Stop() error                  { return nil }
 
 func newParticipant(alias string) *participant.Participant {
 	return &participant.Participant{

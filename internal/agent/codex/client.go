@@ -13,9 +13,9 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 )
 
-// readEvent carries the outcome of a single stdout notification.
-type readEvent struct {
-	ev  agent.Event
+// readMessage carries the outcome of a single stdout notification.
+type readMessage struct {
+	msg agent.Message
 	err error
 }
 
@@ -28,14 +28,14 @@ type Client struct {
 
 	// read holds the output queues required by Read().
 	read struct {
-		events    chan readEvent // events from codex stdout and stderr
-		bufEvents chan readEvent // channel to enable buffering of readEvents.
+		messages    chan readMessage // messages from codex stdout and stderr
+		bufMessages chan readMessage // channel to enable buffering of readMessages.
 		//
-		// Note: bufEvents is currently unbuffered, so readCodexOutWorker can still
-		// experience backpressure if bufferEventsWorker can't keep up (ultimately
+		// Note: bufMessages is currently unbuffered, so readCodexOutWorker can still
+		// experience backpressure if bufferMessagesWorker can't keep up (ultimately
 		// bounded by how fast the caller drains Read()).
 		//
-		// Follow-up improvement: replace bufEvents with an unbounded queue (or a
+		// Follow-up improvement: replace bufMessages with an unbounded queue (or a
 		// sufficiently large buffered channel), or merge stdout reading + pumping
 		// into a single worker so reading codex stdout never blocks on Read().
 	}
@@ -93,9 +93,9 @@ func New(cwd string, opts ...Option) *Client {
 }
 
 func (c *Client) initRead() {
-	if c.read.events == nil {
-		c.read.events = make(chan readEvent)
-		c.read.bufEvents = make(chan readEvent)
+	if c.read.messages == nil {
+		c.read.messages = make(chan readMessage)
+		c.read.bufMessages = make(chan readMessage)
 	}
 }
 
@@ -111,10 +111,10 @@ func (c *Client) Start() error {
 
 	threadID, err := rpcHandshake(c)
 	if err != nil {
-		close(c.read.events)
-		c.read.events = nil
-		close(c.read.bufEvents)
-		c.read.bufEvents = nil
+		close(c.read.messages)
+		c.read.messages = nil
+		close(c.read.bufMessages)
+		c.read.bufMessages = nil
 		_ = c.Stop()
 		return err
 	}
@@ -131,7 +131,7 @@ func (c *Client) Start() error {
 }
 
 func (c *Client) initWorkers() {
-	var workers = []workerFn{readCodexErrWorker, readCodexOutWorker, bufferEventsWorker}
+	var workers = []workerFn{readCodexErrWorker, readCodexOutWorker, bufferMessagesWorker}
 	for _, worker := range workers {
 		worker := worker
 		c.lifecycle.waitGroup.Go(
@@ -187,20 +187,20 @@ func (c *Client) Send(prompt string) error {
 	return err
 }
 
-// Read blocks until a meaningful event is ready — either a stdout-derived
-// notification (Delta, Done) or a queued stderr line (Log). Both sources are
+// Read blocks until a meaningful message is ready — either a stdout-derived
+// notification (delta, done) or a queued stderr line (log). Both sources are
 // waited on simultaneously so neither can stall the other. A closed
-// read.events channel means the process has exited and no further events
+// read.messages channel means the process has exited and no further messages
 // will arrive.
-func (c *Client) Read() (agent.Event, error) {
-	if c.read.events == nil {
-		return agent.Event{}, fmt.Errorf("codex: client not started")
+func (c *Client) Read() (agent.Message, error) {
+	if c.read.messages == nil {
+		return agent.Message{}, fmt.Errorf("codex: client not started")
 	}
-	r, ok := <-c.read.events
+	r, ok := <-c.read.messages
 	if !ok {
-		return agent.Event{}, fmt.Errorf("codex: process exited")
+		return agent.Message{}, fmt.Errorf("codex: process exited")
 	}
-	return r.ev, r.err
+	return r.msg, r.err
 }
 
 func (c *Client) noteNotification(msg rpcEnvelope) {
@@ -226,22 +226,22 @@ func (c *Client) noteNotification(msg rpcEnvelope) {
 	}
 }
 
-// translateNotification maps a known Codex notification to an agent.Event.
+// translateNotification maps a known Codex notification to an agent.Message.
 // Returns ok=false for unknown notifications (caller should discard and continue).
-func translateNotification(msg rpcEnvelope) (agent.Event, bool, error) {
+func translateNotification(msg rpcEnvelope) (agent.Message, bool, error) {
 	switch msg.Method {
 	case methodAgentDelta:
 		var p deltaParams
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			return agent.Event{}, false, fmt.Errorf("parse delta params: %w", err)
+			return agent.Message{}, false, fmt.Errorf("parse delta params: %w", err)
 		}
-		return agent.Event{Delta: p.Delta}, true, nil
+		return agent.Message{Kind: agent.MessageDelta, Text: p.Delta}, true, nil
 	case methodTurnCompleted:
-		return agent.Event{Done: true}, true, nil
+		return agent.Message{Kind: agent.MessageDone}, true, nil
 	case methodTurnFailed:
-		return agent.Event{}, false, fmt.Errorf("turn failed: %s", msg.Params)
+		return agent.Message{}, false, fmt.Errorf("turn failed: %s", msg.Params)
 	}
-	return agent.Event{}, false, nil
+	return agent.Message{}, false, nil
 }
 
 const stopGracePeriod = 5 * time.Second
@@ -269,11 +269,11 @@ func (c *Client) Stop() error {
 
 	go func() {
 		c.lifecycle.waitGroup.Wait()
-		if c.read.events != nil {
-			close(c.read.events)
+		if c.read.messages != nil {
+			close(c.read.messages)
 		}
-		if c.read.bufEvents != nil {
-			close(c.read.bufEvents)
+		if c.read.bufMessages != nil {
+			close(c.read.bufMessages)
 		}
 	}()
 

@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/trigosec/coderoom/internal/agent"
 )
 
 // nopWriteCloser wraps a Writer with a no-op Close for use as a stdin stub.
@@ -52,12 +54,12 @@ func TestRead_turnCompleted(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/completed\",\"params\":{}}\n")
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
-	ev, err := c.Read()
+	msg, err := c.Read()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !ev.Done {
-		t.Errorf("expected Done=true")
+	if msg.Kind != agent.MessageDone {
+		t.Errorf("expected Kind=%q, got %q", agent.MessageDone, msg.Kind)
 	}
 }
 
@@ -65,12 +67,12 @@ func TestRead_delta(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":\"hello\"}}\n")
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
-	ev, err := c.Read()
+	msg, err := c.Read()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ev.Delta != "hello" {
-		t.Errorf("expected delta %q, got %q", "hello", ev.Delta)
+	if msg.Kind != agent.MessageDelta || msg.Text != "hello" {
+		t.Errorf("expected delta %q, got kind=%q text=%q", "hello", msg.Kind, msg.Text)
 	}
 }
 
@@ -92,12 +94,12 @@ func TestRead_skipsResponseLines(t *testing.T) {
 	)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
-	ev, err := c.Read()
+	msg, err := c.Read()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !ev.Done {
-		t.Errorf("expected Done=true")
+	if msg.Kind != agent.MessageDone {
+		t.Errorf("expected Kind=%q, got %q", agent.MessageDone, msg.Kind)
 	}
 }
 
@@ -109,12 +111,12 @@ func TestRead_skipsUnknownNotifications(t *testing.T) {
 	)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
-	ev, err := c.Read()
+	msg, err := c.Read()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !ev.Done {
-		t.Errorf("expected Done=true after skipping unknown notification")
+	if msg.Kind != agent.MessageDone {
+		t.Errorf("expected Kind=%q after skipping unknown notification, got %q", agent.MessageDone, msg.Kind)
 	}
 }
 

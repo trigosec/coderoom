@@ -14,12 +14,22 @@ var (
 	ErrTurnInProgress = errors.New("turn already in progress")
 )
 
-// Event is a semantic unit of output from an agent turn.
-// At most one field is non-zero per returned event.
-type Event struct {
-	Delta string // text fragment; empty on non-delta events
-	Done  bool   // true on the final event of a turn
-	Log   string // diagnostic line from the agent process (e.g. stderr)
+// MessageKind identifies the type of an agent output message.
+type MessageKind string
+
+const (
+	// MessageDelta is a streaming text fragment from the agent.
+	MessageDelta MessageKind = "delta" // streaming text fragment
+	// MessageDone marks completion of the current turn.
+	MessageDone MessageKind = "done" // final message of a turn
+	// MessageLog is a diagnostic line from the agent process (e.g. stderr).
+	MessageLog MessageKind = "log" // diagnostic line from the agent process (e.g. stderr)
+)
+
+// Message is a semantic unit of output from an agent turn.
+type Message struct {
+	Kind MessageKind
+	Text string
 }
 
 // Agent manages the lifecycle of and communication with an AI agent process.
@@ -29,9 +39,9 @@ type Agent interface {
 	// Send writes a prompt to the agent and returns immediately.
 	// Events arrive via Read().
 	Send(prompt string) error
-	// Read blocks until the next meaningful event arrives from the agent.
+	// Read blocks until the next meaningful message arrives from the agent.
 	// Returns an error if the process has exited or the turn has failed.
-	Read() (Event, error)
+	Read() (Message, error)
 	// Interrupt requests the agent to stop its current in-flight work.
 	// Best-effort: implementations may use protocol-level cancellation or send
 	// an OS interrupt signal (e.g. SIGINT) to the underlying process.
@@ -51,13 +61,19 @@ func SendAndWait(a Agent, prompt string) (string, error) {
 	}
 	var sb strings.Builder
 	for {
-		ev, err := a.Read()
+		msg, err := a.Read()
 		if err != nil {
 			return "", fmt.Errorf("read: %w", err)
 		}
-		sb.WriteString(ev.Delta)
-		if ev.Done {
+		switch msg.Kind {
+		case MessageDelta:
+			sb.WriteString(msg.Text)
+		case MessageDone:
 			return sb.String(), nil
+		case MessageLog:
+			// Intentionally ignored: SendAndWait returns only the agent's text output.
+		default:
+			// Unknown message kinds are ignored for forward compatibility.
 		}
 	}
 }

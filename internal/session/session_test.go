@@ -12,10 +12,10 @@ import (
 )
 
 // mockAgent is a controllable agent.Agent for tests.
-// Pre-load events at construction; Stop() closes the read channel.
+// Pre-load messages at construction; Stop() closes the read channel.
 type mockAgent struct {
 	once         sync.Once
-	ch           chan agent.Event
+	ch           chan agent.Message
 	mu           sync.Mutex
 	sends        []string
 	startErr     error
@@ -25,10 +25,10 @@ type mockAgent struct {
 	interrupts   int
 }
 
-func newMockAgent(events ...agent.Event) *mockAgent {
-	m := &mockAgent{ch: make(chan agent.Event, max(len(events), 1))}
-	for _, ev := range events {
-		m.ch <- ev
+func newMockAgent(msgs ...agent.Message) *mockAgent {
+	m := &mockAgent{ch: make(chan agent.Message, max(len(msgs), 1))}
+	for _, msg := range msgs {
+		m.ch <- msg
 	}
 	return m
 }
@@ -50,12 +50,12 @@ func (m *mockAgent) Send(text string) error {
 	m.mu.Unlock()
 	return m.sendErr
 }
-func (m *mockAgent) Read() (agent.Event, error) {
-	ev, ok := <-m.ch
+func (m *mockAgent) Read() (agent.Message, error) {
+	msg, ok := <-m.ch
 	if !ok {
-		return agent.Event{}, errors.New("agent closed")
+		return agent.Message{}, errors.New("agent closed")
 	}
-	return ev, nil
+	return msg, nil
 }
 
 type gateAgent struct {
@@ -388,7 +388,7 @@ func TestPrivateSend_notFound(t *testing.T) {
 func TestReaderLoop_emitsDelta(t *testing.T) {
 	obs := newTestObserver()
 	s := session.New(session.WithObserver(obs))
-	a := newMockAgent(agent.Event{Delta: "hello"})
+	a := newMockAgent(agent.Message{Kind: agent.MessageDelta, Text: "hello"})
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada", a)
@@ -403,7 +403,7 @@ func TestReaderLoop_emitsDelta(t *testing.T) {
 func TestReaderLoop_emitsDone(t *testing.T) {
 	obs := newTestObserver()
 	s := session.New(session.WithObserver(obs))
-	a := newMockAgent(agent.Event{Done: true})
+	a := newMockAgent(agent.Message{Kind: agent.MessageDone})
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada", a)
@@ -426,7 +426,7 @@ func TestMultipleObservers_bothNotified(t *testing.T) {
 func TestReaderLoop_emitsAgentLog(t *testing.T) {
 	obs := newTestObserver()
 	s := session.New(session.WithObserver(obs))
-	a := newMockAgent(agent.Event{Log: "npm warn something"})
+	a := newMockAgent(agent.Message{Kind: agent.MessageLog, Text: "npm warn something"})
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada", a)
@@ -444,7 +444,7 @@ func TestReaderLoop_emitsAgentLog(t *testing.T) {
 func TestReaderLoop_agentCrash_emitsCrashed(t *testing.T) {
 	obs := newTestObserver()
 	s := session.New(session.WithObserver(obs))
-	a := newMockAgent() // no events; Stop() will close channel
+	a := newMockAgent() // no messages; Stop() will close channel
 	_ = a.Stop()        // close immediately — simulates crash
 
 	invite(t, s, "ada", a)
