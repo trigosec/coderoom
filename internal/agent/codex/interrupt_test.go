@@ -30,7 +30,7 @@ func TestInterrupt_sendsTurnInterruptWhenTurnActive(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	t.Cleanup(func() { _ = stdoutR.Close() })
 
-	c := newWithIO(nopWriteCloser{stdin}, stdoutR, nil)
+	c := newWithIO(t, nopWriteCloser{stdin}, stdoutR, nil)
 	c.turn.mu.Lock()
 	c.turn.threadID = "t1"
 	c.turn.state = turnState{kind: turnInflightUnknownID}

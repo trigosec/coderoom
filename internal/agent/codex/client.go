@@ -4,13 +4,13 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
-	"github.com/trigosec/coderoom/internal/linestream"
 )
 
 // readEvent carries the outcome of a single stdout notification.
@@ -28,7 +28,7 @@ type Client struct {
 
 	// ch holds the output queues consumed by Read().
 	read struct {
-		events chan readEvent // events from the readStdout and readStderr goroutines
+		events chan readEvent // events from readStdout and readCodexErrWorker
 	}
 
 	// rpc serializes requests written to codex stdin and assigns request IDs.
@@ -43,6 +43,11 @@ type Client struct {
 		mu       sync.Mutex
 		threadID string
 		state    turnState
+	}
+
+	lifecycle struct {
+		ctx      context.Context
+		cancelFn context.CancelFunc
 	}
 }
 
@@ -92,6 +97,7 @@ func (c *Client) Start() error {
 	}
 
 	c.initRead()
+
 	threadID, err := rpcHandshake(c)
 	if err != nil {
 		close(c.read.events)
@@ -103,16 +109,26 @@ func (c *Client) Start() error {
 	c.turn.threadID = threadID
 	c.turn.state = turnState{kind: turnIdle}
 	c.turn.mu.Unlock()
+
+	if c.lifecycle.ctx == nil {
+		c.lifecycle.ctx, c.lifecycle.cancelFn = context.WithCancel(context.Background()) // #nosec: G118
+	}
+	var workers = []workerFn{readCodexErrWorker}
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(len(workers) + 1)
+	// readStdout is for the moment a special case, until I complete the refactoring
+	// I am using readCodexErrWorker as the initial poc
 	go func() {
 		defer wg.Done()
 		c.readStdout()
 	}()
-	go func() {
-		defer wg.Done()
-		c.readStderr()
-	}()
+	for _, worker := range workers {
+		worker := worker
+		go func() {
+			defer wg.Done()
+			worker(c.lifecycle.ctx, c)
+		}()
+	}
 	go func() {
 		wg.Wait()
 		close(c.read.events)
@@ -297,6 +313,10 @@ const stopGracePeriod = 5 * time.Second
 // If the process does not exit within stopGracePeriod it is killed.
 // May be called from a different goroutine to interrupt a blocked Read().
 func (c *Client) Stop() error {
+	if c.lifecycle.cancelFn != nil {
+		c.lifecycle.cancelFn()
+		c.lifecycle.cancelFn = nil
+	}
 	if c.proc.codexIn != nil {
 		_ = c.proc.codexIn.Close()
 	}
@@ -344,18 +364,5 @@ func (c *Client) readResponse() (json.RawMessage, error) {
 			return nil, fmt.Errorf("rpc error: %s", msg.Error)
 		}
 		return msg.Result, nil
-	}
-}
-
-// readStderr bridges the process stderr pipe to read.events via an unbounded
-// internal buffer (same trade-off as readStdout: memory grows if the consumer
-// falls behind, acceptable for a local CLI). When the pipe
-// closes (process exited), remaining buffered lines are discarded rather than
-// blocking on read.events — diagnostic output at shutdown is not worth a
-// goroutine leak.
-func (c *Client) readStderr() {
-	r := c.proc.codexErr
-	for chunk := range linestream.BatchReader(r) {
-		c.read.events <- readEvent{ev: agent.Event{Log: chunk}}
 	}
 }

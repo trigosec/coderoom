@@ -13,7 +13,7 @@ import (
 
 func TestSend_whenTurnActive_returnsErrTurnInProgress(t *testing.T) {
 	var stdin bytes.Buffer
-	c := newWithIO(nopWriteCloser{&stdin}, bytes.NewBuffer(nil), nil)
+	c := newWithIO(t, nopWriteCloser{&stdin}, bytes.NewBuffer(nil), nil)
 	c.turn.mu.Lock()
 	c.turn.threadID = "t1"
 	c.turn.state = turnState{kind: turnInflightUnknownID}
@@ -29,7 +29,7 @@ func TestSend_afterTurnCompleted_allowsNextTurn(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	t.Cleanup(func() { _ = stdoutR.Close() })
 
-	c := newWithIO(nopWriteCloser{stdin}, stdoutR, nil)
+	c := newWithIO(t, nopWriteCloser{stdin}, stdoutR, nil)
 	c.turn.mu.Lock()
 	c.turn.threadID = "t1"
 	c.turn.state = turnState{kind: turnIdle}

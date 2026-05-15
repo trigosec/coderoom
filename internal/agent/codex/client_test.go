@@ -3,6 +3,7 @@ package codex
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"strings"
 	"sync"
@@ -16,7 +17,7 @@ func (nopWriteCloser) Close() error { return nil }
 
 // newWithIO constructs a Client with pre-wired I/O and starts the readStdout
 // goroutine, mirroring what Start() does after the handshake. Used in tests.
-func newWithIO(stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Client {
+func newWithIO(t *testing.T, stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Client {
 	if obs == nil {
 		obs = noopObserver{}
 	}
@@ -26,6 +27,8 @@ func newWithIO(stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Cl
 	c.proc.codexErr = bytes.NewBuffer(nil)
 	c.rpc.obs = obs
 	c.initRead()
+	c.lifecycle.ctx, c.lifecycle.cancelFn = context.WithCancel(context.Background()) // #nosec: G118
+	t.Cleanup(c.lifecycle.cancelFn)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -34,7 +37,7 @@ func newWithIO(stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Cl
 	}()
 	go func() {
 		defer wg.Done()
-		c.readStderr()
+		readCodexErrWorker(c.lifecycle.ctx, c)
 	}()
 	go func() {
 		wg.Wait()
@@ -61,7 +64,7 @@ func TestCodexArgs_override(t *testing.T) {
 
 func TestRead_turnCompleted(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/completed\",\"params\":{}}\n")
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	ev, err := c.Read()
 	if err != nil {
@@ -74,7 +77,7 @@ func TestRead_turnCompleted(t *testing.T) {
 
 func TestRead_delta(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":\"hello\"}}\n")
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	ev, err := c.Read()
 	if err != nil {
@@ -87,7 +90,7 @@ func TestRead_delta(t *testing.T) {
 
 func TestRead_turnFailed(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/failed\",\"params\":{}}\n")
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	_, err := c.Read()
 	if err == nil {
@@ -101,7 +104,7 @@ func TestRead_skipsResponseLines(t *testing.T) {
 		"{\"id\":1,\"result\":{}}\n" +
 			"{\"method\":\"turn/completed\",\"params\":{}}\n",
 	)
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	ev, err := c.Read()
 	if err != nil {
@@ -118,7 +121,7 @@ func TestRead_skipsUnknownNotifications(t *testing.T) {
 		"{\"method\":\"turn/started\",\"params\":{}}\n" +
 			"{\"method\":\"turn/completed\",\"params\":{}}\n",
 	)
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout, nil)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	ev, err := c.Read()
 	if err != nil {
@@ -130,7 +133,7 @@ func TestRead_skipsUnknownNotifications(t *testing.T) {
 }
 
 func TestRead_returnsErrorOnEOF(t *testing.T) {
-	c := newWithIO(nopWriteCloser{io.Discard}, bytes.NewBuffer(nil), nil)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, bytes.NewBuffer(nil), nil)
 
 	_, err := c.Read()
 	if err == nil {
@@ -142,7 +145,7 @@ func TestRead_observerReceivesCalled(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/completed\",\"params\":{}}\n")
 	received := make(chan string, 1)
 	obs := &testObserver{onReceive: func(msg string) { received <- msg }}
-	c := newWithIO(nopWriteCloser{io.Discard}, stdout, obs)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, obs)
 
 	if _, err := c.Read(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -161,7 +164,7 @@ func TestWriteRequest_observerSendCalled(t *testing.T) {
 	var buf bytes.Buffer
 	var sent []string
 	obs := &testObserver{onSend: func(msg string) { sent = append(sent, msg) }}
-	c := newWithIO(nopWriteCloser{&buf}, bytes.NewBuffer(nil), obs)
+	c := newWithIO(t, nopWriteCloser{&buf}, bytes.NewBuffer(nil), obs)
 
 	if err := rpcWrite(c, methodTurnStart, turnStartParams{ThreadID: "t1"}); err != nil {
 		t.Fatalf("rpcWrite: %v", err)
