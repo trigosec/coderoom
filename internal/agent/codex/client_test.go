@@ -6,7 +6,6 @@ import (
 	"context"
 	"io"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -29,20 +28,7 @@ func newWithIO(t *testing.T, stdin io.WriteCloser, stdout io.Reader, obs Protoco
 	c.initRead()
 	c.lifecycle.ctx, c.lifecycle.cancelFn = context.WithCancel(context.Background()) // #nosec: G118
 	t.Cleanup(c.lifecycle.cancelFn)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		c.readStdout()
-	}()
-	go func() {
-		defer wg.Done()
-		readCodexErrWorker(c.lifecycle.ctx, c)
-	}()
-	go func() {
-		wg.Wait()
-		close(c.read.events)
-	}()
+	c.initWorkers()
 	return c
 }
 

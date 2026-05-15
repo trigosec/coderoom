@@ -26,9 +26,18 @@ type Client struct {
 	// proc holds the OS process and stdio pipes.
 	proc *process
 
-	// ch holds the output queues consumed by Read().
+	// read holds the output queues required by Read().
 	read struct {
-		events chan readEvent // events from readStdout and readCodexErrWorker
+		events    chan readEvent // events from codex stdout and stderr
+		bufEvents chan readEvent // channel to enable buffering of readEvents.
+		//
+		// Note: bufEvents is currently unbuffered, so readCodexOutWorker can still
+		// experience backpressure if bufferEventsWorker can't keep up (ultimately
+		// bounded by how fast the caller drains Read()).
+		//
+		// Follow-up improvement: replace bufEvents with an unbounded queue (or a
+		// sufficiently large buffered channel), or merge stdout reading + pumping
+		// into a single worker so reading codex stdout never blocks on Read().
 	}
 
 	// rpc serializes requests written to codex stdin and assigns request IDs.
@@ -46,8 +55,9 @@ type Client struct {
 	}
 
 	lifecycle struct {
-		ctx      context.Context
-		cancelFn context.CancelFunc
+		ctx       context.Context
+		cancelFn  context.CancelFunc
+		waitGroup sync.WaitGroup
 	}
 }
 
@@ -85,6 +95,7 @@ func New(cwd string, opts ...Option) *Client {
 func (c *Client) initRead() {
 	if c.read.events == nil {
 		c.read.events = make(chan readEvent)
+		c.read.bufEvents = make(chan readEvent)
 	}
 }
 
@@ -102,6 +113,8 @@ func (c *Client) Start() error {
 	if err != nil {
 		close(c.read.events)
 		c.read.events = nil
+		close(c.read.bufEvents)
+		c.read.bufEvents = nil
 		_ = c.Stop()
 		return err
 	}
@@ -113,27 +126,19 @@ func (c *Client) Start() error {
 	if c.lifecycle.ctx == nil {
 		c.lifecycle.ctx, c.lifecycle.cancelFn = context.WithCancel(context.Background()) // #nosec: G118
 	}
-	var workers = []workerFn{readCodexErrWorker}
-	var wg sync.WaitGroup
-	wg.Add(len(workers) + 1)
-	// readStdout is for the moment a special case, until I complete the refactoring
-	// I am using readCodexErrWorker as the initial poc
-	go func() {
-		defer wg.Done()
-		c.readStdout()
-	}()
+	c.initWorkers()
+	return nil
+}
+
+func (c *Client) initWorkers() {
+	var workers = []workerFn{readCodexErrWorker, readCodexOutWorker, bufferEventsWorker}
 	for _, worker := range workers {
 		worker := worker
-		go func() {
-			defer wg.Done()
-			worker(c.lifecycle.ctx, c)
-		}()
+		c.lifecycle.waitGroup.Go(
+			func() {
+				worker(c.lifecycle.ctx, c)
+			})
 	}
-	go func() {
-		wg.Wait()
-		close(c.read.events)
-	}()
-	return nil
 }
 
 // Interrupt requests the Codex process to stop its current in-flight work.
@@ -198,74 +203,6 @@ func (c *Client) Read() (agent.Event, error) {
 	return r.ev, r.err
 }
 
-// readStdout bridges the stdout pipe to read.events via an unbounded internal
-// buffer. Memory grows if the consumer falls behind; acceptable for a local
-// CLI tool where stdout throughput is bounded by the agent's output rate.
-//
-// readStdout does not close read.events directly because stderr also writes to
-// it. Start() closes read.events after both workers exit.
-func (c *Client) readStdout() {
-	in := make(chan readEvent)
-	go c.scanStdout(in)
-	var buf []readEvent
-	for {
-		if len(buf) == 0 {
-			r, ok := <-in
-			if !ok {
-				return
-			}
-			buf = append(buf, r)
-		} else {
-			select {
-			case r, ok := <-in:
-				if !ok {
-					for _, pending := range buf {
-						select {
-						case c.read.events <- pending:
-						default:
-						}
-					}
-					return
-				}
-				buf = append(buf, r)
-			case c.read.events <- buf[0]:
-				buf = buf[1:]
-			}
-		}
-	}
-}
-
-// scanStdout reads raw stdout lines, translates them to readEvent values, and
-// sends meaningful ones on in. It closes in when the pipe closes or a
-// terminal error (turn/failed, IO error) is encountered.
-func (c *Client) scanStdout(in chan<- readEvent) {
-	for {
-		msg, err := rpcRead(c)
-		if err != nil {
-			if nonJSON, ok := isNonJSONStdoutLine(err); ok {
-				in <- readEvent{ev: agent.Event{Log: nonJSON.FormatLogLine()}}
-				continue
-			}
-			in <- readEvent{err: err}
-			close(in)
-			return
-		}
-		if msg.Method == "" {
-			continue
-		}
-		c.noteNotification(msg)
-		ev, ok, err := translateNotification(msg)
-		if err != nil {
-			in <- readEvent{err: err}
-			close(in)
-			return
-		}
-		if ok {
-			in <- readEvent{ev: ev}
-		}
-	}
-}
-
 func (c *Client) noteNotification(msg rpcEnvelope) {
 	switch msg.Method {
 	case methodTurnStarted:
@@ -320,11 +257,25 @@ func (c *Client) Stop() error {
 	if c.proc.codexIn != nil {
 		_ = c.proc.codexIn.Close()
 	}
-	if c.proc.cmd == nil || c.proc.cmd.Process == nil {
-		return nil
-	}
+
 	done := make(chan error, 1)
-	go func() { done <- c.proc.cmd.Wait() }()
+	c.lifecycle.waitGroup.Go(
+		func() {
+			if c.proc.cmd == nil || c.proc.cmd.Process == nil {
+				return
+			}
+			done <- c.proc.cmd.Wait()
+		})
+
+	go func() {
+		c.lifecycle.waitGroup.Wait()
+		if c.read.events != nil {
+			close(c.read.events)
+		}
+		if c.read.bufEvents != nil {
+			close(c.read.bufEvents)
+		}
+	}()
 
 	timer := time.NewTimer(stopGracePeriod)
 	defer timer.Stop()
