@@ -226,24 +226,6 @@ func (c *Client) noteNotification(msg rpcEnvelope) {
 	}
 }
 
-// translateNotification maps a known Codex notification to an agent.Message.
-// Returns ok=false for unknown notifications (caller should discard and continue).
-func translateNotification(msg rpcEnvelope) (agent.Message, bool, error) {
-	switch msg.Method {
-	case methodAgentDelta:
-		var p deltaParams
-		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			return agent.Message{}, false, fmt.Errorf("parse delta params: %w", err)
-		}
-		return agent.Message{Kind: agent.MessageDelta, Text: p.Delta}, true, nil
-	case methodTurnCompleted:
-		return agent.Message{Kind: agent.MessageDone}, true, nil
-	case methodTurnFailed:
-		return agent.Message{}, false, fmt.Errorf("turn failed: %s", msg.Params)
-	}
-	return agent.Message{}, false, nil
-}
-
 const stopGracePeriod = 5 * time.Second
 
 // Stop closes stdin and waits for the Codex process to exit.
@@ -289,31 +271,5 @@ func (c *Client) Stop() error {
 		_ = c.proc.cmd.Process.Kill()
 		<-done
 		return nil
-	}
-}
-
-// readResponse reads lines until it finds an RPC response (ID-bearing).
-// Notification lines encountered during the handshake are logged and discarded.
-func (c *Client) readResponse() (json.RawMessage, error) {
-	for {
-		msg, err := rpcRead(c)
-		if err != nil {
-			if _, ok := isNonJSONStdoutLine(err); ok {
-				// Ignore non-JSON noise during handshake.
-				continue
-			}
-			return nil, err
-		}
-		if msg.ID == nil {
-			// Notification during handshake — unexpected but non-fatal; discard.
-			continue
-		}
-		if *msg.ID != c.rpc.msgID {
-			return nil, fmt.Errorf("codex: unexpected response id %d (expected %d)", *msg.ID, c.rpc.msgID)
-		}
-		if msg.Error != nil {
-			return nil, fmt.Errorf("rpc error: %s", msg.Error)
-		}
-		return msg.Result, nil
 	}
 }

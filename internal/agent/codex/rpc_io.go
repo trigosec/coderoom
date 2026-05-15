@@ -63,14 +63,14 @@ func rpcHandshake(c *Client) (string, error) {
 	if err := rpcWrite(c, methodInitialize, init); err != nil {
 		return "", err
 	}
-	if _, err := c.readResponse(); err != nil {
+	if _, err := readResponse(c); err != nil {
 		return "", err
 	}
 
 	if err := rpcWrite(c, methodThreadStart, threadStartParams{Cwd: c.proc.cwd}); err != nil {
 		return "", err
 	}
-	raw, err := c.readResponse()
+	raw, err := readResponse(c)
 	if err != nil {
 		return "", err
 	}
@@ -79,6 +79,32 @@ func rpcHandshake(c *Client) (string, error) {
 		return "", fmt.Errorf("parse thread result: %w", err)
 	}
 	return r.Thread.ID, nil
+}
+
+// readResponse reads lines until it finds an RPC response (ID-bearing).
+// Notification lines encountered during the handshake are logged and discarded.
+func readResponse(c *Client) (json.RawMessage, error) {
+	for {
+		msg, err := rpcRead(c)
+		if err != nil {
+			if _, ok := isNonJSONStdoutLine(err); ok {
+				// Ignore non-JSON noise during handshake.
+				continue
+			}
+			return nil, err
+		}
+		if msg.ID == nil {
+			// Notification during handshake — unexpected but non-fatal; discard.
+			continue
+		}
+		if *msg.ID != c.rpc.msgID {
+			return nil, fmt.Errorf("codex: unexpected response id %d (expected %d)", *msg.ID, c.rpc.msgID)
+		}
+		if msg.Error != nil {
+			return nil, fmt.Errorf("rpc error: %s", msg.Error)
+		}
+		return msg.Result, nil
+	}
 }
 
 // rpcRead reads one newline-delimited JSON message from the Codex process
