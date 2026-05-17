@@ -2,14 +2,19 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
+	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui"
 )
 
@@ -33,37 +38,61 @@ func run() int {
 		return 1
 	}
 
-	factory := func(_ string, cwd string) agent.Agent {
-		return codex.New(cwd)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	factory := buildFactory(ctx, cwd, *agentLog)
+	if factory == nil {
+		return 1
+	}
+	if factory.cleanup != nil {
+		defer factory.cleanup()
 	}
 
+	sess := session.New(session.WithAgentFactory(factory.agentFactory))
+
 	var opts []ui.Option
-	if *agentLog != "" {
-		f, err := os.OpenFile(*agentLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "agent-log: %v\n", err)
-			return 1
-		}
-		defer func() {
-			if err := f.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "agent-log close: %v\n", err)
-			}
-		}()
-		factory = func(alias, cwd string) agent.Agent {
-			return codex.New(cwd, codex.WithObserver(codex.NewLogObserver(f, alias)))
-		}
-	}
-	opts = append(opts, ui.WithAgentFactory(factory))
 	if strings.TrimSpace(os.Getenv("CODEROOM_DEBUG")) == "1" {
 		opts = append(opts, ui.WithDebug(true))
 	}
 
 	if _, err := tea.NewProgram(
-		ui.New(cwd, opts...),
+		ui.New(sess, cwd, opts...),
 		tea.WithAltScreen(),
 	).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+type builtFactory struct {
+	agentFactory session.AgentFactory
+	cleanup      func()
+}
+
+func buildFactory(ctx context.Context, cwd, agentLog string) *builtFactory {
+	if agentLog == "" {
+		return &builtFactory{
+			agentFactory: func(_ string) agent.Agent {
+				return codex.New(cwd, codex.WithContext(ctx))
+			},
+		}
+	}
+
+	f, err := os.OpenFile(filepath.Clean(agentLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-log: %v\n", err)
+		return nil
+	}
+	return &builtFactory{
+		agentFactory: func(alias string) agent.Agent {
+			return codex.New(cwd, codex.WithContext(ctx), codex.WithObserver(codex.NewLogObserver(f, alias)))
+		},
+		cleanup: func() {
+			if err := f.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "agent-log close: %v\n", err)
+			}
+		},
+	}
 }

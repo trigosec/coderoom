@@ -12,6 +12,11 @@ import (
 	"github.com/trigosec/coderoom/internal/participant"
 )
 
+// AgentFactory constructs an agent.Agent for a given alias. The factory is
+// responsible for wiring any backend-specific options (context, approval
+// listener, logging) before returning.
+type AgentFactory func(alias string) agent.Agent
+
 type agentEntry struct {
 	stop chan struct{}
 }
@@ -20,11 +25,12 @@ type agentEntry struct {
 // Execute must be called from a single goroutine (the TUI input loop).
 // It is not safe for concurrent calls to Execute.
 type Session struct {
-	mu       sync.Mutex
-	registry *participant.Registry
-	agents   map[string]agentEntry
-	obs      []Observer
-	now      func() time.Time
+	mu           sync.Mutex
+	registry     *participant.Registry
+	agents       map[string]agentEntry
+	obs          []Observer
+	now          func() time.Time
+	agentFactory AgentFactory
 }
 
 // Option configures a Session at construction time.
@@ -34,6 +40,20 @@ type Option func(*Session)
 // May be called multiple times to register multiple observers.
 func WithObserver(obs Observer) Option {
 	return func(s *Session) { s.obs = append(s.obs, obs) }
+}
+
+// AddObserver appends an Observer after construction.
+func (s *Session) AddObserver(obs Observer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.obs = append(s.obs, obs)
+}
+
+// WithAgentFactory sets the factory used to construct agents when a participant
+// is invited. The factory receives the agent alias and is responsible for
+// wiring all backend options (context, approval listener, etc.).
+func WithAgentFactory(f AgentFactory) Option {
+	return func(s *Session) { s.agentFactory = f }
 }
 
 // New returns an empty Session.
@@ -92,7 +112,10 @@ func (s *Session) Shutdown() {
 }
 
 func (s *Session) notify(e Event) {
-	for _, o := range s.obs {
+	s.mu.Lock()
+	obs := s.obs
+	s.mu.Unlock()
+	for _, o := range obs {
 		o.OnEvent(e)
 	}
 }

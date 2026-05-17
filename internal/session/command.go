@@ -15,16 +15,19 @@ type Command interface {
 }
 
 // InviteCommand adds an agent to the session and starts it.
-// The caller constructs the agent.Agent before passing it in.
+// The session uses its AgentFactory to construct the agent for the given alias.
 type InviteCommand struct {
 	Alias      string
-	Agent      agent.Agent
 	Role       participant.Role
 	Initiative participant.Initiative
 	Color      string // display colour assigned by the caller; stored on the participant
 }
 
 func (c InviteCommand) execute(s *Session) error {
+	if s.agentFactory == nil {
+		return fmt.Errorf("no agent factory configured on session")
+	}
+	a := s.agentFactory(c.Alias)
 	p := &participant.Participant{
 		Alias:      c.Alias,
 		Role:       c.Role,
@@ -51,7 +54,7 @@ func (c InviteCommand) execute(s *Session) error {
 		})
 		s.startReader(alias, a)
 		s.notify(Event{Kind: KindAgentStarted, Alias: alias})
-	}(c.Alias, c.Agent)
+	}(c.Alias, a)
 	return nil
 }
 

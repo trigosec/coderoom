@@ -8,18 +8,11 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/session"
 )
 
 // Option configures a Model at construction time.
 type Option func(*Model)
-
-// WithAgentFactory sets the factory used to construct agents when a participant
-// is invited. The factory receives the agent alias and working directory.
-func WithAgentFactory(f func(alias, cwd string) agent.Agent) Option {
-	return func(m *Model) { m.agentFactory = f }
-}
 
 // WithDebug enables developer debugging features (debug commands and optional
 // overlays). Intended to be wired to CODEROOM_DEBUG=1 in the CLI.
@@ -65,7 +58,6 @@ type Model struct {
 	renderedRecords []string        // rendered form of each record; rebuilt on resize
 	streaming       map[string]int  // alias → index in records (agents mid-turn)
 	departed        map[string]bool // aliases that have left; kept for grey repaint on resize
-	agentFactory    func(alias, cwd string) agent.Agent
 	palette         colorPalette
 	cwd             string
 	ready           bool // true after first WindowSizeMsg
@@ -80,10 +72,12 @@ const (
 	focusViewport
 )
 
-// New creates a Model with its own session and event queue.
-func New(cwd string, opts ...Option) Model {
+// New creates a Model backed by the given session.
+// The session must have an AgentFactory configured before any invite commands
+// are executed.
+func New(sess *session.Session, cwd string, opts ...Option) Model {
 	q := newEventQueue()
-	sess := session.New(session.WithObserver(channelObserver{queue: q}))
+	sess.AddObserver(channelObserver{queue: q})
 
 	ti := textarea.New()
 	ti.ShowLineNumbers = false

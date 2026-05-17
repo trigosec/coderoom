@@ -257,7 +257,7 @@ func decideApproval(ctx context.Context, c *Client, req agent.ApprovalRequest, d
 		emitApprovalLog(ctx, c, fmt.Sprintf("%s (auto-decline: no approval listener configured)", req.Ask))
 		return defaultChoice
 	}
-	decision, err := l.Decide(req)
+	decision, err := l.Decide(ctx, req)
 	if err != nil {
 		emitApprovalLog(ctx, c, fmt.Sprintf("%s (auto-decline: approval listener error: %v)", req.Ask, err))
 		return defaultChoice

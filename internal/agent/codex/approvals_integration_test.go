@@ -3,6 +3,7 @@
 package codex_test
 
 import (
+	"context"
 	"flag"
 	"os"
 	"path/filepath"
@@ -15,16 +16,16 @@ import (
 
 var logDir = flag.String("logdir", "", "directory to write Codex wire logs into (if empty, uses the test temp dir)")
 
-type approvalListenerFunc func(req agent.ApprovalRequest) (agent.ApprovalDecision, error)
+type approvalListenerFunc func(ctx context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error)
 
-func (f approvalListenerFunc) Decide(req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
-	return f(req)
+func (f approvalListenerFunc) Decide(ctx context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
+	return f(ctx, req)
 }
 
 func TestApprovals_fileChange(t *testing.T) {
 	cwd := t.TempDir()
 	approvals := make(chan agent.ApprovalRequest, 16)
-	l := approvalListenerFunc(func(req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
+	l := approvalListenerFunc(func(_ context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
 		select {
 		case approvals <- req:
 		default:
@@ -61,7 +62,7 @@ func TestApprovals_fileChange(t *testing.T) {
 func TestApprovals_commandExecution(t *testing.T) {
 	cwd := t.TempDir()
 	approvals := make(chan agent.ApprovalRequest, 16)
-	l := approvalListenerFunc(func(req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
+	l := approvalListenerFunc(func(_ context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
 		select {
 		case approvals <- req:
 		default:

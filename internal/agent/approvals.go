@@ -1,9 +1,12 @@
 package agent
 
+import "context"
+
 // ApprovalListener receives normalized approval requests from an agent backend
-// and returns a normalized decision.
+// and returns a normalized decision. ctx is cancelled when the agent shuts down;
+// implementations should respect it to avoid blocking indefinitely.
 type ApprovalListener interface {
-	Decide(req ApprovalRequest) (ApprovalDecision, error)
+	Decide(ctx context.Context, req ApprovalRequest) (ApprovalDecision, error)
 }
 
 // ApprovalKind identifies the type of approval requested.

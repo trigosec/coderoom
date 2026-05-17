@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
@@ -54,12 +55,17 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	cwd, _ := os.Getwd()
 
 	events := make(chan session.Event, 128)
-	s := session.New(session.WithObserver(chanObserver{ch: events}))
+	var a *codex.Client
+	s := session.New(
+		session.WithObserver(chanObserver{ch: events}),
+		session.WithAgentFactory(func(_ string) agent.Agent {
+			a = codex.New(cwd)
+			return a
+		}),
+	)
 
-	a := codex.New(cwd)
 	if err := s.Execute(session.InviteCommand{
 		Alias:      "ada",
-		Agent:      a,
 		Role:       participant.RoleBuilder,
 		Initiative: participant.InitiativeManual,
 	}); err != nil {

@@ -86,6 +86,15 @@ func WithApprovalListener(l agent.ApprovalListener) Option {
 	return func(c *Client) { c.approvals.listener = l }
 }
 
+// WithContext sets the parent context for the client's worker lifecycle.
+// The client derives a child context from ctx so it can still cancel workers
+// independently via Stop(). If not set, context.Background() is used.
+func WithContext(ctx context.Context) Option {
+	return func(c *Client) {
+		c.lifecycle.ctx, c.lifecycle.cancelFn = context.WithCancel(ctx) //nolint:gosec // cancel stored in cancelFn, called in Stop()
+	}
+}
+
 // WithAskForApprovalPolicy configures Codex's command approval policy.
 // See `codex --help` for possible values (e.g. "untrusted", "on-request", "never").
 // Use `AskDefault` to omit the flag and let Codex choose.

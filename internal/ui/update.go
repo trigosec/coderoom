@@ -426,7 +426,6 @@ func (m Model) inviteAgent(alias string) Model {
 	color, nextPalette := m.palette.Next()
 	err := m.sess.Execute(session.InviteCommand{
 		Alias:      alias,
-		Agent:      m.agentFactory(alias, m.cwd),
 		Role:       participant.RoleBuilder,
 		Initiative: participant.InitiativeManual,
 		Color:      color,

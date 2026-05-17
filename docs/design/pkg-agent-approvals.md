@@ -50,12 +50,15 @@ Each request includes a JSON-RPC `id`. The client must respond with:
 
 ```go
 type ApprovalListener interface {
-    Decide(req ApprovalRequest) (ApprovalDecision, error)
+    Decide(ctx context.Context, req ApprovalRequest) (ApprovalDecision, error)
 }
 ```
 
 The listener:
 
+- receives the Codex client's lifecycle context (`ctx`), which is cancelled when
+  the agent stops or is shut down — implementations must respect it to avoid
+  blocking indefinitely,
 - receives a user-facing prompt (`Ask`) plus a small set of normalized decision
   options,
 - returns a normalized decision (or an error),
@@ -135,7 +138,7 @@ High-level flow:
 3. A single `approvalLoop` goroutine:
    - dequeues jobs in order,
    - formats `ApprovalRequest{Ask, Options}` for the listener,
-   - calls `listener.Decide(req)` (may block),
+   - calls `listener.Decide(ctx, req)` (may block; unblocks when `ctx` is cancelled),
    - translates `ApprovalDecision` to the correct schema-specific `result`,
    - writes the JSON-RPC response (`{"id":..., "result":...}`) to stdin.
 
@@ -173,6 +176,10 @@ If the user calls `/cancel` while an approval request is pending:
   depending on scheduling.
 - V1 behavior: coderoom does not attempt to reorder or auto-drain approvals. The
   listener should still answer approvals if asked.
+- On shutdown (client `Stop()` / context cancellation), coderoom intentionally
+  drops any buffered approvals rather than blocking shutdown waiting for human
+  input. Approvals are only meaningful while the Codex process is alive to
+  receive the JSON-RPC response.
 
 ### Ask formatting (v1)
 
@@ -180,7 +187,8 @@ The Codex client formats a short `Ask` string per request kind:
 
 - command execution: include the command string (trimmed if very long) and `cwd`
   when available.
-- file change: include the set of file paths touched (and optionally counts).
+- file change: include `grantRoot` and/or a short reason when available (Codex
+  does not always provide concrete file paths at request time).
 - permissions: include a short summary of the requested permissions (filesystem
   and/or network) plus an optional reason, if provided.
 

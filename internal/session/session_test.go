@@ -114,11 +114,11 @@ func mustReceive(t *testing.T, ch <-chan session.Event, want session.Kind) sessi
 	}
 }
 
-func invite(t *testing.T, s *session.Session, alias string, a agent.Agent) {
+// invite executes an InviteCommand for the given alias.
+func invite(t *testing.T, s *session.Session, alias string) {
 	t.Helper()
 	err := s.Execute(session.InviteCommand{
 		Alias:      alias,
-		Agent:      a,
 		Role:       participant.RoleBuilder,
 		Initiative: participant.InitiativeManual,
 	})
@@ -127,26 +127,36 @@ func invite(t *testing.T, s *session.Session, alias string, a agent.Agent) {
 	}
 }
 
+// fixedFactory returns a session option whose factory always returns the given agent.
+func fixedFactory(a agent.Agent) session.Option {
+	return session.WithAgentFactory(func(_ string) agent.Agent { return a })
+}
+
+// mappedFactory returns a session option whose factory looks up agents by alias.
+func mappedFactory(agents map[string]agent.Agent) session.Option {
+	return session.WithAgentFactory(func(alias string) agent.Agent { return agents[alias] })
+}
+
 // --- tests ---
 
 func TestInvite_emitsAgentStarted(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent()
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarting)
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 }
 
 func TestCancel_interruptsAgent(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent()
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarting)
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
@@ -163,12 +173,12 @@ func TestCancel_interruptsAgent(t *testing.T) {
 
 func TestCancel_notReadyWhileStarting(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	base := newMockAgent()
 	g := &gateAgent{startGate: make(chan struct{}), mockAgent: base}
+	s := session.New(session.WithObserver(obs), fixedFactory(g))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	invite(t, s, "ada", g)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarting)
 
 	if err := s.Execute(session.CancelCommand{Alias: "ada"}); err == nil {
@@ -181,11 +191,11 @@ func TestCancel_notReadyWhileStarting(t *testing.T) {
 
 func TestCancel_notReadyWhenCrashed(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent()
 	a.startErr = errors.New("boom")
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarting)
 	mustReceive(t, obs.ch, session.KindAgentCrashed)
 
@@ -203,13 +213,12 @@ func TestCancel_unknownAlias(t *testing.T) {
 
 func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent()
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	err := s.Execute(session.InviteCommand{
 		Alias:      "ada",
-		Agent:      a,
 		Role:       participant.RoleBuilder,
 		Initiative: participant.InitiativeManual,
 		Color:      "#4ade80",
@@ -229,13 +238,11 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 }
 
 func TestInvite_duplicateAlias(t *testing.T) {
-	s := session.New()
-	a1 := newMockAgent()
-	a2 := newMockAgent()
+	s := session.New(session.WithAgentFactory(func(_ string) agent.Agent { return newMockAgent() }))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	invite(t, s, "ada", a1)
-	err := s.Execute(session.InviteCommand{Alias: "ada", Agent: a2, Role: participant.RoleBuilder, Initiative: participant.InitiativeManual})
+	invite(t, s, "ada")
+	err := s.Execute(session.InviteCommand{Alias: "ada", Role: participant.RoleBuilder, Initiative: participant.InitiativeManual})
 	if err == nil {
 		t.Fatal("expected error on duplicate alias, got nil")
 	}
@@ -243,10 +250,10 @@ func TestInvite_duplicateAlias(t *testing.T) {
 
 func TestRemove_emitsAgentStopped(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent()
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarting)
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
@@ -265,17 +272,20 @@ func TestRemove_notFound(t *testing.T) {
 
 func TestBroadcast_emitsAndSendsToAllAgents(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a1 := newMockAgent()
 	a2 := newMockAgent()
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    a1,
+		"turing": a2,
+	}))
 	t.Cleanup(func() {
 		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
 		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
 	})
 
-	invite(t, s, "ada", a1)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
-	invite(t, s, "turing", a2)
+	invite(t, s, "turing")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
 	if err := s.Execute(session.BroadcastCommand{Text: "hello"}); err != nil {
@@ -294,17 +304,20 @@ func TestBroadcast_emitsAndSendsToAllAgents(t *testing.T) {
 
 func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	ada := newMockAgent()
 	turing := newMockAgent()
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    ada,
+		"turing": turing,
+	}))
 	t.Cleanup(func() {
 		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
 		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
 	})
 
-	invite(t, s, "ada", ada)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
-	invite(t, s, "turing", turing)
+	invite(t, s, "turing")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
 	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"}); err != nil {
@@ -341,17 +354,20 @@ func TestSharedSend_notFound(t *testing.T) {
 
 func TestPrivateSend_forwardsToAgentOnly(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	ada := newMockAgent()
 	turing := newMockAgent()
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    ada,
+		"turing": turing,
+	}))
 	t.Cleanup(func() {
 		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
 		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
 	})
 
-	invite(t, s, "ada", ada)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
-	invite(t, s, "turing", turing)
+	invite(t, s, "turing")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
 	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "secret"}); err != nil {
@@ -387,11 +403,11 @@ func TestPrivateSend_notFound(t *testing.T) {
 
 func TestReaderLoop_emitsDelta(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent(agent.Message{Kind: agent.MessageDelta, Text: "hello"})
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
 	ev := mustReceive(t, obs.ch, session.KindDelta)
@@ -402,11 +418,11 @@ func TestReaderLoop_emitsDelta(t *testing.T) {
 
 func TestReaderLoop_emitsDone(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent(agent.Message{Kind: agent.MessageDone})
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 	mustReceive(t, obs.ch, session.KindDone)
 }
@@ -414,22 +430,22 @@ func TestReaderLoop_emitsDone(t *testing.T) {
 func TestMultipleObservers_bothNotified(t *testing.T) {
 	obs1 := newTestObserver()
 	obs2 := newTestObserver()
-	s := session.New(session.WithObserver(obs1), session.WithObserver(obs2))
 	a := newMockAgent()
+	s := session.New(session.WithObserver(obs1), session.WithObserver(obs2), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs1.ch, session.KindAgentStarted)
 	mustReceive(t, obs2.ch, session.KindAgentStarted)
 }
 
 func TestReaderLoop_emitsAgentLog(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent(agent.Message{Kind: agent.MessageLog, Text: "npm warn something"})
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
 	ev := mustReceive(t, obs.ch, session.KindAgentLog)
@@ -443,11 +459,11 @@ func TestReaderLoop_emitsAgentLog(t *testing.T) {
 
 func TestReaderLoop_agentCrash_emitsCrashed(t *testing.T) {
 	obs := newTestObserver()
-	s := session.New(session.WithObserver(obs))
 	a := newMockAgent() // no messages; Stop() will close channel
 	_ = a.Stop()        // close immediately — simulates crash
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
 
-	invite(t, s, "ada", a)
+	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 	mustReceive(t, obs.ch, session.KindAgentCrashed)
 }
