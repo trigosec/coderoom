@@ -11,6 +11,25 @@ import (
 
 type workerFn = func(ctx context.Context, c *Client)
 
+// readMessage carries the outcome of a single stdout notification.
+type readMessage struct {
+	msg agent.Message
+	err error
+}
+
+type approvalContext struct {
+	kind agent.ApprovalKind
+	// perms holds the raw permissions payload from Codex, passed through verbatim
+	// to the grant response on accept. Not interpreted by coderoom.
+	perms json.RawMessage
+}
+
+type approvalRequest struct {
+	rpcID       int
+	req         agent.ApprovalRequest
+	approvalCtx approvalContext
+}
+
 // readCodexErrWorker reads the Codex process stderr stream and emits each
 // coalesced chunk as a log message on c.read.messages.
 //
@@ -33,34 +52,54 @@ func readCodexOutWorker(ctx context.Context, c *Client) {
 	for {
 		msg, err := rpcRead(c)
 		if err != nil {
-			if nonJSON, ok := isNonJSONStdoutLine(err); ok {
-				readMsg := readMessage{msg: agent.Message{Kind: agent.MessageLog, Text: nonJSON.FormatLogLine()}}
-				if !sendBufMessage(ctx, c, readMsg) {
-					return
-				}
+			shouldContinue := handleStdoutReadError(ctx, c, err)
+			if shouldContinue {
 				continue
 			}
-			readMsg := readMessage{err: err}
-			sendBufMessage(ctx, c, readMsg)
 			return
 		}
-		if msg.Method == "" {
-			continue
-		}
-		c.noteNotification(msg)
-		agentMsg, ok, err := translateNotification(msg)
-		if err != nil {
-			readMsg := readMessage{err: err}
-			sendBufMessage(ctx, c, readMsg)
+		if !handleStdoutEnvelope(ctx, c, msg) {
 			return
-		}
-		if ok {
-			readMsg := readMessage{msg: agentMsg}
-			if !sendBufMessage(ctx, c, readMsg) {
-				return
-			}
 		}
 	}
+}
+
+func handleStdoutReadError(ctx context.Context, c *Client, err error) bool {
+	if nonJSON, ok := isNonJSONStdoutLine(err); ok {
+		readMsg := readMessage{msg: agent.Message{Kind: agent.MessageLog, Text: nonJSON.FormatLogLine()}}
+		return sendBufMessage(ctx, c, readMsg)
+	}
+	readMsg := readMessage{err: err}
+	sendBufMessage(ctx, c, readMsg)
+	return false
+}
+
+func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool {
+	if msg.Method == "" {
+		return true
+	}
+	if isApprovalRequest(msg) {
+		return enqueueApprovalRequest(ctx, c, msg)
+	}
+	var started *turnStartedParams
+	if msg.Method == methodTurnStarted {
+		var p turnStartedParams
+		if err := json.Unmarshal(msg.Params, &p); err == nil {
+			started = &p
+		}
+	}
+	c.updateTurnState(msg.Method, started)
+	agentMsg, ok, err := messageFromEnvelope(msg)
+	if err != nil {
+		readMsg := readMessage{err: err}
+		sendBufMessage(ctx, c, readMsg)
+		return false
+	}
+	if !ok {
+		return true
+	}
+	readMsg := readMessage{msg: agentMsg}
+	return sendBufMessage(ctx, c, readMsg)
 }
 
 func sendBufMessage(ctx context.Context, c *Client, msg readMessage) bool {
@@ -72,13 +111,13 @@ func sendBufMessage(ctx context.Context, c *Client, msg readMessage) bool {
 	}
 }
 
-// bufferMessagesWorker bridges the stdout pipe to read.messages via an unbounded internal
+// messageBufferWorker bridges the stdout pipe to read.messages via an unbounded internal
 // buffer. Memory grows if the consumer falls behind; acceptable for a local
 // CLI tool where stdout throughput is bounded by the agent's output rate.
 //
-// bufferMessagesWorker does not close read.messages directly because stderr also writes to
+// messageBufferWorker does not close read.messages directly because stderr also writes to
 // it. Start() closes read.messages after both workers exit.
-func bufferMessagesWorker(ctx context.Context, c *Client) {
+func messageBufferWorker(ctx context.Context, c *Client) {
 	var buf []readMessage
 	for {
 		if len(buf) == 0 {
@@ -118,20 +157,131 @@ func drainMessageBuffer(c *Client, buf []readMessage) {
 	}
 }
 
-// translateNotification maps a known Codex notification to an agent.Message.
-// Returns ok=false for unknown notifications (caller should discard and continue).
-func translateNotification(msg rpcEnvelope) (agent.Message, bool, error) {
-	switch msg.Method {
-	case methodAgentDelta:
-		var p deltaParams
-		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			return agent.Message{}, false, fmt.Errorf("parse delta params: %w", err)
-		}
-		return agent.Message{Kind: agent.MessageDelta, Text: p.Delta}, true, nil
-	case methodTurnCompleted:
-		return agent.Message{Kind: agent.MessageDone}, true, nil
-	case methodTurnFailed:
-		return agent.Message{}, false, fmt.Errorf("turn failed: %s", msg.Params)
+func enqueueApprovalRequest(ctx context.Context, c *Client, msg rpcEnvelope) bool {
+	req, approvalCtx, err := normalizeApproval(msg.Method, msg.Params)
+	if err != nil {
+		emitApprovalLog(ctx, c, "approval request parse failed; auto-declined")
+		_ = writeApprovalResult(c, *msg.ID, approvalCtx, agent.OptionDecline)
+		return true
 	}
-	return agent.Message{}, false, nil
+	ar := approvalRequest{rpcID: *msg.ID, req: req, approvalCtx: approvalCtx}
+	select {
+	case c.approvals.bufInbox <- ar:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// approvalBufferWorker decouples stdout draining from human-paced approvals.
+// The approval loop may block indefinitely waiting for a listener decision; this
+// worker ensures readCodexOutWorker never blocks on that.
+func approvalBufferWorker(ctx context.Context, c *Client) {
+	var buf []approvalRequest
+	for {
+		if len(buf) == 0 {
+			select {
+			case r := <-c.approvals.bufInbox:
+				buf = append(buf, r)
+			case <-ctx.Done():
+				// Intentionally do not drain buffered approvals on shutdown.
+				//
+				// Unlike agent output messages (delta/log/done), approvals are requests
+				// that require a JSON-RPC response from a live Codex process. Once the
+				// client is shutting down, forwarding buffered approvals is either
+				// pointless (process already exiting) or harmful (it can extend shutdown
+				// while waiting on human input). We stop promptly and allow the process
+				// to exit; pending approvals are dropped.
+				return
+			}
+		} else {
+			select {
+			case r := <-c.approvals.bufInbox:
+				buf = append(buf, r)
+			case c.approvals.inbox <- buf[0]:
+				buf = buf[1:]
+			case <-ctx.Done():
+				// See comment above: do not drain approvals on shutdown.
+				return
+			}
+		}
+	}
+}
+
+func approvalLoopWorker(ctx context.Context, c *Client) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ar := <-c.approvals.inbox:
+			if err := handleApprovalRequest(ctx, c, ar); err != nil {
+				emitApprovalLog(ctx, c, fmt.Sprintf("approval handling failed: %v", err))
+			}
+		}
+	}
+}
+
+func handleApprovalRequest(ctx context.Context, c *Client, approval approvalRequest) error {
+	choice := decideApproval(ctx, c, approval.req, agent.OptionDecline)
+	return writeApprovalResult(c, approval.rpcID, approval.approvalCtx, choice)
+}
+
+func writeApprovalResult(c *Client, rpcID int, approvalCtx approvalContext, choice agent.ApprovalOption) error {
+	switch approvalCtx.kind {
+	case agent.ApprovalCommandExecution, agent.ApprovalFileChange:
+		return writeCommandDecisionResult(c, rpcID, choice)
+	case agent.ApprovalPermissions:
+		return writePermissionsGrantResult(c, rpcID, approvalCtx.perms, choice)
+	default:
+		return writeCommandDecisionResult(c, rpcID, agent.OptionDecline)
+	}
+}
+
+func writeCommandDecisionResult(c *Client, rpcID int, choice agent.ApprovalOption) error {
+	return rpcWriteResponse(c, rpcID, commandDecisionResult{Decision: string(choice)})
+}
+
+func writePermissionsGrantResult(c *Client, rpcID int, perms json.RawMessage, choice agent.ApprovalOption) error {
+	if isNullJSON(perms) {
+		perms = json.RawMessage("{}")
+	}
+	if choice == agent.OptionAccept {
+		return rpcWriteResponse(c, rpcID, permissionsGrantResult{Permissions: perms})
+	}
+	return rpcWriteResponse(c, rpcID, permissionsGrantResult{Permissions: json.RawMessage("{}")})
+}
+
+func decideApproval(ctx context.Context, c *Client, req agent.ApprovalRequest, defaultChoice agent.ApprovalOption) agent.ApprovalOption {
+	l := c.approvals.listener
+	if l == nil {
+		emitApprovalLog(ctx, c, fmt.Sprintf("%s (auto-decline: no approval listener configured)", req.Ask))
+		return defaultChoice
+	}
+	decision, err := l.Decide(req)
+	if err != nil {
+		emitApprovalLog(ctx, c, fmt.Sprintf("%s (auto-decline: approval listener error: %v)", req.Ask, err))
+		return defaultChoice
+	}
+	if !containsOption(req.Options, decision.Choice) {
+		emitApprovalLog(ctx, c, fmt.Sprintf("%s (auto-decline: invalid listener choice %q)", req.Ask, decision.Choice))
+		return defaultChoice
+	}
+	return decision.Choice
+}
+
+func containsOption(opts []agent.ApprovalOption, choice agent.ApprovalOption) bool {
+	for _, opt := range opts {
+		if opt == choice {
+			return true
+		}
+	}
+	return false
+}
+
+func emitApprovalLog(ctx context.Context, c *Client, text string) {
+	msg := readMessage{msg: agent.Message{Kind: agent.MessageLog, Text: "codex: " + text}}
+	select {
+	case c.read.messages <- msg:
+	case <-ctx.Done():
+	}
 }

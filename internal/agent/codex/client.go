@@ -5,19 +5,12 @@ package codex
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
 )
-
-// readMessage carries the outcome of a single stdout notification.
-type readMessage struct {
-	msg agent.Message
-	err error
-}
 
 // Client implements agent.Agent for the Codex app-server.
 // Calls must not be made concurrently, except Stop() which may be called
@@ -32,7 +25,7 @@ type Client struct {
 		bufMessages chan readMessage // channel to enable buffering of readMessages.
 		//
 		// Note: bufMessages is currently unbuffered, so readCodexOutWorker can still
-		// experience backpressure if bufferMessagesWorker can't keep up (ultimately
+		// experience backpressure if messageBufferWorker can't keep up (ultimately
 		// bounded by how fast the caller drains Read()).
 		//
 		// Follow-up improvement: replace bufMessages with an unbounded queue (or a
@@ -52,6 +45,12 @@ type Client struct {
 		mu       sync.Mutex
 		threadID string
 		state    turnState
+	}
+
+	approvals struct {
+		listener agent.ApprovalListener
+		inbox    chan approvalRequest
+		bufInbox chan approvalRequest
 	}
 
 	lifecycle struct {
@@ -82,6 +81,25 @@ func WithObserver(obs ProtocolObserver) Option {
 	return func(c *Client) { c.rpc.obs = obs }
 }
 
+// WithApprovalListener attaches an optional listener for mid-turn approval requests.
+func WithApprovalListener(l agent.ApprovalListener) Option {
+	return func(c *Client) { c.approvals.listener = l }
+}
+
+// WithAskForApprovalPolicy configures Codex's command approval policy.
+// See `codex --help` for possible values (e.g. "untrusted", "on-request", "never").
+// Use `AskDefault` to omit the flag and let Codex choose.
+func WithAskForApprovalPolicy(policy AskForApprovalPolicy) Option {
+	return func(c *Client) { c.proc.askForApproval = policy }
+}
+
+// WithSandboxMode configures Codex's sandbox policy for executing shell commands.
+// See `codex --help` for possible values (e.g. "read-only", "workspace-write", "danger-full-access").
+// Use `SandboxDefault` to omit the flag and let Codex choose.
+func WithSandboxMode(mode SandboxMode) Option {
+	return func(c *Client) { c.proc.sandboxMode = mode }
+}
+
 // New returns a Client that will run Codex in the given working directory.
 func New(cwd string, opts ...Option) *Client {
 	c := &Client{proc: newProc(cwd)}
@@ -99,6 +117,16 @@ func (c *Client) initRead() {
 	}
 }
 
+func (c *Client) initApprovals() {
+	if c.approvals.inbox == nil {
+		c.approvals.inbox = make(chan approvalRequest)
+		// Buffering here is not for throughput; it's a small amount of slack so the
+		// stdout reader is less sensitive to scheduler timing. The unbounded slice
+		// buffer lives in approvalBufferWorker.
+		c.approvals.bufInbox = make(chan approvalRequest, 32)
+	}
+}
+
 // Start launches the Codex app-server and completes the initialize and
 // thread/start handshakes. It must be called before Send or Read.
 func (c *Client) Start() error {
@@ -108,6 +136,7 @@ func (c *Client) Start() error {
 	}
 
 	c.initRead()
+	c.initApprovals()
 
 	threadID, err := rpcHandshake(c)
 	if err != nil {
@@ -131,7 +160,13 @@ func (c *Client) Start() error {
 }
 
 func (c *Client) initWorkers() {
-	var workers = []workerFn{readCodexErrWorker, readCodexOutWorker, bufferMessagesWorker}
+	var workers = []workerFn{
+		readCodexErrWorker,
+		readCodexOutWorker,
+		messageBufferWorker,
+		approvalBufferWorker,
+		approvalLoopWorker,
+	}
 	for _, worker := range workers {
 		worker := worker
 		c.lifecycle.waitGroup.Go(
@@ -203,14 +238,10 @@ func (c *Client) Read() (agent.Message, error) {
 	return r.msg, r.err
 }
 
-func (c *Client) noteNotification(msg rpcEnvelope) {
-	switch msg.Method {
+func (c *Client) updateTurnState(method string, p *turnStartedParams) {
+	switch method {
 	case methodTurnStarted:
-		var p turnStartedParams
-		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			return
-		}
-		if p.ThreadID == "" || p.Turn.ID == "" {
+		if p == nil || p.ThreadID == "" || p.Turn.ID == "" {
 			return
 		}
 		c.turn.mu.Lock()

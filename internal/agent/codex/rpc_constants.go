@@ -10,4 +10,8 @@ const (
 	methodTurnInterrupt = "turn/interrupt"
 
 	methodAgentDelta = "item/agentMessage/delta"
+
+	methodCommandExecutionRequestApproval = "item/commandExecution/requestApproval"
+	methodFileChangeRequestApproval       = "item/fileChange/requestApproval"
+	methodPermissionsRequestApproval      = "item/permissions/requestApproval"
 )

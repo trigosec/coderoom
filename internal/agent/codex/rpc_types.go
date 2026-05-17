@@ -65,3 +65,37 @@ type rpcEnvelope struct {
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  json.RawMessage `json:"error,omitempty"`
 }
+
+type rpcResponse[T any] struct {
+	ID     int `json:"id"`
+	Result T   `json:"result"`
+}
+
+type commandExecutionRequestApprovalParams struct {
+	Command string  `json:"command"`
+	Cwd     *string `json:"cwd"`
+}
+
+type fileChangeRequestApprovalParams struct {
+	GrantRoot *string `json:"grantRoot"`
+	Reason    *string `json:"reason"`
+}
+
+type permissionsRequestApprovalParams struct {
+	Cwd         string          `json:"cwd"`
+	Permissions json.RawMessage `json:"permissions"`
+	Reason      *string         `json:"reason"`
+}
+
+type requestPermissionProfile struct {
+	FileSystem json.RawMessage `json:"fileSystem"`
+	Network    json.RawMessage `json:"network"`
+}
+
+type commandDecisionResult struct {
+	Decision string `json:"decision"`
+}
+
+type permissionsGrantResult struct {
+	Permissions json.RawMessage `json:"permissions"`
+}

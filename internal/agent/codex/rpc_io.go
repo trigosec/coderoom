@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,10 @@ func (e nonJSONStdoutLineError) FormatLogLine() string {
 	return "codex stdout (non-json): " + line
 }
 
+func isNullJSON(v json.RawMessage) bool {
+	return len(v) == 0 || bytes.Equal(bytes.TrimSpace(v), []byte("null"))
+}
+
 // rpcWrite writes a JSON-RPC request to the Codex process stdin.
 //
 // It is blocking and serialized via c.rpc.mu to ensure request IDs are
@@ -49,6 +54,21 @@ func rpcWrite[T any](c *Client, method string, params T) error {
 	c.rpc.obs.OnSend(string(b))
 	if _, err := fmt.Fprintf(c.proc.codexIn, "%s\n", b); err != nil {
 		return fmt.Errorf("write rpc: %w", err)
+	}
+	return nil
+}
+
+func rpcWriteResponse[T any](c *Client, id int, result T) error {
+	c.rpc.mu.Lock()
+	defer c.rpc.mu.Unlock()
+
+	b, err := json.Marshal(rpcResponse[T]{ID: id, Result: result})
+	if err != nil {
+		return fmt.Errorf("marshal rpc response: %w", err)
+	}
+	c.rpc.obs.OnSend(string(b))
+	if _, err := fmt.Fprintf(c.proc.codexIn, "%s\n", b); err != nil {
+		return fmt.Errorf("write rpc response: %w", err)
 	}
 	return nil
 }
@@ -100,10 +120,10 @@ func readResponse(c *Client) (json.RawMessage, error) {
 		if *msg.ID != c.rpc.msgID {
 			return nil, fmt.Errorf("codex: unexpected response id %d (expected %d)", *msg.ID, c.rpc.msgID)
 		}
-		if msg.Error != nil {
+		if !isNullJSON(msg.Error) {
 			return nil, fmt.Errorf("rpc error: %s", msg.Error)
 		}
-		return msg.Result, nil
+		return json.RawMessage(msg.Result), nil
 	}
 }
 

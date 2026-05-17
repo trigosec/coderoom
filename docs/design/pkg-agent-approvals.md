@@ -26,7 +26,7 @@ replicating the Codex CLI workflow in v1:
 - Rooms/private contexts for approvals.
 - Rich “apply suggested policy amendment” UX (execpolicy/network policy).
 - Multi-approval selection UI (accept/decline all).
-- Surfacing approval requests as `agent.Event` values (we may add this later).
+- Surfacing approval requests as `agent.Message` values (we may add this later).
 
 ## Codex protocol surface (v2)
 
@@ -115,8 +115,8 @@ If no listener is configured:
 
 - Codex client responds with a safe default: `decline` (or empty grant for
   permissions).
-- Codex client emits an `agent.Event{Log: ...}` line describing the auto-decline
-  (so the user understands why the agent is blocked).
+- Codex client emits an `agent.Message{Kind: agent.MessageLog, Text: ...}`
+  describing the auto-decline (so the user understands why the agent is blocked).
 
 This makes coderoom safe-by-default even before the UI supports approvals.
 
@@ -195,16 +195,17 @@ The Codex client validates that the listener's returned `Choice` is present in
 ## Error handling
 
 - If the listener returns an error, codex client responds with the safe default
-  (decline/empty grant) and logs the error as an `agent.Event{Log: ...}`.
+  (decline/empty grant) and logs the error as an
+  `agent.Message{Kind: agent.MessageLog, Text: ...}`.
 - If stdin write fails while responding, the client treats this as fatal and the
   agent will crash (consistent with other write failures).
 
 ## Open questions
 
-- Should approvals be surfaced as `agent.Event` (so the session/UI owns the full
+- Should approvals be surfaced as `agent.Message` (so the session/UI owns the full
   UX), rather than being handled inside the Codex client?
   - Decision: no. The approval listener is responsible for surfacing the prompt
-    to the UI. We keep approval transport out of `agent.Event` in v1.
+    to the UI. We keep approval transport out of `agent.Message` in v1.
 - Should we support `acceptForSession` in v1 (for command/file approvals)?
   - Decision: yes. If the backend supports it (Codex does), the listener may
     return it.

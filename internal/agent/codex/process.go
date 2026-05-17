@@ -15,14 +15,17 @@ type process struct {
 	codexIn  io.WriteCloser
 	codexOut *bufio.Reader
 	codexErr io.Reader
+
+	askForApproval AskForApprovalPolicy
+	sandboxMode    SandboxMode
 }
 
 func newProc(cwd string) *process {
-	return &process{cwd: cwd}
+	return &process{cwd: cwd, askForApproval: AskDefault, sandboxMode: SandboxDefault}
 }
 
 func (p *process) start() error {
-	args := codexArgs()
+	args := codexArgs(p.askForApproval, p.sandboxMode)
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = p.cwd
 
@@ -54,10 +57,18 @@ func (p *process) start() error {
 
 // codexArgs returns the command and arguments for the Codex app-server.
 // CODEX_VERSION_OVERRIDE pins a specific npm version for integration testing.
-func codexArgs() []string {
+func codexArgs(askForApproval AskForApprovalPolicy, sandboxMode SandboxMode) []string {
 	pkg := "@openai/codex"
 	if v := os.Getenv("CODEX_VERSION_OVERRIDE"); v != "" {
 		pkg = "@openai/codex@" + v
 	}
-	return []string{"npx", pkg, "app-server"}
+	args := []string{"npx", pkg}
+	if askForApproval != AskDefault {
+		args = append(args, "--ask-for-approval", string(askForApproval))
+	}
+	if sandboxMode != SandboxDefault {
+		args = append(args, "--sandbox", string(sandboxMode))
+	}
+	args = append(args, "app-server")
+	return args
 }

@@ -36,7 +36,7 @@ func newWithIO(t *testing.T, stdin io.WriteCloser, stdout io.Reader, obs Protoco
 
 func TestCodexArgs_default(t *testing.T) {
 	t.Setenv("CODEX_VERSION_OVERRIDE", "")
-	args := codexArgs()
+	args := codexArgs("", "")
 	if args[1] != "@openai/codex" {
 		t.Errorf("expected @openai/codex, got %q", args[1])
 	}
@@ -44,7 +44,7 @@ func TestCodexArgs_default(t *testing.T) {
 
 func TestCodexArgs_override(t *testing.T) {
 	t.Setenv("CODEX_VERSION_OVERRIDE", "0.99.0")
-	args := codexArgs()
+	args := codexArgs("", "")
 	if args[1] != "@openai/codex@0.99.0" {
 		t.Errorf("expected @openai/codex@0.99.0, got %q", args[1])
 	}
