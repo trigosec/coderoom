@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -15,8 +14,6 @@ import (
 	"github.com/trigosec/coderoom/internal/ui/editor"
 )
 
-type activityTickMsg time.Time
-
 const (
 	// marginH is the number of columns reserved on each horizontal side. Only a
 	// left prefix is applied in View(); the right margin is implicit because
@@ -26,11 +23,9 @@ const (
 	marginV = 1
 )
 
-const toolboxHeight = 2 // separator + participant cells row
-
-func chromeHeight(inputHeight int) int {
+func chromeHeight(inputHeight, toolboxH int) int {
 	// viewport separator + input + toolbox + bottom margin
-	return 1 + inputHeight + toolboxHeight + marginV
+	return 1 + inputHeight + toolboxH + marginV
 }
 
 func inputMaxHeight(totalHeight int) int {
@@ -74,16 +69,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleResize(msg), nil
 	case editor.Response:
 		return m.handleEditorResult(msg), nil
-	case activityTickMsg:
-		next, cmd := m.handleActivityTick(time.Time(msg))
-		return next, cmd
 	case sessionEventMsg:
 		next, cmd := m.handleEvent(session.Event(msg))
 		return next, tea.Batch(cmd, awaitEvent(m.queue))
 	default:
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
+		var inputCmd tea.Cmd
+		m.input, inputCmd = m.input.Update(msg)
+		var toolboxCmd tea.Cmd
+		m.toolbox, toolboxCmd = m.toolbox.Update(msg)
+		return m, tea.Batch(inputCmd, toolboxCmd)
 	}
 }
 
@@ -184,8 +178,9 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 	m.input = updateInputDecorations(m.input)
 	maxInputH := inputMaxHeight(msg.Height)
 	inputH := desiredInputHeight(m.input.LineCount(), maxInputH)
-	h := msg.Height - chromeHeight(inputH)
 	inner := max(msg.Width-2*marginH, 1)
+	m.toolbox = m.toolbox.SetWidth(inner)
+	h := msg.Height - chromeHeight(inputH, m.toolbox.Height())
 	h = max(h, 1)
 	if !m.ready {
 		m.viewport = viewport.New(inner, h)
@@ -263,7 +258,8 @@ func (m Model) handleEvent(e session.Event) (Model, tea.Cmd) {
 	} else {
 		next = m.handleMessageEvent(e)
 	}
-	next, cmd := next.ensureActivityTick()
+	var cmd tea.Cmd
+	next.toolbox, cmd = next.toolbox.SetParticipants(next.sess.Roster())
 	return next, cmd
 }
 
@@ -304,38 +300,6 @@ func (m Model) handleMessageEvent(e session.Event) Model {
 	default:
 		return m
 	}
-}
-
-func (m Model) wantsActivityTick() bool {
-	return m.sess.HasAnyActivityParticipants()
-}
-
-func rosterWantsTick(ps []participant.Participant) bool {
-	for _, p := range ps {
-		switch p.Status {
-		case participant.StatusStarting, participant.StatusWorking, participant.StatusCrashed:
-			return true
-		case participant.StatusIdle:
-			// no tick needed
-		}
-	}
-	return false
-}
-
-func (m Model) ensureActivityTick() (Model, tea.Cmd) {
-	if m.tickActive || !m.wantsActivityTick() {
-		return m, nil
-	}
-	m.tickActive = true
-	return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return activityTickMsg(t) })
-}
-
-func (m Model) handleActivityTick(_ time.Time) (Model, tea.Cmd) {
-	if !m.wantsActivityTick() {
-		m.tickActive = false
-		return m, nil
-	}
-	return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return activityTickMsg(t) })
 }
 
 func (m Model) handleDelta(alias, text string) Model {
@@ -572,7 +536,7 @@ func (m Model) resizeForInput() Model {
 	inputH := desiredInputHeight(m.input.LineCount(), maxInputH)
 	if inputH != m.input.Height() {
 		m.input.SetHeight(inputH)
-		m.viewport.Height = max(m.lastSize.Height-chromeHeight(inputH), 1)
+		m.viewport.Height = max(m.lastSize.Height-chromeHeight(inputH, m.toolbox.Height()), 1)
 		m = m.syncViewport()
 		if wasAtBottom {
 			m.viewport.GotoBottom()

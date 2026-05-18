@@ -1,4 +1,4 @@
-package ui
+package toolbox
 
 import (
 	"strings"
@@ -9,9 +9,7 @@ import (
 )
 
 func TestToolboxCells_orderByStatusThenAlias(t *testing.T) {
-	m := makeReadyModel(t)
 	now := time.Unix(100, 0)
-	m.now = func() time.Time { return now }
 
 	ps := []participant.Participant{
 		{Alias: "bob", Status: participant.StatusIdle, Since: now},
@@ -20,7 +18,7 @@ func TestToolboxCells_orderByStatusThenAlias(t *testing.T) {
 		{Alias: "cat", Status: participant.StatusStarting, Since: now.Add(-2 * time.Second)},
 	}
 
-	out := m.renderParticipantCells(cellWidth()*10, now, ps)
+	out := renderParticipantCells(cellWidth()*10, now, ps)
 	// working first (alias-sorted within tier): ada, zoe; then starting: cat; then idle: bob
 	wantOrder := []string{"ada", "zoe", "cat", "bob"}
 	pos := -1
@@ -34,9 +32,7 @@ func TestToolboxCells_orderByStatusThenAlias(t *testing.T) {
 }
 
 func TestToolboxCells_overflowShowsPlusN(t *testing.T) {
-	m := makeReadyModel(t)
 	now := time.Unix(100, 0)
-	m.now = func() time.Time { return now }
 
 	ps := make([]participant.Participant, 0, 10)
 	for i := 0; i < 10; i++ {
@@ -47,25 +43,23 @@ func TestToolboxCells_overflowShowsPlusN(t *testing.T) {
 		})
 	}
 	// Force only 2 cells wide -> 1 visible + overflow cell.
-	out := m.renderParticipantCells(cellWidth()*2, now, ps)
-	if !contains(out, "+9") {
+	out := renderParticipantCells(cellWidth()*2, now, ps)
+	if !strings.Contains(out, "+9") {
 		t.Fatalf("expected overflow +9, got: %q", out)
 	}
 }
 
 func TestToolboxGlyphs_andElapsedFormatting(t *testing.T) {
-	m := makeReadyModel(t)
 	base := time.Unix(100, 0)
-	m.now = func() time.Time { return base }
 
 	ps := []participant.Participant{
 		{Alias: "ada", Status: participant.StatusWorking, Since: base.Add(-10 * time.Second)},
 	}
-	out := m.renderParticipantCells(cellWidth()*4, base, ps)
-	if !contains(out, "⏹") && !contains(out, "◆") {
+	out := renderParticipantCells(cellWidth()*4, base, ps)
+	if !strings.Contains(out, "⏹") && !strings.Contains(out, "◆") {
 		t.Fatalf("expected working glyph in output, got: %q", out)
 	}
-	if !contains(out, "(10s)") {
+	if !strings.Contains(out, "(10s)") {
 		t.Fatalf("expected 10s elapsed in output, got: %q", out)
 	}
 
@@ -74,30 +68,35 @@ func TestToolboxGlyphs_andElapsedFormatting(t *testing.T) {
 		Status: participant.StatusCrashed,
 		Since:  base.Add(-3*time.Minute - 12*time.Second),
 	})
-	out = m.renderParticipantCells(cellWidth()*4, base, ps)
-	if !contains(out, "✖") {
+	out = renderParticipantCells(cellWidth()*4, base, ps)
+	if !strings.Contains(out, "✖") {
 		t.Fatalf("expected crashed glyph in output, got: %q", out)
 	}
-	if !contains(out, "(3m12s)") {
+	if !strings.Contains(out, "(3m12s)") {
 		t.Fatalf("expected 3m12s elapsed in output, got: %q", out)
 	}
 }
 
 func TestRosterWantsTick(t *testing.T) {
 	now := time.Unix(100, 0)
-	if rosterWantsTick(nil) {
+
+	if New().WantsTick() {
 		t.Fatal("expected false for empty roster")
 	}
-	if rosterWantsTick([]participant.Participant{{Alias: "ada", Status: participant.StatusIdle, Since: now}}) {
+	idleOnly, _ := New().SetParticipants([]participant.Participant{{Alias: "ada", Status: participant.StatusIdle, Since: now}})
+	if idleOnly.WantsTick() {
 		t.Fatal("expected false for idle-only roster")
 	}
-	if !rosterWantsTick([]participant.Participant{{Alias: "ada", Status: participant.StatusWorking, Since: now}}) {
+	working, _ := New().SetParticipants([]participant.Participant{{Alias: "ada", Status: participant.StatusWorking, Since: now}})
+	if !working.WantsTick() {
 		t.Fatal("expected true for working participant")
 	}
-	if !rosterWantsTick([]participant.Participant{{Alias: "ada", Status: participant.StatusStarting, Since: now}}) {
+	starting, _ := New().SetParticipants([]participant.Participant{{Alias: "ada", Status: participant.StatusStarting, Since: now}})
+	if !starting.WantsTick() {
 		t.Fatal("expected true for starting participant")
 	}
-	if !rosterWantsTick([]participant.Participant{{Alias: "ada", Status: participant.StatusCrashed, Since: now}}) {
+	crashed, _ := New().SetParticipants([]participant.Participant{{Alias: "ada", Status: participant.StatusCrashed, Since: now}})
+	if !crashed.WantsTick() {
 		t.Fatal("expected true for crashed participant")
 	}
 }
@@ -113,5 +112,3 @@ func indexAfter(s, sub string, after int) int {
 	}
 	return start + j
 }
-
-func contains(s, sub string) bool { return strings.Contains(s, sub) }

@@ -1,4 +1,4 @@
-package ui
+package toolbox
 
 import (
 	"fmt"
@@ -11,6 +11,14 @@ import (
 )
 
 const aliasMax = 10
+
+// View renders the toolbox: a plain separator line followed by the participant
+// cells row.
+func (m Model) View() string {
+	sep := strings.Repeat("─", m.width)
+	cells := renderParticipantCells(m.width, m.now(), m.participants)
+	return sep + "\n" + cells
+}
 
 func activityTier(k participant.Status) int {
 	switch k {
@@ -91,7 +99,7 @@ func cellWidth() int {
 	return glyphW + 1 + aliasMax + 1 + len("(59m59s)")
 }
 
-func (m Model) renderParticipantCells(innerWidth int, now time.Time, ps []participant.Participant) string {
+func renderParticipantCells(innerWidth int, now time.Time, ps []participant.Participant) string {
 	w := cellWidth()
 	if innerWidth <= 0 {
 		return ""
@@ -123,7 +131,7 @@ func (m Model) renderParticipantCells(innerWidth int, now time.Time, ps []partic
 
 	var cells []string
 	for i := 0; i < min(visibleSlots, len(entries)); i++ {
-		cells = append(cells, m.renderCell(entries[i], now, w))
+		cells = append(cells, renderCell(entries[i], now, w))
 	}
 	if overflow > 0 {
 		ov := fmt.Sprintf("+%d", overflow)
@@ -136,7 +144,7 @@ func (m Model) renderParticipantCells(innerWidth int, now time.Time, ps []partic
 	return strings.TrimRight(strings.Join(cells, ""), " ")
 }
 
-func (m Model) renderCell(p participant.Participant, now time.Time, width int) string {
+func renderCell(p participant.Participant, now time.Time, width int) string {
 	glyph := "●"
 	showElapsed := false
 	switch p.Status {

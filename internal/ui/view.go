@@ -25,8 +25,9 @@ func (m Model) View() string {
 	for line := range strings.SplitSeq(strings.TrimSuffix(m.input.View(), "\n"), "\n") {
 		sb.WriteString(left + line + "\n")
 	}
-	sb.WriteString(left + strings.Repeat("─", m.viewport.Width) + "\n")
-	sb.WriteString(left + m.renderParticipantCells(m.viewport.Width, m.now(), m.sess.Roster()) + "\n")
+	for _, line := range strings.Split(m.toolbox.View(), "\n") {
+		sb.WriteString(left + line + "\n")
+	}
 	sb.WriteString(strings.Repeat("\n", marginV))
 	// Avoid a trailing newline: when the rendered frame height matches the
 	// terminal height, a final newline can scroll the terminal and make the
