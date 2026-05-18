@@ -1,10 +1,10 @@
 package compose
 
 import (
-	"fmt"
-
 	"github.com/charmbracelet/bubbles/textarea"
 )
+
+const promptWidth = 2
 
 // View renders the input area.
 func (m Model) View() string {
@@ -12,16 +12,12 @@ func (m Model) View() string {
 }
 
 func applyDecorations(input textarea.Model) textarea.Model {
-	if input.LineCount() >= 2 {
-		input.ShowLineNumbers = false
-		input.SetPromptFunc(6, func(lineIndex int) string {
-			return fmt.Sprintf("❯%4d ", lineIndex+1)
-		})
-		return input
-	}
 	input.ShowLineNumbers = false
-	input.SetPromptFunc(6, func(_ int) string {
-		return "❯     "
+	input.SetPromptFunc(promptWidth, func(lineIndex int) string {
+		if lineIndex == 0 {
+			return "❯ "
+		}
+		return "  "
 	})
 	return input
 }

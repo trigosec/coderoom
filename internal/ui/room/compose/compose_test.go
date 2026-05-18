@@ -70,22 +70,78 @@ func TestCtrlLeft_movesWordBackward(t *testing.T) {
 	}
 }
 
-func TestDecorations_shownOnlyForMultiline(t *testing.T) {
+func TestView_singleLine(t *testing.T) {
 	m := New()
-	m = m.SetWidth(40)
-
-	if strings.Contains(ansi.Strip(m.View()), "❯   1 ") {
-		t.Fatal("expected single-line input to hide prompt line numbers")
-	}
-
-	m = m.SetValue("a\nb")
+	m = m.SetWidth(40).SetValue("hello")
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "❯   1 ") || !strings.Contains(view, "❯   2 ") {
-		t.Fatalf("expected prompt to show numbers for multiline input, got:\n%s", view)
+	if !strings.HasPrefix(view, "❯ hello") {
+		t.Fatalf("expected single-line view to start with '❯ hello', got:\n%s", view)
 	}
+}
 
-	m = m.SetValue("a")
-	if strings.Contains(ansi.Strip(m.View()), "❯   1 ") {
-		t.Fatal("expected prompt line numbers hidden again for single line")
+func TestView_multiLine_continuationIndented(t *testing.T) {
+	m := New()
+	m = m.SetWidth(40).SetMaxHeightFromTotal(20).SetValue("first\nsecond")
+	view := ansi.Strip(m.View())
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 rendered lines, got:\n%s", view)
+	}
+	if !strings.HasPrefix(lines[0], "❯ ") {
+		t.Errorf("first line should start with '❯ ', got %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "  ") {
+		t.Errorf("second line should start with '  ', got %q", lines[1])
+	}
+}
+
+func TestHasAbove_falseWhenContentFits(t *testing.T) {
+	m := New()
+	m = m.SetWidth(40).SetMaxHeightFromTotal(20).SetValue("one\ntwo\nthree")
+	if m.HasAbove() {
+		t.Error("expected HasAbove=false when all lines fit in the viewport")
+	}
+	if m.HasBelow() {
+		t.Error("expected HasBelow=false when all lines fit in the viewport")
+	}
+}
+
+func TestHasAbove_trueWhenCursorAtEndOfOverflow(t *testing.T) {
+	// maxH from totalH=6 is min(8, max(6/3,1))=2. Set enough lines to overflow.
+	m := New()
+	m = m.SetWidth(40).SetMaxHeightFromTotal(6).SetValue("a\nb\nc\nd\ne")
+	// Cursor is at the last line after SetValue; content above must exist.
+	if !m.HasAbove() {
+		t.Error("expected HasAbove=true when buffer exceeds viewport height")
+	}
+}
+
+func TestHasBelow_trueWhenCursorAtTop(t *testing.T) {
+	m := New()
+	m = m.SetWidth(40).SetMaxHeightFromTotal(6).SetValue("a\nb\nc\nd\ne")
+	// Move cursor to the first line via Ctrl+Home equivalent (Ctrl+A then Up).
+	for range 10 {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	}
+	if !m.HasBelow() {
+		t.Error("expected HasBelow=true when cursor is at the top of an overflowing buffer")
+	}
+}
+
+func TestView_longLine_wrapsWithIndent(t *testing.T) {
+	m := New()
+	// Width 12: prompt takes 2, content area is 10.
+	// "0123456789X" is 11 runes — should wrap onto a second visual row.
+	m = m.SetWidth(12).SetMaxHeightFromTotal(20).SetValue("0123456789X")
+	view := ansi.Strip(m.View())
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped long line to produce >=2 rendered rows, got:\n%s", view)
+	}
+	if !strings.HasPrefix(lines[0], "❯ ") {
+		t.Errorf("first visual row should start with '❯ ', got %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "  ") {
+		t.Errorf("continuation row should start with '  ', got %q", lines[1])
 	}
 }

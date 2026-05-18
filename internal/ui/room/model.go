@@ -175,10 +175,11 @@ func (m Model) HandleResize(innerW, totalH int) Model {
 	m.input.compose = m.input.compose.SetWidth(innerW).SetMaxHeightFromTotal(totalH)
 	// Layout:
 	//   history (variable height)
-	//   separator (1 line)
+	//   top separator (1 line)
 	//   input (either composer or approval view; composer height is dynamic)
+	//   bottom separator (1 line)
 	inputH := m.input.height(totalH)
-	h := max(totalH-(1+inputH), 1)
+	h := max(totalH-(2+inputH), 1)
 	m.history = m.history.SetSize(innerW, h)
 	m.history = m.history.RebuildColors()
 	return m

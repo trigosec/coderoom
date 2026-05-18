@@ -234,7 +234,7 @@ func (m Model) syncAfterCompose() Model {
 	if totalH <= 0 {
 		return m
 	}
-	newHistH := max(totalH-(1+m.input.compose.Height()), 1)
+	newHistH := max(totalH-(2+m.input.compose.Height()), 1)
 	if newHistH == m.history.Height() {
 		return m
 	}

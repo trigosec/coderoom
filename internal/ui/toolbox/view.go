@@ -12,12 +12,9 @@ import (
 
 const aliasMax = 10
 
-// View renders the toolbox: a plain separator line followed by the participant
-// cells row.
+// View renders the toolbox: the participant cells row.
 func (m Model) View() string {
-	sep := strings.Repeat("─", m.width)
-	cells := renderParticipantCells(m.width, m.now(), m.participants)
-	return sep + "\n" + cells
+	return renderParticipantCells(m.width, m.now(), m.participants)
 }
 
 func activityTier(k participant.Status) int {

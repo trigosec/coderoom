@@ -35,7 +35,7 @@ func (m Model) SetParticipants(ps []participant.Participant) (Model, tea.Cmd) {
 }
 
 // Height returns the fixed number of lines rendered by View.
-func (m Model) Height() int { return 2 }
+func (m Model) Height() int { return 1 }
 
 // WantsTick reports whether any participant is in an active state
 // that requires periodic redraw.
