@@ -22,8 +22,14 @@ func (m Model) View() string {
 		sb.WriteString(line + "\n")
 	}
 	sb.WriteString(sep + "\n")
-	for line := range strings.SplitSeq(strings.TrimSuffix(m.compose.View(), "\n"), "\n") {
-		sb.WriteString(line + "\n")
+	if m.input.kind == inputApproval {
+		for line := range strings.SplitSeq(m.input.approval.View(), "\n") {
+			sb.WriteString(line + "\n")
+		}
+	} else {
+		for line := range strings.SplitSeq(strings.TrimSuffix(m.input.compose.View(), "\n"), "\n") {
+			sb.WriteString(line + "\n")
+		}
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
@@ -32,6 +38,9 @@ func (m Model) separatorLabel() string {
 	label := "compose"
 	if m.focus == focusHistory {
 		label = "history"
+	}
+	if m.input.kind == inputApproval && m.focus != focusHistory {
+		label = "approval"
 	}
 	if !m.debug {
 		return label

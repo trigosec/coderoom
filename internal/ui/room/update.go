@@ -5,11 +5,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/ui/editor"
+	"github.com/trigosec/coderoom/internal/ui/room/approval"
 )
 
 // Update handles incoming messages and returns the next model state.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	if m.input.kind == inputApproval {
+		if next, cmd, ok := m.handleApprovalMessage(msg); ok {
+			return next, cmd
+		}
+	}
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -20,12 +27,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case editor.Response:
 		return m.handleEditorResult(msg), nil
 	default:
-		var composeCmd tea.Cmd
-		m.compose, composeCmd = m.compose.Update(msg)
-		m = m.syncAfterCompose()
+		// Non-key messages (cursor blink, mouse events, etc).
+		//
+		// Compose needs these (e.g. cursor blink), but the approval input does not.
+		var inputCmd tea.Cmd
+		if m.input.kind == inputCompose {
+			m.input.compose, inputCmd = m.input.compose.Update(msg)
+			m = m.syncAfterCompose()
+		}
 		var historyCmd tea.Cmd
 		m.history, historyCmd = m.history.Update(msg)
-		return m, tea.Batch(composeCmd, historyCmd)
+		return m, tea.Batch(inputCmd, historyCmd)
 	}
 }
 
@@ -47,19 +59,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.focus == focusHistory {
 		return m.handleHistoryKey(msg)
 	}
+	if m.input.kind == inputApproval {
+		return m.handleApprovalKey(msg)
+	}
 	return m.handleComposeKey(msg)
 }
 
 func (m Model) toggleFocus() (Model, tea.Cmd) {
-	if m.focus == focusComposer {
+	if m.focus == focusInput {
 		m.focus = focusHistory
-		m.compose = m.compose.Blur()
+		m.input.compose = m.input.compose.Blur()
 		return m, nil
 	}
-	m.focus = focusComposer
-	var cmd tea.Cmd
-	m.compose, cmd = m.compose.Focus()
-	return m, cmd
+	m.focus = focusInput
+	if m.input.kind == inputCompose {
+		return m.composeFocus()
+	}
+	return m, nil
+}
+
+func (m Model) handleApprovalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		// Treat Ctrl+C as cancel when an approval is active.
+		next, cmd := m.ClearApproval()
+		return next, cmd
+	default:
+		var cmd tea.Cmd
+		m.input.approval, cmd = m.input.approval.Update(msg)
+		// Confirmation/cancel is signaled via messages.
+		return m, cmd
+	}
 }
 
 func (m Model) handleComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -69,8 +99,8 @@ func (m Model) handleComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if msg.Type == tea.KeyEnter && !msg.Alt {
 		// Reset immediately to keep the UI responsive. The parent receives the
 		// submitted text via SubmitMsg and decides how to handle it.
-		raw := m.compose.Value()
-		m.compose = m.compose.Reset()
+		raw := m.input.compose.Value()
+		m.input.compose = m.input.compose.Reset()
 		m = m.syncAfterCompose()
 		if strings.TrimSpace(raw) == "" {
 			return m, nil
@@ -78,7 +108,7 @@ func (m Model) handleComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, func() tea.Msg { return SubmitMsg{Text: raw} }
 	}
 	var cmd tea.Cmd
-	m.compose, cmd = m.compose.Update(msg)
+	m.input.compose, cmd = m.input.compose.Update(msg)
 	m = m.syncAfterCompose()
 	return m, cmd
 }
@@ -102,10 +132,11 @@ func (m Model) handleHistoryKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.history = m.history.GotoBottom()
 		return m, nil
 	case tea.KeyEsc:
-		m.focus = focusComposer
-		var cmd tea.Cmd
-		m.compose, cmd = m.compose.Focus()
-		return m, cmd
+		m.focus = focusInput
+		if m.input.kind == inputCompose {
+			return m.composeFocus()
+		}
+		return m, nil
 	default:
 		var cmd tea.Cmd
 		m.history, cmd = m.history.Update(msg)
@@ -114,7 +145,7 @@ func (m Model) handleHistoryKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) startEditorCompose() (Model, tea.Cmd) {
-	prior := m.compose.Value()
+	prior := m.input.compose.Value()
 	cmd, err := editor.OpenTempFileInEditor(editor.Request{
 		Purpose:          editor.PurposeCompose,
 		PriorText:        prior,
@@ -133,9 +164,9 @@ func (m Model) handleEditorResult(msg editor.Response) Model {
 	switch msg.Purpose {
 	case editor.PurposeCompose:
 		if msg.Canceled || msg.Err != nil {
-			m.compose = m.compose.SetValue(msg.PriorText)
+			m.input.compose = m.input.compose.SetValue(msg.PriorText)
 		} else {
-			m.compose = m.compose.SetValue(msg.NewText)
+			m.input.compose = m.input.compose.SetValue(msg.NewText)
 		}
 		return m.syncAfterCompose()
 	case editor.PurposeTranscript:
@@ -143,6 +174,39 @@ func (m Model) handleEditorResult(msg editor.Response) Model {
 	default:
 		return m
 	}
+}
+
+func (m Model) handleApprovalMessage(msg tea.Msg) (Model, tea.Cmd, bool) {
+	switch msg.(type) {
+	case approval.ConfirmMsg:
+		opt, ok := m.input.approval.SelectedOption()
+		if !ok {
+			next, focusCmd := m.ClearApproval()
+			return next, focusCmd, true
+		}
+		next, focusCmd := m.ClearApproval()
+		decisionCmd := func() tea.Msg { return ApprovalDecisionMsg{Choice: opt} }
+		return next, tea.Batch(focusCmd, decisionCmd), true
+	case approval.CancelMsg:
+		choice := agent.OptionDecline
+		if approvalHasOption(m.input.approval.Options(), agent.OptionCancel) {
+			choice = agent.OptionCancel
+		}
+		next, focusCmd := m.ClearApproval()
+		decisionCmd := func() tea.Msg { return ApprovalDecisionMsg{Choice: choice} }
+		return next, tea.Batch(focusCmd, decisionCmd), true
+	default:
+		return m, nil, false
+	}
+}
+
+func approvalHasOption(opts []agent.ApprovalOption, want agent.ApprovalOption) bool {
+	for _, opt := range opts {
+		if opt == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) openEditorWithTranscript() (Model, tea.Cmd) {
@@ -170,7 +234,7 @@ func (m Model) syncAfterCompose() Model {
 	if totalH <= 0 {
 		return m
 	}
-	newHistH := max(totalH-(1+m.compose.Height()), 1)
+	newHistH := max(totalH-(1+m.input.compose.Height()), 1)
 	if newHistH == m.history.Height() {
 		return m
 	}

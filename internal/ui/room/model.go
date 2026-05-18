@@ -7,16 +7,39 @@ package room
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/ui/room/approval"
 	"github.com/trigosec/coderoom/internal/ui/room/compose"
 	"github.com/trigosec/coderoom/internal/ui/room/history"
 )
 
-type focusTarget int
+type roomFocus int
 
 const (
-	focusComposer focusTarget = iota
+	focusInput roomFocus = iota
 	focusHistory
 )
+
+type inputKind int
+
+const (
+	inputCompose inputKind = iota
+	inputApproval
+)
+
+type inputModel struct {
+	kind     inputKind
+	compose  compose.Model
+	approval approval.Model
+}
+
+func (m inputModel) height(totalH int) int {
+	if m.kind == inputApproval {
+		// Approval view is variable; keep it to 6 lines max and at least 3.
+		return min(6, max(totalH/3, 3))
+	}
+	return m.compose.Height()
+}
 
 // SubmitMsg is emitted when the user submits the composer (Enter without Alt).
 // The parent should handle the text (parse, route, execute) and update the room
@@ -25,11 +48,18 @@ type SubmitMsg struct {
 	Text string
 }
 
+// ApprovalDecisionMsg is emitted when the user confirms an approval option.
+// The parent is responsible for forwarding this decision to the active
+// ApprovalListener and resuming the agent.
+type ApprovalDecisionMsg struct {
+	Choice agent.ApprovalOption
+}
+
 // Model is the Bubble Tea component for a single room: history + composer.
 type Model struct {
 	history  history.Model
-	compose  compose.Model
-	focus    focusTarget
+	input    inputModel
+	focus    roomFocus
 	debug    bool
 	lastSize tea.WindowSizeMsg
 }
@@ -38,15 +68,20 @@ type Model struct {
 // colorByAlias resolves an active agent alias to its color; it may be nil.
 // departedColor is used for departed agents.
 func New(colorByAlias func(string) string, departedColor string) Model {
+	compose := compose.New()
 	return Model{
 		history: history.New(colorByAlias, departedColor),
-		compose: compose.New(),
-		focus:   focusComposer,
+		input: inputModel{
+			kind:     inputCompose,
+			compose:  compose,
+			approval: approval.New(),
+		},
+		focus: focusInput,
 	}
 }
 
 // Init returns the initial command for the component.
-func (m Model) Init() tea.Cmd { return m.compose.Init() }
+func (m Model) Init() tea.Cmd { return m.input.compose.Init() }
 
 // Ready reports whether HandleResize has been called at least once.
 func (m Model) Ready() bool { return m.history.Ready() }
@@ -79,15 +114,44 @@ func (m Model) StreamingIdx(alias string) (int, bool) { return m.history.Streami
 func (m Model) IsDeparted(alias string) bool { return m.history.IsDeparted(alias) }
 
 // ComposeValue returns the current composer buffer.
-func (m Model) ComposeValue() string { return m.compose.Value() }
+func (m Model) ComposeValue() string { return m.input.compose.Value() }
 
 // ComposeHeight returns the current composer height.
-func (m Model) ComposeHeight() int { return m.compose.Height() }
+func (m Model) ComposeHeight() int { return m.input.compose.Height() }
 
 // SetComposeValue replaces the composer buffer and updates layout.
 func (m Model) SetComposeValue(s string) Model {
-	m.compose = m.compose.SetValue(s)
+	m.input.compose = m.input.compose.SetValue(s)
 	return m.syncAfterCompose()
+}
+
+// ShowApproval switches the input area to an approval prompt.
+func (m Model) ShowApproval(req agent.ApprovalRequest) Model {
+	m.input.approval = m.input.approval.Set(req)
+	m.input.kind = inputApproval
+	m.focus = focusInput
+	m.input.compose = m.input.compose.Blur()
+	if m.lastSize.Width > 0 && m.lastSize.Height > 0 {
+		m = m.HandleResize(m.lastSize.Width, m.lastSize.Height)
+	}
+	return m
+}
+
+// ClearApproval returns to compose input mode and clears the approval prompt.
+func (m Model) ClearApproval() (Model, tea.Cmd) {
+	m.input.approval = m.input.approval.Clear()
+	m.input.kind = inputCompose
+	m.focus = focusInput
+	if m.lastSize.Width > 0 && m.lastSize.Height > 0 {
+		m = m.HandleResize(m.lastSize.Width, m.lastSize.Height)
+	}
+	return m.composeFocus()
+}
+
+func (m Model) composeFocus() (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.input.compose, cmd = m.input.compose.Focus()
+	return m, cmd
 }
 
 // SetDebug enables or disables debug features on the room.
@@ -108,12 +172,13 @@ func (m Model) ToggleDebugRowNums() Model {
 // the toolbox and bottom padding).
 func (m Model) HandleResize(innerW, totalH int) Model {
 	m.lastSize = tea.WindowSizeMsg{Width: innerW, Height: totalH}
-	m.compose = m.compose.SetWidth(innerW).SetMaxHeightFromTotal(totalH)
+	m.input.compose = m.input.compose.SetWidth(innerW).SetMaxHeightFromTotal(totalH)
 	// Layout:
 	//   history (variable height)
 	//   separator (1 line)
-	//   composer (m.compose.Height)
-	h := max(totalH-(1+m.compose.Height()), 1)
+	//   input (either composer or approval view; composer height is dynamic)
+	inputH := m.input.height(totalH)
+	h := max(totalH-(1+inputH), 1)
 	m.history = m.history.SetSize(innerW, h)
 	m.history = m.history.RebuildColors()
 	return m
