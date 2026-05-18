@@ -19,36 +19,52 @@ It is **not** responsible for session logic, message routing, or agent lifecycle
 │                                 │
 │   scrollable output (viewport)  │
 │                                 │
-├─────────────────────────────────┤
-│ > _                             │  ← text input
-├─────────────────────────────────┤
-│ ada (builder) · /invite /cancel … │  ← toolbox (collapsed, Phase 2+)
+├──────── compose ──────────────▲─┤  ← top separator (label + ▲ when scrolled)
+│ ❯ input text                    │  ← compose input (grows with content)
+├─────────────────────────────▼───┤  ← bottom separator (▼ when scrolled)
+│ ◆ ada (10s)  ● bob              │  ← toolbox: participant cells
 └─────────────────────────────────┘
 ```
 
-The viewport occupies all available height minus the input row, the toolbox row, and separators. All three regions resize on `tea.WindowSizeMsg`; the viewport height calculation uses a variable chrome height so adding or expanding the toolbox later is a one-line change.
+The viewport occupies all available height minus the compose input, two
+separator lines, the toolbox row, and vertical margins. All regions resize on
+`tea.WindowSizeMsg`.
 
-The toolbox sits below the input to keep the output→input flow uninterrupted. In Phase 1 it is hidden. From Phase 2 it collapses to a single hint line (agent roster, available commands) and expands upward when needed.
+The compose input is variable-height (grows as the user types newlines or long
+wrapping lines) up to a cap of `min(8, terminal_height/3)`. When the content
+exceeds the visible area, `▲` appears on the top separator and/or `▼` on the
+bottom separator.
+
+The toolbox sits below the compose area and renders only the participant cells
+row. The separator lines framing the compose area are owned by the room
+component, not the toolbox.
 
 ---
 
 ## Bubble Tea model
 
 ```go
+// Top-level application model.
 type Model struct {
-    sess      *session.Session
-    queue     *eventQueue
-    viewport  viewport.Model
-    input     textinput.Model
-    lines     []string        // accumulated rendered lines
-    streaming map[string]int  // alias → index in lines for agents mid-turn
-    agents    []string        // active aliases for /who
-    cwd       string
-    ready     bool            // true after first WindowSizeMsg
+    sess     *session.Session
+    queue    *eventQueue
+    room     room.Model     // history viewport + compose/approval input
+    toolbox  toolbox.Model  // participant cells row
+    palette  colorPalette
+    debug    bool
+    cwd      string
+    lastSize tea.WindowSizeMsg
 }
+
+// room.Model owns the scrollable history and the active input area.
+// room.inputModel switches between compose and approval modes.
+// history.Model wraps a bubbles/viewport for the output records.
+// compose.Model wraps a bubbles/textarea for text entry.
+// approval.Model handles approval prompts (option list + keyboard navigation).
 ```
 
-`lines` is the source of truth for viewport content. Every session event appends to it; the viewport is re-set from `strings.Join(lines, "\n")` after each change.
+The room component owns all content rendering and the two separator lines that
+frame the compose area. The toolbox is a sibling, not a child, of the room.
 
 ---
 
@@ -102,9 +118,15 @@ No fixed-size buffers. No dropped events. If the UI falls behind, the internal s
 | `KindDelta` | streamed inline: `ada> <fragment>` on first delta, subsequent fragments appended to the same line |
 | `KindDone` | closes the current streaming line |
 
-Streaming state: when a `KindDelta` arrives for an alias not currently streaming, a new line starting with `alias> ` is appended to `lines` and marked as in-progress. Subsequent deltas for the same alias append to the last element of `lines` in place. `KindDone` closes the line and clears the streaming flag.
+Streaming state: when a `KindDelta` arrives for an alias not currently streaming,
+a new agent-output record is appended to the history and marked as in-progress.
+Subsequent deltas for the same alias update that record in place. `KindDone`
+closes the record and clears the streaming flag for that alias.
 
-Long lines are wrapped before being passed to the viewport. `syncViewport` applies `wrapLine` to each entry in `lines` before joining and calling `SetContent`. `wrapLine` uses `charmbracelet/x/ansi.Wrap` (already an indirect dependency) so wrapping is ANSI-aware. Streaming lines (`alias> …`) use a hanging indent computed from `ansi.StringWidth(prefix)` so continuation text aligns with the first content column. The wrapped output is cached in `wrappedLines` (parallel to `lines`) so only the changed line is re-wrapped on each delta; all lines are re-wrapped on resize.
+Records are owned by `history.Model`, which wraps a `bubbles/viewport` and
+re-renders content on every change. Line wrapping is handled by the viewport
+itself; `inlinefmt` applies ANSI-aware styling (colours, hanging indents) per
+record kind before the content reaches the viewport.
 
 ---
 
@@ -142,13 +164,14 @@ Open questions (deferred to implementation):
 ## Dependencies
 
 ```
-github.com/charmbracelet/bubbletea       # framework
-github.com/charmbracelet/bubbles/viewport  # scrollable output
-github.com/charmbracelet/bubbles/textinput # input field
-github.com/charmbracelet/lipgloss        # styling
+github.com/charmbracelet/bubbletea         # framework
+github.com/charmbracelet/bubbles/viewport  # scrollable history output
+github.com/charmbracelet/bubbles/textarea  # multi-line compose input
+github.com/charmbracelet/lipgloss          # styling
+github.com/rivo/uniseg                     # display-width-aware line metrics
 ```
 
-No other new dependencies. The session and agent packages are unchanged.
+The session and agent packages are unchanged.
 
 ---
 

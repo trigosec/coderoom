@@ -42,8 +42,10 @@ The input area is treated as the primary focus target at all times:
 - `Left` / `Right`: move cursor within the input.
 - `Up` / `Down`: move cursor across lines in the input.
 - `Home` / `End`: jump to the beginning / end of the current line.
-- Standard text editing keys remain available (Backspace/Delete, word motions if
-  supported by the input component, etc.).
+- `Ctrl+Left` / `Ctrl+Right`: move cursor one word backward / forward.
+- `Ctrl+W` / `Alt+Backspace`: delete the word before the cursor.
+- `Ctrl+K`: delete from the cursor to the end of the line.
+- Standard text editing keys remain available (Backspace/Delete, etc.).
 
 Rationale: once input is multi-line, arrows must be unambiguous. Reserving
 arrows for input editing avoids mental context switching.
@@ -115,7 +117,7 @@ focus changes.
 ## Input height and internal scrolling
 
 The input area is variable-height up to a fixed maximum. As the user adds
-newlines, the input grows and the viewport shrinks.
+newlines or types long lines that wrap, the input grows and the viewport shrinks.
 
 Constraints:
 
@@ -124,11 +126,27 @@ Constraints:
 - Once the maximum height is reached, the input editor becomes internally
   scrollable via keyboard navigation (not via the mouse wheel, which remains
   reserved for viewport scrolling).
+- Height accounts for visual rows (wrapping), not just logical newlines, so a
+  single long line that wraps is treated the same as multiple short lines.
 
 Recommended maximum height:
 
 - `min(8 lines, 1/3 of terminal height)` (exact tuning may change, but the max
   must be explicit).
+
+### Scroll indicators
+
+When the input content exceeds the visible area, scroll indicators appear on the
+border lines framing the compose area:
+
+- `▲` on the top separator (between history and compose): content is hidden above
+  the visible portion.
+- `▼` on the bottom separator (between compose and toolbox): content is hidden
+  below the visible portion.
+
+Both indicators are placed at the right end of their respective separator lines,
+trimming one dash to make room. Neither indicator appears when all content fits
+in the visible area.
 
 ## Data model and submission semantics
 
@@ -150,17 +168,11 @@ everything that happened during composition.
 
 ## Implementation notes (non-binding)
 
-This design implies that the input component must support multi-line editing.
-`bubbles/textinput` is single-line; candidates include:
-
-- `bubbles/textarea` (preferred starting point)
-- A small custom multi-line editor model
-
-The final choice should be driven by:
-
-- Reliability of key handling across terminals (especially newline chords)
-- Ease of styling and sizing within the existing layout
-- Ability to keep the UI predictable (no hidden modes)
+The input component is `bubbles/textarea`, wrapped in `compose.Model`
+(`internal/ui/room/compose`). Key handling is mostly delegated to the textarea's
+default keymap; the compose layer intercepts `Enter` (submit), `Alt+Enter`
+(newline), `Ctrl+C` (clear), and remaps `Ctrl+Left`/`Ctrl+Right` to the
+textarea's word-movement bindings.
 
 ## Accessibility and ergonomics
 
@@ -172,8 +184,17 @@ them in mind:
   for half-page scrolling).
 - Ensure the chosen newline chord does not block submission or basic navigation.
 
+## Prompt format
+
+The compose input uses a 2-character prompt prefix:
+
+- First logical line: `❯ `
+- Continuation lines (wrapped or multi-line): `  ` (two spaces, aligned with
+  the content column above)
+
+This applies to both soft-wrapped single lines and hard-newline multi-line
+content. Line numbers are not shown.
+
 ## Open questions
 
-1. Visual affordance: how do we indicate multi-line capability and the newline
-   keybinding without clutter? Deferred until the toolbox (Phase 2+) design is
-   specified; likely location is the toolbox hint row.
+_(none open)_

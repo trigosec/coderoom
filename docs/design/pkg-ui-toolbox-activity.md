@@ -36,11 +36,17 @@ UI owns:
 The UI has three vertical regions:
 
 1. History (viewport)
-2. Composer (textarea)
+2. Composer (textarea), framed above and below by separator lines owned by the
+   room component
 3. Toolbox (below composer)
 
-The toolbox begins with **participant cells**. If other toolbox elements are
-added later (shortcuts, active room, help hints), they appear *below* the cells.
+The toolbox renders **only the participant cells row**. The separator line
+visually separating the compose area from the toolbox is the room's bottom
+border, not part of the toolbox. This keeps both compose-area borders (and their
+scroll indicators) under the same owner.
+
+If other toolbox elements are added later (shortcuts, active room, help hints),
+they appear *below* the cells.
 
 ### Cell grid model
 
