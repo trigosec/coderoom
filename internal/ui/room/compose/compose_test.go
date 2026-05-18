@@ -45,6 +45,31 @@ func TestCtrlC_noopWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestCtrlRight_movesWordForward(t *testing.T) {
+	m := New()
+	m = m.SetWidth(40).SetValue("hello world")
+	// Move cursor to start (Ctrl+A) so there is a word to jump over.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	before := m.input.LineInfo().CharOffset
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
+	after := m.input.LineInfo().CharOffset
+	if after <= before {
+		t.Fatalf("expected ctrl+right to advance cursor; before=%d after=%d", before, after)
+	}
+}
+
+func TestCtrlLeft_movesWordBackward(t *testing.T) {
+	m := New()
+	m = m.SetWidth(40).SetValue("hello world")
+	// Cursor starts at end after SetValue; ctrl+left must move it back.
+	before := m.input.LineInfo().CharOffset
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	after := m.input.LineInfo().CharOffset
+	if after >= before {
+		t.Fatalf("expected ctrl+left to move cursor back; before=%d after=%d", before, after)
+	}
+}
+
 func TestDecorations_shownOnlyForMultiline(t *testing.T) {
 	m := New()
 	m = m.SetWidth(40)

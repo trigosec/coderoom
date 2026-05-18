@@ -2,6 +2,7 @@
 package compose
 
 import (
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -16,6 +17,8 @@ type Model struct {
 func New() Model {
 	ti := textarea.New()
 	ti.ShowLineNumbers = false
+	ti.KeyMap.WordForward = key.NewBinding(key.WithKeys("alt+right", "alt+f", "ctrl+right"))
+	ti.KeyMap.WordBackward = key.NewBinding(key.WithKeys("alt+left", "alt+b", "ctrl+left"))
 	ti = applyDecorations(ti)
 	ti.Focus()
 	return Model{input: ti}
