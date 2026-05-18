@@ -1,4 +1,5 @@
-package ui
+// Package history implements the conversation record list and its viewport.
+package history
 
 import (
 	"strings"
@@ -8,20 +9,23 @@ import (
 	"github.com/trigosec/coderoom/internal/ui/inlinefmt"
 )
 
-type recordKind int
+// RecordKind identifies the source and display style of a record.
+type RecordKind int
 
+// Record kind constants ordered from most to least common.
 const (
-	recordKindUserInput   recordKind = iota // text the user typed
-	recordKindAgentOutput                   // streaming response from an agent
-	recordKindSystem                        // lifecycle and routing notices
-	recordKindLog                           // agent diagnostic line (stderr)
+	RecordKindUserInput   RecordKind = iota // text the user typed
+	RecordKindAgentOutput                   // streaming response from an agent
+	RecordKindSystem                        // lifecycle and routing notices
+	RecordKindLog                           // agent diagnostic line (stderr)
 )
 
-type record struct {
-	kind    recordKind
-	alias   string   // agent alias; empty for user input and system records
-	body    string   // accumulated content; grows during streaming
-	routing []string // aliases shown in the footer (broadcast / direct send)
+// Record is a single displayable entry in the conversation history.
+type Record struct {
+	Kind    RecordKind
+	Alias   string   // agent alias; empty for user input and system records
+	Body    string   // accumulated content; grows during streaming
+	Routing []string // aliases shown in the footer (broadcast / direct send)
 }
 
 var (
@@ -37,18 +41,18 @@ const (
 	routingArrow = "→ "
 )
 
-func renderRecord(r record, width int, colors func(string) string) string {
-	switch r.kind {
-	case recordKindUserInput:
+func renderRecord(r Record, width int, colors func(string) string) string {
+	switch r.Kind {
+	case RecordKindUserInput:
 		return renderUserInput(r, width, colors)
-	case recordKindAgentOutput:
+	case RecordKindAgentOutput:
 		return renderAgentOutput(r, width, colors)
-	case recordKindSystem:
-		return systemStyle.Render(ansi.Wrap(r.body, width, ""))
-	case recordKindLog:
-		return logStyle.Render(renderLogBody(r.body, width))
+	case RecordKindSystem:
+		return systemStyle.Render(ansi.Wrap(r.Body, width, ""))
+	case RecordKindLog:
+		return logStyle.Render(renderLogBody(r.Body, width))
 	}
-	return r.body
+	return r.Body
 }
 
 func renderLogBody(body string, width int) string {
@@ -68,35 +72,35 @@ func renderLogBody(body string, width int) string {
 	return strings.Join(out, "\n")
 }
 
-func renderUserInput(r record, width int, colors func(string) string) string {
-	plain := promptPrefix + r.body
+func renderUserInput(r Record, width int, colors func(string) string) string {
+	plain := promptPrefix + r.Body
 	wrapped := wrapLine(plain, width, promptPrefix)
 	// Style the prompt prefix on the first line.
 	if strings.HasPrefix(wrapped, promptPrefix) {
 		wrapped = promptStyle.Render(promptPrefix) + wrapped[len(promptPrefix):]
 	}
-	if len(r.routing) > 0 {
-		wrapped += "\n" + renderRoutingFooter(r.routing, colors)
+	if len(r.Routing) > 0 {
+		wrapped += "\n" + renderRoutingFooter(r.Routing, colors)
 	}
 	return wrapped
 }
 
 const agentBodyIndent = "  "
 
-func renderAgentOutput(r record, width int, colors func(string) string) string {
-	color := colors(r.alias)
+func renderAgentOutput(r Record, width int, colors func(string) string) string {
+	color := colors(r.Alias)
 	var header string
 	var spanStyle lipgloss.Style
 	if color != "" {
 		spanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-		header = spanStyle.Render(agentBullet+r.alias) + ":"
+		header = spanStyle.Render(agentBullet+r.Alias) + ":"
 	} else {
-		header = agentBullet + r.alias + ":"
+		header = agentBullet + r.Alias + ":"
 	}
-	if r.body == "" {
+	if r.Body == "" {
 		return header
 	}
-	bodyText := r.body
+	bodyText := r.Body
 	if color != "" {
 		bodyText = inlinefmt.Format(bodyText, spanStyle)
 	}

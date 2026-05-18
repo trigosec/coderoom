@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/trigosec/coderoom/internal/ui/editor"
+	"github.com/trigosec/coderoom/internal/ui/room/history"
 )
 
 func TestCtrlG_withoutEditorAddsSystemRecordAndPreservesBuffer(t *testing.T) {
@@ -18,8 +19,8 @@ func TestCtrlG_withoutEditorAddsSystemRecordAndPreservesBuffer(t *testing.T) {
 	if got := m2.compose.Value(); got != "draft" {
 		t.Fatalf("expected input preserved when editor is unset, got %q", got)
 	}
-	if !hasRecord(m2, recordKindSystem, "no editor configured") {
-		t.Fatalf("expected system record about editor configuration; records: %v", m2.records)
+	if !hasRecord(m2, history.RecordKindSystem, "no editor configured") {
+		t.Fatalf("expected system record about editor configuration; records: %v", m2.history.Records())
 	}
 }
 

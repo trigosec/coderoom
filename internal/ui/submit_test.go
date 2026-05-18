@@ -5,20 +5,22 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/trigosec/coderoom/internal/ui/room/history"
 )
 
 func TestHandleEnter_echoesUserInput(t *testing.T) {
 	m := makeReadyModel(t)
 	m.compose = m.compose.SetValue("/who")
 	m, _ = m.handleSubmit()
-	if len(m.records) == 0 {
+	recs := m.history.Records()
+	if len(recs) == 0 {
 		t.Fatal("expected at least one record after enter")
 	}
-	if m.records[0].kind != recordKindUserInput {
-		t.Errorf("expected first record to be user input, got kind %d", m.records[0].kind)
+	if recs[0].Kind != history.RecordKindUserInput {
+		t.Errorf("expected first record to be user input, got kind %d", recs[0].Kind)
 	}
-	if m.records[0].body != "/who" {
-		t.Errorf("expected body '/who', got %q", m.records[0].body)
+	if recs[0].Body != "/who" {
+		t.Errorf("expected body '/who', got %q", recs[0].Body)
 	}
 }
 
@@ -32,8 +34,9 @@ func TestEnter_submitsAndClearsInput(t *testing.T) {
 	if got := m2.compose.Value(); got != "" {
 		t.Fatalf("expected input cleared after submit, got %q", got)
 	}
-	if len(m2.records) == 0 || m2.records[0].kind != recordKindUserInput || m2.records[0].body != "hello" {
-		t.Fatalf("expected first record to echo submitted input; records: %v", m2.records)
+	recs := m2.history.Records()
+	if len(recs) == 0 || recs[0].Kind != history.RecordKindUserInput || recs[0].Body != "hello" {
+		t.Fatalf("expected first record to echo submitted input; records: %v", recs)
 	}
 }
 
@@ -47,8 +50,8 @@ func TestEnter_whitespaceOnlyDoesNotCreateRecord(t *testing.T) {
 	if got := m2.compose.Value(); got != "" {
 		t.Fatalf("expected input cleared even for whitespace-only submit, got %q", got)
 	}
-	if len(m2.records) != 0 {
-		t.Fatalf("expected no records for whitespace-only submit, got %d", len(m2.records))
+	if len(m2.history.Records()) != 0 {
+		t.Fatalf("expected no records for whitespace-only submit, got %d", len(m2.history.Records()))
 	}
 }
 
@@ -110,24 +113,24 @@ func TestInputHeight_isCappedAndDoesNotCollapseViewport(t *testing.T) {
 	if got := m.compose.Height(); got != 8 {
 		t.Fatalf("expected input height capped at 8, got %d", got)
 	}
-	if m.viewport.Height <= 0 {
-		t.Fatalf("expected viewport height to stay positive, got %d", m.viewport.Height)
+	if m.history.Height() <= 0 {
+		t.Fatalf("expected viewport height to stay positive, got %d", m.history.Height())
 	}
 }
 
 func TestResizeForInput_preservesBottomAnchor(t *testing.T) {
 	m := makeReadyModelWithHeight(t, 12)
 	for i := range 50 {
-		m = m.appendRecord(record{kind: recordKindSystem, body: "line " + string(rune('0'+i%10))})
+		m.history = m.history.AppendSystemRecord("line " + string(rune('0'+i%10)))
 	}
-	m.viewport.GotoBottom()
-	if !m.viewport.AtBottom() {
+	m.history = m.history.GotoBottom()
+	if !m.history.AtBottom() {
 		t.Fatal("expected to start at bottom")
 	}
 
 	m.compose = m.compose.SetValue("a\nb\nc")
 	m = m.syncAfterCompose()
-	if !m.viewport.AtBottom() {
+	if !m.history.AtBottom() {
 		t.Fatal("expected syncAfterCompose to keep viewport anchored to bottom")
 	}
 }

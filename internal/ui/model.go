@@ -3,10 +3,10 @@
 package ui
 
 import (
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/compose"
+	"github.com/trigosec/coderoom/internal/ui/room/history"
 	"github.com/trigosec/coderoom/internal/ui/toolbox"
 )
 
@@ -45,22 +45,16 @@ func (o channelObserver) OnEvent(e session.Event) {
 
 // Model is the Bubble Tea application state for the coderoom TUI.
 type Model struct {
-	sess            *session.Session
-	queue           *eventQueue
-	viewport        viewport.Model
-	compose         compose.Model
-	toolbox         toolbox.Model
-	focus           focusTarget
-	debug           bool
-	debugRowNums    bool
-	records         []record
-	renderedRecords []string        // rendered form of each record; rebuilt on resize
-	streaming       map[string]int  // alias → index in records (agents mid-turn)
-	departed        map[string]bool // aliases that have left; kept for grey repaint on resize
-	palette         colorPalette
-	cwd             string
-	ready           bool // true after first WindowSizeMsg
-	lastSize        tea.WindowSizeMsg
+	sess     *session.Session
+	queue    *eventQueue
+	history  history.Model
+	compose  compose.Model
+	toolbox  toolbox.Model
+	focus    focusTarget
+	debug    bool
+	palette  colorPalette
+	cwd      string
+	lastSize tea.WindowSizeMsg
 }
 
 type focusTarget int
@@ -77,17 +71,21 @@ func New(sess *session.Session, cwd string, opts ...Option) Model {
 	q := newEventQueue()
 	sess.AddObserver(channelObserver{queue: q})
 
+	colorByAlias := func(alias string) string {
+		if p, ok := sess.Participant(alias); ok {
+			return p.Color
+		}
+		return ""
+	}
+
 	m := Model{
-		sess:            sess,
-		queue:           q,
-		compose:         compose.New(),
-		toolbox:         toolbox.New(),
-		focus:           focusComposer,
-		records:         []record{},
-		renderedRecords: []string{},
-		streaming:       make(map[string]int),
-		departed:        make(map[string]bool),
-		cwd:             cwd,
+		sess:    sess,
+		queue:   q,
+		history: history.New(colorByAlias, ColorDeparted),
+		compose: compose.New(),
+		toolbox: toolbox.New(),
+		focus:   focusComposer,
+		cwd:     cwd,
 	}
 	for _, o := range opts {
 		o(&m)
