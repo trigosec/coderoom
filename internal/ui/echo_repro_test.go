@@ -20,34 +20,38 @@ func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 		// both forms by sending the whole line as one KeyRunes message.
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(line)})
 		m = next.(Model)
-		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m = next.(Model)
+		if cmd != nil {
+			next, _ = m.Update(cmd())
+			m = next.(Model)
+		}
 	}
 
 	sendLine("/who")
 	sendLine("/who")
 
 	// Ensure the underlying content contains both echos regardless of scroll.
-	content := ansi.Strip(m.history.RenderedContent())
+	content := ansi.Strip(m.room.HistoryRenderedContent())
 	if strings.Count(content, "❯ /who") != 2 {
 		t.Fatalf("expected rendered history to contain two echos, got:\n%s", content)
 	}
 
 	userInputs := 0
-	for _, r := range m.history.Records() {
+	for _, r := range m.room.HistoryRecords() {
 		if r.Kind == history.RecordKindUserInput && strings.TrimSpace(r.Body) == "/who" {
 			userInputs++
 		}
 	}
 	if userInputs != 2 {
-		t.Fatalf("expected two echoed user input records, got %d; records=%v", userInputs, m.history.Records())
+		t.Fatalf("expected two echoed user input records, got %d; records=%v", userInputs, m.room.HistoryRecords())
 	}
 
 	// The viewport should stay at the top when all content fits.
-	if m.history.YOffset() != 0 {
-		t.Fatalf("expected YOffset=0 in tall terminal, got %d", m.history.YOffset())
+	if m.room.YOffset() != 0 {
+		t.Fatalf("expected YOffset=0 in tall terminal, got %d", m.room.YOffset())
 	}
-	view := ansi.Strip(m.history.View())
+	view := ansi.Strip(m.room.HistoryView())
 	if strings.Count(view, "❯ /who") != 2 {
 		t.Fatalf("expected two visible echos without scrolling; got:\n%s", view)
 	}
@@ -61,17 +65,21 @@ func TestWhoEcho_twiceVisibleInSmallTerminal(t *testing.T) {
 	sendLine := func(line string) {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(line)})
 		m = next.(Model)
-		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m = next.(Model)
+		if cmd != nil {
+			next, _ = m.Update(cmd())
+			m = next.(Model)
+		}
 	}
 
 	sendLine("/who")
 	sendLine("/who")
 
-	if m.history.YOffset() != 0 {
-		t.Fatalf("expected YOffset=0 when content fits; got %d", m.history.YOffset())
+	if m.room.YOffset() != 0 {
+		t.Fatalf("expected YOffset=0 when content fits; got %d", m.room.YOffset())
 	}
-	view := ansi.Strip(m.history.View())
+	view := ansi.Strip(m.room.HistoryView())
 	if strings.Count(view, "❯ /who") != 2 {
 		t.Fatalf("expected two visible echos; got:\n%s", view)
 	}

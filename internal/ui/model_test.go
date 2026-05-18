@@ -30,7 +30,7 @@ func TestHandleEvent_agentStarted(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
 	if !hasRecord(m, history.RecordKindSystem, "[ada joined]") {
-		t.Errorf("expected [ada joined] system record; records: %v", m.history.Records())
+		t.Errorf("expected [ada joined] system record; records: %v", m.room.HistoryRecords())
 	}
 }
 
@@ -38,7 +38,7 @@ func TestHandleEvent_agentStarting(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarting, Alias: "ada"})
 	if !hasRecord(m, history.RecordKindSystem, "[ada starting]") {
-		t.Errorf("expected [ada starting] system record; records: %v", m.history.Records())
+		t.Errorf("expected [ada starting] system record; records: %v", m.room.HistoryRecords())
 	}
 }
 
@@ -47,7 +47,7 @@ func TestHandleEvent_agentStopped(t *testing.T) {
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
 	if !hasRecord(m, history.RecordKindSystem, "[ada left]") {
-		t.Errorf("expected [ada left] system record; records: %v", m.history.Records())
+		t.Errorf("expected [ada left] system record; records: %v", m.room.HistoryRecords())
 	}
 }
 
@@ -56,7 +56,7 @@ func TestHandleEvent_agentCrashed(t *testing.T) {
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentCrashed, Alias: "ada"})
 	if !hasRecord(m, history.RecordKindSystem, "[ada crashed]") {
-		t.Errorf("expected [ada crashed] system record; records: %v", m.history.Records())
+		t.Errorf("expected [ada crashed] system record; records: %v", m.room.HistoryRecords())
 	}
 }
 
@@ -64,7 +64,7 @@ func TestHandleEvent_agentLog(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentLog, Alias: "ada", Text: "npm warn something"})
 	if !hasRecord(m, history.RecordKindLog, "npm warn something") {
-		t.Errorf("expected log record with text; records: %v", m.history.Records())
+		t.Errorf("expected log record with text; records: %v", m.room.HistoryRecords())
 	}
 }
 
@@ -83,7 +83,7 @@ func TestHandleEvent_systemRecords(t *testing.T) {
 			m := makeReadyModel(t)
 			m = pushEvent(m, tt.event)
 			if !hasRecord(m, history.RecordKindSystem, tt.want) {
-				t.Errorf("expected system record %q; records: %v", tt.want, m.history.Records())
+				t.Errorf("expected system record %q; records: %v", tt.want, m.room.HistoryRecords())
 			}
 		})
 	}
@@ -94,11 +94,11 @@ func TestHandleEvent_systemRecords(t *testing.T) {
 func TestHandleDelta_firstDeltaCreatesRecord(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
-	recs := m.history.Records()
+	recs := m.room.HistoryRecords()
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(recs))
 	}
-	idx, ok := m.history.StreamingIdx("ada")
+	idx, ok := m.room.StreamingIdx("ada")
 	if !ok {
 		t.Fatal("expected ada to be streaming")
 	}
@@ -118,11 +118,11 @@ func TestHandleDelta_subsequentDeltaAppendsInPlace(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: " world"})
-	recs := m.history.Records()
+	recs := m.room.HistoryRecords()
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record (in-place append), got %d", len(recs))
 	}
-	idx, _ := m.history.StreamingIdx("ada")
+	idx, _ := m.room.StreamingIdx("ada")
 	if recs[idx].Body != "hello world" {
 		t.Errorf("expected body 'hello world', got %q", recs[idx].Body)
 	}
@@ -133,12 +133,12 @@ func TestHandleDelta_twoAgentsStreamConcurrently(t *testing.T) {
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "a"})
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "bob", Text: "b"})
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "2"})
-	recs := m.history.Records()
+	recs := m.room.HistoryRecords()
 	if len(recs) != 2 {
 		t.Fatalf("expected 2 records, got %d", len(recs))
 	}
-	adaIdx, _ := m.history.StreamingIdx("ada")
-	bobIdx, _ := m.history.StreamingIdx("bob")
+	adaIdx, _ := m.room.StreamingIdx("ada")
+	bobIdx, _ := m.room.StreamingIdx("bob")
 	if recs[adaIdx].Body != "a2" {
 		t.Errorf("ada body wrong: %q", recs[adaIdx].Body)
 	}
@@ -151,7 +151,7 @@ func TestHandleEvent_kindDoneClearsStreaming(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
 	m = pushEvent(m, session.Event{Kind: session.KindDone, Alias: "ada"})
-	if m.history.IsStreaming("ada") {
+	if m.room.IsStreaming("ada") {
 		t.Error("expected streaming to be cleared after KindDone")
 	}
 }
@@ -160,7 +160,7 @@ func TestHandleEvent_agentStoppedClearsStreaming(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "mid-stream"})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
-	if m.history.IsStreaming("ada") {
+	if m.room.IsStreaming("ada") {
 		t.Error("streaming should be cleared when agent stops mid-turn")
 	}
 }
@@ -184,7 +184,7 @@ func TestBroadcastAll_noAgentsShowsHint(t *testing.T) {
 	m := makeReadyModel(t)
 	m = m.broadcastAll("hello")
 	if !hasRecord(m, history.RecordKindSystem, "no agents") {
-		t.Errorf("expected no-agents hint in system records; records: %v", m.history.Records())
+		t.Errorf("expected no-agents hint in system records; records: %v", m.room.HistoryRecords())
 	}
 }
 
@@ -194,7 +194,7 @@ func TestShowWho_noAgents(t *testing.T) {
 	m := makeReadyModel(t)
 	m = m.showWho()
 	if !hasRecord(m, history.RecordKindSystem, "[no agents]") {
-		t.Errorf("expected [no agents] system record; records: %v", m.history.Records())
+		t.Errorf("expected [no agents] system record; records: %v", m.room.HistoryRecords())
 	}
 }
 
@@ -203,7 +203,7 @@ func TestShowHelp_coversAllCommands(t *testing.T) {
 	m = m.showHelp()
 	for _, cmd := range []string{"/invite", "/remove", "/cancel", "/who", "/help", "@<alias>", "/quit"} {
 		if !hasRecord(m, history.RecordKindSystem, cmd) {
-			t.Errorf("help output missing %q; records: %v", cmd, m.history.Records())
+			t.Errorf("help output missing %q; records: %v", cmd, m.room.HistoryRecords())
 		}
 	}
 }
@@ -215,7 +215,7 @@ func TestMarkDeparted_greyRepaintOnStop(t *testing.T) {
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
 	m = pushEvent(m, session.Event{Kind: session.KindDone, Alias: "ada"})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
-	if !m.history.IsDeparted("ada") {
+	if !m.room.IsDeparted("ada") {
 		t.Error("expected ada in departed map after stop")
 	}
 }
@@ -224,7 +224,7 @@ func TestMarkDeparted_greyRepaintOnCrash(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentCrashed, Alias: "ada"})
-	if !m.history.IsDeparted("ada") {
+	if !m.room.IsDeparted("ada") {
 		t.Error("expected ada in departed map after crash")
 	}
 }
@@ -234,11 +234,11 @@ func TestMarkDeparted_greyRepaintOnCrash(t *testing.T) {
 func TestStreamingCleared_onStop(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "mid-stream"})
-	if !m.history.IsStreaming("ada") {
+	if !m.room.IsStreaming("ada") {
 		t.Fatal("expected ada to be streaming after delta")
 	}
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
-	if m.history.IsStreaming("ada") {
+	if m.room.IsStreaming("ada") {
 		t.Error("streaming should be cleared on agent stop")
 	}
 }

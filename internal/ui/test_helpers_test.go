@@ -38,7 +38,7 @@ func pushEvent(m Model, e session.Event) Model {
 
 // hasRecord reports whether any record of the given kind contains text in its body.
 func hasRecord(m Model, kind history.RecordKind, text string) bool {
-	for _, r := range m.history.Records() {
+	for _, r := range m.room.HistoryRecords() {
 		if r.Kind == kind && strings.Contains(r.Body, text) {
 			return true
 		}

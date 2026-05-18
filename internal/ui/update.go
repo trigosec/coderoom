@@ -6,10 +6,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
-	"github.com/trigosec/coderoom/internal/ui/editor"
+	"github.com/trigosec/coderoom/internal/ui/room"
 )
 
 const (
@@ -21,14 +20,9 @@ const (
 	marginV = 1
 )
 
-func chromeHeight(inputHeight, toolboxH int) int {
-	// viewport separator + input + toolbox + bottom margin
-	return 1 + inputHeight + toolboxH + marginV
-}
-
 // Init starts the session event listener; called once by Bubble Tea on startup.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(awaitEvent(m.queue), m.compose.Init())
+	return tea.Batch(awaitEvent(m.queue), m.room.Init())
 }
 
 // Update handles incoming messages and returns the next model state.
@@ -38,112 +32,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.WindowSizeMsg:
 		return m.handleResize(msg), nil
-	case editor.Response:
-		return m.handleEditorResult(msg), nil
 	case sessionEventMsg:
 		next, cmd := m.handleEvent(session.Event(msg))
 		return next, tea.Batch(cmd, awaitEvent(m.queue))
+	case room.SubmitMsg:
+		return m.handleSubmit(msg.Text)
 	default:
-		var composeCmd tea.Cmd
-		m.compose, composeCmd = m.compose.Update(msg)
-		m = m.syncAfterCompose()
+		var roomCmd tea.Cmd
+		m.room, roomCmd = m.room.Update(msg)
 		var toolboxCmd tea.Cmd
 		m.toolbox, toolboxCmd = m.toolbox.Update(msg)
-		return m, tea.Batch(composeCmd, toolboxCmd)
+		return m, tea.Batch(roomCmd, toolboxCmd)
 	}
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlO {
-		return m.toggleFocus()
-	}
-
-	// PgUp/PgDn always scroll the viewport, regardless of focus.
-	if msg.Type == tea.KeyPgUp {
-		m.history = m.history.HalfPageUp()
-		return m, nil
-	}
-	if msg.Type == tea.KeyPgDown {
-		m.history = m.history.HalfPageDown()
-		return m, nil
-	}
-
-	if m.focus == focusViewport {
-		return m.handleViewportKey(msg)
-	}
-	return m.handleComposerKey(msg)
-}
-
-func (m Model) toggleFocus() (Model, tea.Cmd) {
-	if m.focus == focusComposer {
-		m.focus = focusViewport
-		m.compose = m.compose.Blur()
-		return m, nil
-	}
-	m.focus = focusComposer
 	var cmd tea.Cmd
-	m.compose, cmd = m.compose.Focus()
+	m.room, cmd = m.room.Update(msg)
 	return m, cmd
-}
-
-func (m Model) handleComposerKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlG {
-		return m.startEditorCompose()
-	}
-	if msg.Type == tea.KeyEnter && !msg.Alt {
-		return m.handleSubmit()
-	}
-	var cmd tea.Cmd
-	m.compose, cmd = m.compose.Update(msg)
-	m = m.syncAfterCompose()
-	return m, cmd
-}
-
-func (m Model) handleViewportKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
-		return m, nil
-	case tea.KeyCtrlG:
-		return m.openEditorWithTranscript()
-	case tea.KeyUp:
-		m.history = m.history.ScrollUp(1)
-		return m, nil
-	case tea.KeyDown:
-		m.history = m.history.ScrollDown(1)
-		return m, nil
-	case tea.KeyHome:
-		m.history = m.history.GotoTop()
-		return m, nil
-	case tea.KeyEnd:
-		m.history = m.history.GotoBottom()
-		return m, nil
-	case tea.KeyEsc:
-		m.focus = focusComposer
-		var cmd tea.Cmd
-		m.compose, cmd = m.compose.Focus()
-		return m, cmd
-	default:
-		var cmd tea.Cmd
-		m.history, cmd = m.history.Update(msg)
-		return m, cmd
-	}
 }
 
 func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 	m.lastSize = msg
 	inner := max(msg.Width-2*marginH, 1)
 	m.toolbox = m.toolbox.SetWidth(inner)
-	m.compose = m.compose.SetWidth(inner).SetMaxHeightFromTotal(msg.Height)
-	h := max(msg.Height-chromeHeight(m.compose.Height(), m.toolbox.Height()), 1)
-	m.history = m.history.SetSize(inner, h)
-	m.history = m.history.RebuildColors()
+	roomH := max(msg.Height-(m.toolbox.Height()+marginV), 1)
+	m.room = m.room.HandleResize(inner, roomH)
+	m.room = m.room.SetDebug(m.debug)
 	return m
 }
 
-func (m Model) handleSubmit() (Model, tea.Cmd) {
-	raw := m.compose.Value()
-	m.compose = m.compose.Reset()
-	m = m.syncAfterCompose()
+func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 	if strings.TrimSpace(raw) == "" {
 		return m, nil
 	}
@@ -152,9 +71,9 @@ func (m Model) handleSubmit() (Model, tea.Cmd) {
 	if err == nil {
 		routing = routingFor(action, m.sess.RoutableParticipants())
 	}
-	m.history = m.history.AppendUserInputRecord(raw, routing)
+	m.room = m.room.AppendUserInput(raw, routing)
 	if err != nil {
-		m.history = m.history.AppendSystemRecord("error: " + err.Error())
+		m.room = m.room.AppendSystem("error: " + err.Error())
 		return m, nil
 	}
 	return m.executeAction(action)
@@ -193,20 +112,18 @@ func (m Model) handleEvent(e session.Event) (Model, tea.Cmd) {
 func (m Model) handleAgentLifecycleEvent(e session.Event) (Model, bool) {
 	switch e.Kind {
 	case session.KindAgentStarting:
-		m.history = m.history.AppendSystemRecord("[" + e.Alias + " starting]")
+		m.room = m.room.AppendSystem("[" + e.Alias + " starting]")
 		return m, true
 	case session.KindAgentStarted:
-		m.history = m.history.AppendSystemRecord("[" + e.Alias + " joined]")
+		m.room = m.room.AppendSystem("[" + e.Alias + " joined]")
 		return m, true
 	case session.KindAgentStopped:
-		m.history = m.history.ClearStreaming(e.Alias)
-		m.history = m.history.MarkDeparted(e.Alias)
-		m.history = m.history.AppendSystemRecord("[" + e.Alias + " left]")
+		m.room = m.room.MarkDeparted(e.Alias)
+		m.room = m.room.AppendSystem("[" + e.Alias + " left]")
 		return m, true
 	case session.KindAgentCrashed:
-		m.history = m.history.ClearStreaming(e.Alias)
-		m.history = m.history.MarkDeparted(e.Alias)
-		m.history = m.history.AppendSystemRecord("[" + e.Alias + " crashed]")
+		m.room = m.room.MarkDeparted(e.Alias)
+		m.room = m.room.AppendSystem("[" + e.Alias + " crashed]")
 		return m, true
 	default:
 		return m, false
@@ -216,17 +133,17 @@ func (m Model) handleAgentLifecycleEvent(e session.Event) (Model, bool) {
 func (m Model) handleMessageEvent(e session.Event) Model {
 	switch e.Kind {
 	case session.KindBroadcast:
-		m.history = m.history.AppendSystemRecord("[all] " + e.Text)
+		m.room = m.room.AppendSystem("[all] " + e.Text)
 	case session.KindSharedSend:
-		m.history = m.history.AppendSystemRecord("[→ " + e.Alias + "] " + e.Text)
+		m.room = m.room.AppendSystem("[→ " + e.Alias + "] " + e.Text)
 	case session.KindSharedNotice:
-		m.history = m.history.AppendSystemRecord("[notice → " + e.Alias + "]")
+		m.room = m.room.AppendSystem("[notice → " + e.Alias + "]")
 	case session.KindAgentLog:
-		m.history = m.history.AppendLogRecord(e.Alias, e.Text)
+		m.room = m.room.AppendLog(e.Alias, e.Text)
 	case session.KindDelta:
-		m.history = m.history.HandleDelta(e.Alias, e.Text)
+		m.room = m.room.HandleDelta(e.Alias, e.Text)
 	case session.KindDone:
-		m.history = m.history.ClearStreaming(e.Alias)
+		m.room = m.room.HandleDone(e.Alias)
 	default:
 		// Lifecycle events are handled by handleAgentLifecycleEvent.
 	}
@@ -264,16 +181,16 @@ func (m Model) executeDebugAction(a Action) (Model, bool) {
 	switch a.(type) {
 	case DebugView:
 		if !m.debug {
-			m.history = m.history.AppendSystemRecord("error: debug commands disabled (set CODEROOM_DEBUG=1)")
+			m.room = m.room.AppendSystem("error: debug commands disabled (set CODEROOM_DEBUG=1)")
 			return m, true
 		}
 		return m.debugView(), true
 	case DebugRows:
 		if !m.debug {
-			m.history = m.history.AppendSystemRecord("error: debug commands disabled (set CODEROOM_DEBUG=1)")
+			m.room = m.room.AppendSystem("error: debug commands disabled (set CODEROOM_DEBUG=1)")
 			return m, true
 		}
-		m.history = m.history.ToggleDebugRowNums()
+		m.room = m.room.ToggleDebugRowNums()
 		return m, true
 	default:
 		return m, false
@@ -303,7 +220,7 @@ func (m Model) inviteAgent(alias string) Model {
 		Color:      color,
 	})
 	if err != nil {
-		m.history = m.history.AppendSystemRecord(fmt.Sprintf("error: invite %q: %v", alias, err))
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: invite %q: %v", alias, err))
 		return m
 	}
 	m.palette = nextPalette
@@ -312,17 +229,17 @@ func (m Model) inviteAgent(alias string) Model {
 
 func (m Model) removeAgent(alias string) Model {
 	if err := m.sess.Execute(session.RemoveCommand{Alias: alias}); err != nil {
-		m.history = m.history.AppendSystemRecord(fmt.Sprintf("error: remove %q: %v", alias, err))
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: remove %q: %v", alias, err))
 	}
 	return m
 }
 
 func (m Model) cancelAgent(alias string) Model {
 	if err := m.sess.Execute(session.CancelCommand{Alias: alias}); err != nil {
-		m.history = m.history.AppendSystemRecord(fmt.Sprintf("error: cancel %q: %v", alias, err))
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: cancel %q: %v", alias, err))
 		return m
 	}
-	m.history = m.history.AppendSystemRecord("[→ " + alias + "] cancel requested")
+	m.room = m.room.AppendSystem("[→ " + alias + "] cancel requested")
 	return m
 }
 
@@ -333,18 +250,18 @@ func (m Model) sendToAgent(alias, text string) Model {
 		TextListeners: fmt.Sprintf("@%s: %s", alias, text),
 	})
 	if err != nil {
-		m.history = m.history.AppendSystemRecord(fmt.Sprintf("error: send to %q: %v", alias, err))
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: send to %q: %v", alias, err))
 	}
 	return m
 }
 
 func (m Model) broadcastAll(text string) Model {
 	if len(m.sess.RoutableParticipants()) == 0 {
-		m.history = m.history.AppendSystemRecord("[no agents — use /invite <alias> to start one]")
+		m.room = m.room.AppendSystem("[no agents — use /invite <alias> to start one]")
 		return m
 	}
 	if err := m.sess.Execute(session.BroadcastCommand{Text: text}); err != nil {
-		m.history = m.history.AppendSystemRecord(fmt.Sprintf("error: broadcast: %v", err))
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: broadcast: %v", err))
 	}
 	return m
 }
@@ -352,7 +269,7 @@ func (m Model) broadcastAll(text string) Model {
 func (m Model) showWho() Model {
 	ps := m.sess.Participants()
 	if len(ps) == 0 {
-		m.history = m.history.AppendSystemRecord("[no agents]")
+		m.room = m.room.AppendSystem("[no agents]")
 		return m
 	}
 	aliases := make([]string, len(ps))
@@ -360,7 +277,7 @@ func (m Model) showWho() Model {
 		aliases[i] = p.Alias
 	}
 	slices.Sort(aliases)
-	m.history = m.history.AppendSystemRecord("[agents] " + strings.Join(aliases, ", "))
+	m.room = m.room.AppendSystem("[agents] " + strings.Join(aliases, ", "))
 	return m
 }
 
@@ -379,83 +296,15 @@ func (m Model) showHelp() Model {
 	b.WriteString("  @<alias> <text>   send to one agent\n")
 	b.WriteString("  <text>            broadcast to all agents\n")
 	b.WriteString("  /quit             exit")
-	m.history = m.history.AppendSystemRecord(b.String())
+	m.room = m.room.AppendSystem(b.String())
 	return m
 }
 
 func (m Model) debugView() Model {
-	if !m.history.Ready() {
-		m.history = m.history.AppendSystemRecord("[debug] not ready")
+	if !m.room.Ready() {
+		m.room = m.room.AppendSystem("[debug] not ready")
 		return m
 	}
-	m.history = m.history.AppendSystemRecord("[debug]\n" + m.history.DebugSummary())
+	m.room = m.room.AppendSystem("[debug]\n" + m.room.HistoryDebugSummary())
 	return m
-}
-
-// syncAfterCompose adjusts the viewport height to match the current compose
-// height, preserving the bottom anchor if the viewport was at the bottom.
-func (m Model) syncAfterCompose() Model {
-	if !m.history.Ready() {
-		return m
-	}
-	newVpH := max(m.lastSize.Height-chromeHeight(m.compose.Height(), m.toolbox.Height()), 1)
-	if newVpH == m.history.Height() {
-		return m
-	}
-	wasAtBottom := m.history.AtBottom()
-	m.history = m.history.SetHeight(newVpH)
-	if wasAtBottom {
-		m.history = m.history.GotoBottom()
-	}
-	return m
-}
-
-func (m Model) startEditorCompose() (Model, tea.Cmd) {
-	prior := m.compose.Value()
-	cmd, err := editor.OpenTempFileInEditor(editor.Request{
-		Purpose:          editor.PurposeCompose,
-		PriorText:        prior,
-		InitialText:      prior,
-		TempPattern:      "coderoom-compose-*.md",
-		TrimFinalNewline: true,
-	})
-	if err != nil {
-		m.history = m.history.AppendSystemRecord("error: " + err.Error())
-		return m, nil
-	}
-	return m, cmd
-}
-
-func (m Model) handleEditorResult(msg editor.Response) Model {
-	switch msg.Purpose {
-	case editor.PurposeCompose:
-		if msg.Canceled || msg.Err != nil {
-			m.compose = m.compose.SetValue(msg.PriorText)
-		} else {
-			m.compose = m.compose.SetValue(msg.NewText)
-		}
-		return m.syncAfterCompose()
-	case editor.PurposeTranscript:
-		// Transcript export does not mutate the model; the effect is purely
-		// external (opening a read-only temp file in the user's editor).
-		return m
-	default:
-		// Unknown purposes are ignored to avoid corrupting the user's input.
-		return m
-	}
-}
-
-func (m Model) openEditorWithTranscript() (Model, tea.Cmd) {
-	content := ansi.Strip(m.history.PlainText())
-	cmd, err := editor.OpenTempFileInEditor(editor.Request{
-		Purpose:     editor.PurposeTranscript,
-		InitialText: content,
-		TempPattern: "coderoom-transcript-*.txt",
-		ReadOnly:    true,
-	})
-	if err != nil {
-		m.history = m.history.AppendSystemRecord("error: " + err.Error())
-		return m, nil
-	}
-	return m, cmd
 }

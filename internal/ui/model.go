@@ -5,8 +5,7 @@ package ui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/session"
-	"github.com/trigosec/coderoom/internal/ui/room/compose"
-	"github.com/trigosec/coderoom/internal/ui/room/history"
+	"github.com/trigosec/coderoom/internal/ui/room"
 	"github.com/trigosec/coderoom/internal/ui/toolbox"
 )
 
@@ -47,22 +46,13 @@ func (o channelObserver) OnEvent(e session.Event) {
 type Model struct {
 	sess     *session.Session
 	queue    *eventQueue
-	history  history.Model
-	compose  compose.Model
+	room     room.Model
 	toolbox  toolbox.Model
-	focus    focusTarget
 	debug    bool
 	palette  colorPalette
 	cwd      string
 	lastSize tea.WindowSizeMsg
 }
-
-type focusTarget int
-
-const (
-	focusComposer focusTarget = iota
-	focusViewport
-)
 
 // New creates a Model backed by the given session.
 // The session must have an AgentFactory configured before any invite commands
@@ -81,10 +71,8 @@ func New(sess *session.Session, cwd string, opts ...Option) Model {
 	m := Model{
 		sess:    sess,
 		queue:   q,
-		history: history.New(colorByAlias, ColorDeparted),
-		compose: compose.New(),
+		room:    room.New(colorByAlias, ColorDeparted),
 		toolbox: toolbox.New(),
-		focus:   focusComposer,
 		cwd:     cwd,
 	}
 	for _, o := range opts {

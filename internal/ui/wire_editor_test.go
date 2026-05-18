@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/ui/editor"
 	"github.com/trigosec/coderoom/internal/ui/room/history"
 )
@@ -13,20 +14,21 @@ func TestCtrlG_withoutEditorAddsSystemRecordAndPreservesBuffer(t *testing.T) {
 	t.Setenv("VISUAL", "")
 
 	m := makeReadyModel(t)
-	m.compose = m.compose.SetValue("draft")
+	m.room = m.room.SetComposeValue("draft")
 
-	m2, _ := m.startEditorCompose()
-	if got := m2.compose.Value(); got != "draft" {
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m2 := next.(Model)
+	if got := m2.room.ComposeValue(); got != "draft" {
 		t.Fatalf("expected input preserved when editor is unset, got %q", got)
 	}
 	if !hasRecord(m2, history.RecordKindSystem, "no editor configured") {
-		t.Fatalf("expected system record about editor configuration; records: %v", m2.history.Records())
+		t.Fatalf("expected system record about editor configuration; records: %v", m2.room.HistoryRecords())
 	}
 }
 
 func TestEditorCompose_cancelRestoresPriorBuffer(t *testing.T) {
 	m := makeReadyModel(t)
-	m.compose = m.compose.SetValue("before")
+	m.room = m.room.SetComposeValue("before")
 
 	next, _ := m.Update(editor.Response{
 		Purpose:   editor.PurposeCompose,
@@ -35,14 +37,14 @@ func TestEditorCompose_cancelRestoresPriorBuffer(t *testing.T) {
 		Err:       os.ErrInvalid,
 	})
 	m2 := next.(Model)
-	if got := m2.compose.Value(); got != "before" {
+	if got := m2.room.ComposeValue(); got != "before" {
 		t.Fatalf("expected cancel to restore prior buffer, got %q", got)
 	}
 }
 
 func TestEditorCompose_successReplacesBuffer(t *testing.T) {
 	m := makeReadyModel(t)
-	m.compose = m.compose.SetValue("before")
+	m.room = m.room.SetComposeValue("before")
 
 	next, _ := m.Update(editor.Response{
 		Purpose:   editor.PurposeCompose,
@@ -50,14 +52,14 @@ func TestEditorCompose_successReplacesBuffer(t *testing.T) {
 		NewText:   "after",
 	})
 	m2 := next.(Model)
-	if got := m2.compose.Value(); got != "after" {
+	if got := m2.room.ComposeValue(); got != "after" {
 		t.Fatalf("expected success to replace buffer, got %q", got)
 	}
 }
 
 func TestEditorResponse_transcriptDoesNotMutateComposer(t *testing.T) {
 	m := makeReadyModel(t)
-	m.compose = m.compose.SetValue("draft")
+	m.room = m.room.SetComposeValue("draft")
 
 	next, _ := m.Update(editor.Response{
 		Purpose:  editor.PurposeTranscript,
@@ -66,7 +68,7 @@ func TestEditorResponse_transcriptDoesNotMutateComposer(t *testing.T) {
 		Canceled: false,
 	})
 	m2 := next.(Model)
-	if got := m2.compose.Value(); got != "draft" {
+	if got := m2.room.ComposeValue(); got != "draft" {
 		t.Fatalf("expected transcript response to not mutate composer, got %q", got)
 	}
 }
