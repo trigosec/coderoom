@@ -9,8 +9,8 @@ func TestView_doesNotEndWithNewline(t *testing.T) {
 	m := makeReadyModelWithHeight(t, 48)
 
 	// Add some content so we exercise the viewport/input/toolbox composition.
-	m.input.SetValue("/who")
-	m, _ = m.handleEnter()
+	m.compose = m.compose.SetValue("/who")
+	m, _ = m.handleSubmit()
 
 	view := m.View()
 	if strings.HasSuffix(view, "\n") {
@@ -30,8 +30,8 @@ func TestView_doesNotExceedTerminalHeight(t *testing.T) {
 
 	// Add a few records so the viewport isn't empty.
 	for i := 0; i < 3; i++ {
-		m.input.SetValue("/who")
-		m, _ = m.handleEnter()
+		m.compose = m.compose.SetValue("/who")
+		m, _ = m.handleSubmit()
 	}
 
 	view := m.View()

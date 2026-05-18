@@ -1,18 +1,16 @@
 package ui
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func TestHandleEnter_echoesUserInput(t *testing.T) {
 	m := makeReadyModel(t)
-	m.input.SetValue("/who")
-	m, _ = m.handleEnter()
+	m.compose = m.compose.SetValue("/who")
+	m, _ = m.handleSubmit()
 	if len(m.records) == 0 {
 		t.Fatal("expected at least one record after enter")
 	}
@@ -24,54 +22,14 @@ func TestHandleEnter_echoesUserInput(t *testing.T) {
 	}
 }
 
-func TestAltEnter_insertsNewlineWithoutSubmitting(t *testing.T) {
-	m := makeReadyModel(t)
-	m.input.SetValue("hello")
-	m.input = updateInputDecorations(m.input)
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
-	m2 := next.(Model)
-
-	if got := m2.input.Value(); got != "hello\n" {
-		t.Fatalf("expected Alt+Enter to insert newline, got %q", got)
-	}
-	if len(m2.records) != 0 {
-		t.Fatalf("expected no records (no submit) after Alt+Enter, got %d", len(m2.records))
-	}
-}
-
-func TestInputPromptNumbers_shownOnlyForMultiline(t *testing.T) {
-	m := makeReadyModel(t)
-	m.input.SetWidth(40)
-	m.input.SetHeight(3)
-	m.input = updateInputDecorations(m.input)
-	if strings.Contains(ansi.Strip(m.input.View()), "❯   1 ") {
-		t.Fatal("expected single-line input to hide prompt line numbers by default")
-	}
-
-	m.input.SetValue("a\nb")
-	m.input = updateInputDecorations(m.input)
-	view := ansi.Strip(m.input.View())
-	if !strings.Contains(view, "❯   1 ") || !strings.Contains(view, "❯   2 ") {
-		t.Fatalf("expected prompt to show numbers for multiline input, got:\n%s", view)
-	}
-
-	m.input.SetValue("a")
-	m.input = updateInputDecorations(m.input)
-	if strings.Contains(ansi.Strip(m.input.View()), "❯   1 ") {
-		t.Fatal("expected prompt line numbers hidden again when returning to single line")
-	}
-}
-
 func TestEnter_submitsAndClearsInput(t *testing.T) {
 	m := makeReadyModel(t)
-	m.input.SetValue("hello")
-	m.input = updateInputDecorations(m.input)
+	m.compose = m.compose.SetValue("hello")
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m2 := next.(Model)
 
-	if got := m2.input.Value(); got != "" {
+	if got := m2.compose.Value(); got != "" {
 		t.Fatalf("expected input cleared after submit, got %q", got)
 	}
 	if len(m2.records) == 0 || m2.records[0].kind != recordKindUserInput || m2.records[0].body != "hello" {
@@ -81,12 +39,12 @@ func TestEnter_submitsAndClearsInput(t *testing.T) {
 
 func TestEnter_whitespaceOnlyDoesNotCreateRecord(t *testing.T) {
 	m := makeReadyModel(t)
-	m.input.SetValue("   \n\t ")
+	m.compose = m.compose.SetValue("   \n\t ")
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m2 := next.(Model)
 
-	if got := m2.input.Value(); got != "" {
+	if got := m2.compose.Value(); got != "" {
 		t.Fatalf("expected input cleared even for whitespace-only submit, got %q", got)
 	}
 	if len(m2.records) != 0 {
@@ -96,27 +54,27 @@ func TestEnter_whitespaceOnlyDoesNotCreateRecord(t *testing.T) {
 
 func TestCtrlC_clearsComposerOnlyWhenFocused(t *testing.T) {
 	m := makeReadyModel(t)
-	m.input.SetValue("draft")
+	m.compose = m.compose.SetValue("draft")
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	m2 := next.(Model)
 	if cmd != nil {
 		t.Fatalf("expected Ctrl+C not to quit, got non-nil cmd")
 	}
-	if got := m2.input.Value(); got != "" {
+	if got := m2.compose.Value(); got != "" {
 		t.Fatalf("expected Ctrl+C to clear composer, got %q", got)
 	}
 
 	next, _ = m2.Update(tea.KeyMsg{Type: tea.KeyCtrlO}) // focus viewport
 	m3 := next.(Model)
-	m3.input.SetValue("draft2")
+	m3.compose = m3.compose.SetValue("draft2")
 
 	next, cmd = m3.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	m4 := next.(Model)
 	if cmd != nil {
 		t.Fatalf("expected Ctrl+C not to quit in viewport focus, got non-nil cmd")
 	}
-	if got := m4.input.Value(); got != "draft2" {
+	if got := m4.compose.Value(); got != "draft2" {
 		t.Fatalf("expected Ctrl+C no-op in viewport focus, got %q", got)
 	}
 }
@@ -146,10 +104,10 @@ func TestCtrlO_toggleBackFocusesComposer(t *testing.T) {
 func TestInputHeight_isCappedAndDoesNotCollapseViewport(t *testing.T) {
 	m := makeReadyModelWithHeight(t, 30) // max input height = min(8, 30/3=10) => 8
 
-	m.input.SetValue(strings.Repeat("x\n", 20) + "x") // 21 lines
-	m = m.resizeForInput()
+	m.compose = m.compose.SetValue(strings.Repeat("x\n", 20) + "x") // 21 lines
+	m = m.syncAfterCompose()
 
-	if got := m.input.Height(); got != 8 {
+	if got := m.compose.Height(); got != 8 {
 		t.Fatalf("expected input height capped at 8, got %d", got)
 	}
 	if m.viewport.Height <= 0 {
@@ -160,16 +118,16 @@ func TestInputHeight_isCappedAndDoesNotCollapseViewport(t *testing.T) {
 func TestResizeForInput_preservesBottomAnchor(t *testing.T) {
 	m := makeReadyModelWithHeight(t, 12)
 	for i := range 50 {
-		m = m.appendRecord(record{kind: recordKindSystem, body: "line " + strconv.Itoa(i)})
+		m = m.appendRecord(record{kind: recordKindSystem, body: "line " + string(rune('0'+i%10))})
 	}
 	m.viewport.GotoBottom()
 	if !m.viewport.AtBottom() {
 		t.Fatal("expected to start at bottom")
 	}
 
-	m.input.SetValue("a\nb\nc")
-	m = m.resizeForInput()
+	m.compose = m.compose.SetValue("a\nb\nc")
+	m = m.syncAfterCompose()
 	if !m.viewport.AtBottom() {
-		t.Fatal("expected resizeForInput to keep viewport anchored to bottom")
+		t.Fatal("expected syncAfterCompose to keep viewport anchored to bottom")
 	}
 }

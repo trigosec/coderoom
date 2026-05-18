@@ -3,10 +3,10 @@
 package ui
 
 import (
-	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/session"
+	"github.com/trigosec/coderoom/internal/ui/room/compose"
 	"github.com/trigosec/coderoom/internal/ui/toolbox"
 )
 
@@ -48,7 +48,7 @@ type Model struct {
 	sess            *session.Session
 	queue           *eventQueue
 	viewport        viewport.Model
-	input           textarea.Model
+	compose         compose.Model
 	toolbox         toolbox.Model
 	focus           focusTarget
 	debug           bool
@@ -77,15 +77,10 @@ func New(sess *session.Session, cwd string, opts ...Option) Model {
 	q := newEventQueue()
 	sess.AddObserver(channelObserver{queue: q})
 
-	ti := textarea.New()
-	ti.ShowLineNumbers = false
-	ti = updateInputDecorations(ti)
-	ti.Focus()
-
 	m := Model{
 		sess:            sess,
 		queue:           q,
-		input:           ti,
+		compose:         compose.New(),
 		toolbox:         toolbox.New(),
 		focus:           focusComposer,
 		records:         []record{},

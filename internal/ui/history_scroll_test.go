@@ -12,8 +12,8 @@ func TestHistoryFocus_arrowKeysScrollViewport(t *testing.T) {
 
 	// Create enough records to overflow the viewport height.
 	for i := 0; i < 10; i++ {
-		m.input.SetValue("/who")
-		m, _ = m.handleEnter()
+		m.compose = m.compose.SetValue("/who")
+		m, _ = m.handleSubmit()
 	}
 
 	// Enter history focus.

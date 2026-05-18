@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -28,36 +27,9 @@ func chromeHeight(inputHeight, toolboxH int) int {
 	return 1 + inputHeight + toolboxH + marginV
 }
 
-func inputMaxHeight(totalHeight int) int {
-	return min(8, max(totalHeight/3, 1))
-}
-
-func desiredInputHeight(lineCount, maxHeight int) int {
-	return min(max(lineCount, 1), maxHeight)
-}
-
-func updateInputDecorations(input textarea.Model) textarea.Model {
-	if input.LineCount() >= 2 {
-		input.ShowLineNumbers = false
-		input.SetPromptFunc(6, func(lineIndex int) string {
-			// ❯   1 a
-			// ❯   2 b
-			return fmt.Sprintf("❯%4d ", lineIndex+1)
-		})
-		return input
-	}
-	input.ShowLineNumbers = false
-	input.SetPromptFunc(6, func(_ int) string {
-		// Keep the text column aligned with the multi-line prompt:
-		// single-line: ❯     a
-		return "❯     "
-	})
-	return input
-}
-
 // Init starts the session event listener; called once by Bubble Tea on startup.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(awaitEvent(m.queue), textarea.Blink)
+	return tea.Batch(awaitEvent(m.queue), m.compose.Init())
 }
 
 // Update handles incoming messages and returns the next model state.
@@ -73,11 +45,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, cmd := m.handleEvent(session.Event(msg))
 		return next, tea.Batch(cmd, awaitEvent(m.queue))
 	default:
-		var inputCmd tea.Cmd
-		m.input, inputCmd = m.input.Update(msg)
+		var composeCmd tea.Cmd
+		m.compose, composeCmd = m.compose.Update(msg)
+		m = m.syncAfterCompose()
 		var toolboxCmd tea.Cmd
 		m.toolbox, toolboxCmd = m.toolbox.Update(msg)
-		return m, tea.Batch(inputCmd, toolboxCmd)
+		return m, tea.Batch(composeCmd, toolboxCmd)
 	}
 }
 
@@ -105,43 +78,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 func (m Model) toggleFocus() (Model, tea.Cmd) {
 	if m.focus == focusComposer {
 		m.focus = focusViewport
-		m.input.Blur()
+		m.compose = m.compose.Blur()
 		return m, nil
 	}
 	m.focus = focusComposer
-	cmd := m.input.Focus()
+	var cmd tea.Cmd
+	m.compose, cmd = m.compose.Focus()
 	return m, cmd
 }
 
 func (m Model) handleComposerKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
-		if m.input.Value() == "" {
-			return m, nil
-		}
-		m.input.Reset()
-		m = m.resizeForInput()
-		return m, nil
-	case tea.KeyCtrlG:
+	if msg.Type == tea.KeyCtrlG {
 		return m.startEditorCompose()
-	case tea.KeyEnter:
-		if msg.Alt {
-			m.input.InsertRune('\n')
-			m = m.resizeForInput()
-			return m, nil
-		}
-		return m.handleEnter()
-	case tea.KeyEsc:
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		m = m.resizeForInput()
-		return m, cmd
-	default:
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		m = m.resizeForInput()
-		return m, cmd
 	}
+	if msg.Type == tea.KeyEnter && !msg.Alt {
+		return m.handleSubmit()
+	}
+	var cmd tea.Cmd
+	m.compose, cmd = m.compose.Update(msg)
+	m = m.syncAfterCompose()
+	return m, cmd
 }
 
 func (m Model) handleViewportKey(msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -164,7 +120,8 @@ func (m Model) handleViewportKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyEsc:
 		m.focus = focusComposer
-		cmd := m.input.Focus()
+		var cmd tea.Cmd
+		m.compose, cmd = m.compose.Focus()
 		return m, cmd
 	default:
 		var cmd tea.Cmd
@@ -175,13 +132,10 @@ func (m Model) handleViewportKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 	m.lastSize = msg
-	m.input = updateInputDecorations(m.input)
-	maxInputH := inputMaxHeight(msg.Height)
-	inputH := desiredInputHeight(m.input.LineCount(), maxInputH)
 	inner := max(msg.Width-2*marginH, 1)
 	m.toolbox = m.toolbox.SetWidth(inner)
-	h := msg.Height - chromeHeight(inputH, m.toolbox.Height())
-	h = max(h, 1)
+	m.compose = m.compose.SetWidth(inner).SetMaxHeightFromTotal(msg.Height)
+	h := max(msg.Height-chromeHeight(m.compose.Height(), m.toolbox.Height()), 1)
 	if !m.ready {
 		m.viewport = viewport.New(inner, h)
 		m.ready = true
@@ -189,8 +143,6 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 		m.viewport.Width = inner
 		m.viewport.Height = h
 	}
-	m.input.SetWidth(inner)
-	m.input.SetHeight(inputH)
 	colorFor := m.colorFor()
 	for i, r := range m.records {
 		m.renderedRecords[i] = renderRecord(r, m.viewport.Width, colorFor)
@@ -198,10 +150,10 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 	return m.syncViewport()
 }
 
-func (m Model) handleEnter() (Model, tea.Cmd) {
-	raw := m.input.Value()
-	m.input.Reset()
-	m = m.resizeForInput()
+func (m Model) handleSubmit() (Model, tea.Cmd) {
+	raw := m.compose.Value()
+	m.compose = m.compose.Reset()
+	m = m.syncAfterCompose()
 	if strings.TrimSpace(raw) == "" {
 		return m, nil
 	}
@@ -526,27 +478,27 @@ func (m Model) syncViewport() Model {
 	return m
 }
 
-func (m Model) resizeForInput() Model {
+// syncAfterCompose adjusts the viewport height to match the current compose
+// height, preserving the bottom anchor if the viewport was at the bottom.
+func (m Model) syncAfterCompose() Model {
 	if !m.ready {
 		return m
 	}
-	m.input = updateInputDecorations(m.input)
+	newVpH := max(m.lastSize.Height-chromeHeight(m.compose.Height(), m.toolbox.Height()), 1)
+	if newVpH == m.viewport.Height {
+		return m
+	}
 	wasAtBottom := m.viewport.AtBottom()
-	maxInputH := inputMaxHeight(m.lastSize.Height)
-	inputH := desiredInputHeight(m.input.LineCount(), maxInputH)
-	if inputH != m.input.Height() {
-		m.input.SetHeight(inputH)
-		m.viewport.Height = max(m.lastSize.Height-chromeHeight(inputH, m.toolbox.Height()), 1)
-		m = m.syncViewport()
-		if wasAtBottom {
-			m.viewport.GotoBottom()
-		}
+	m.viewport.Height = newVpH
+	m = m.syncViewport()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
 	}
 	return m
 }
 
 func (m Model) startEditorCompose() (Model, tea.Cmd) {
-	prior := m.input.Value()
+	prior := m.compose.Value()
 	cmd, err := editor.OpenTempFileInEditor(editor.Request{
 		Purpose:          editor.PurposeCompose,
 		PriorText:        prior,
@@ -564,11 +516,11 @@ func (m Model) handleEditorResult(msg editor.Response) Model {
 	switch msg.Purpose {
 	case editor.PurposeCompose:
 		if msg.Canceled || msg.Err != nil {
-			m.input.SetValue(msg.PriorText)
-			return m.resizeForInput()
+			m.compose = m.compose.SetValue(msg.PriorText)
+		} else {
+			m.compose = m.compose.SetValue(msg.NewText)
 		}
-		m.input.SetValue(msg.NewText)
-		return m.resizeForInput()
+		return m.syncAfterCompose()
 	case editor.PurposeTranscript:
 		// Transcript export does not mutate the model; the effect is purely
 		// external (opening a read-only temp file in the user's editor).

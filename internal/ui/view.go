@@ -22,7 +22,7 @@ func (m Model) View() string {
 	// overlay in debug mode.
 	m.writeViewport(&sb, left)
 	sb.WriteString(sep + "\n")
-	for line := range strings.SplitSeq(strings.TrimSuffix(m.input.View(), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(m.compose.View(), "\n"), "\n") {
 		sb.WriteString(left + line + "\n")
 	}
 	for _, line := range strings.Split(m.toolbox.View(), "\n") {

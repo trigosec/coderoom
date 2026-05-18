@@ -13,18 +13,18 @@ func TestPgUpPgDown_scrollViewportWithoutAffectingComposer(t *testing.T) {
 
 	// Fill history so PgUp/PgDn have something to scroll.
 	for i := 0; i < 30; i++ {
-		m.input.SetValue("/who")
-		m, _ = m.handleEnter()
+		m.compose = m.compose.SetValue("/who")
+		m, _ = m.handleSubmit()
 	}
 
-	m.input.SetValue("draft text")
-	beforeInput := m.input.Value()
+	m.compose = m.compose.SetValue("draft text")
+	beforeInput := m.compose.Value()
 	beforeView := ansi.Strip(m.viewport.View())
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 	m = next.(Model)
-	if m.input.Value() != beforeInput {
-		t.Fatalf("expected PgUp not to mutate composer input; got %q", m.input.Value())
+	if m.compose.Value() != beforeInput {
+		t.Fatalf("expected PgUp not to mutate composer input; got %q", m.compose.Value())
 	}
 	afterView := ansi.Strip(m.viewport.View())
 	if afterView == beforeView {
@@ -33,8 +33,8 @@ func TestPgUpPgDown_scrollViewportWithoutAffectingComposer(t *testing.T) {
 
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
 	m = next.(Model)
-	if m.input.Value() != beforeInput {
-		t.Fatalf("expected PgDn not to mutate composer input; got %q", m.input.Value())
+	if m.compose.Value() != beforeInput {
+		t.Fatalf("expected PgDn not to mutate composer input; got %q", m.compose.Value())
 	}
 }
 
@@ -78,8 +78,8 @@ func TestDelta_whenScrolledUp_doesNotForceViewportToBottom(t *testing.T) {
 func TestViewportFocus_homeEndJumpToTopBottom(t *testing.T) {
 	m := makeReadyModelWithHeight(t, 10)
 	for i := 0; i < 30; i++ {
-		m.input.SetValue("/who")
-		m, _ = m.handleEnter()
+		m.compose = m.compose.SetValue("/who")
+		m, _ = m.handleSubmit()
 	}
 
 	// Enter viewport focus.
