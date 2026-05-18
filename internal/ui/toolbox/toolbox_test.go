@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/participant"
 )
 
@@ -35,7 +36,7 @@ func TestToolboxCells_overflowShowsPlusN(t *testing.T) {
 	now := time.Unix(100, 0)
 
 	ps := make([]participant.Participant, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		ps = append(ps, participant.Participant{
 			Alias:  string(rune('a' + i)),
 			Status: participant.StatusIdle,
@@ -98,6 +99,65 @@ func TestRosterWantsTick(t *testing.T) {
 	crashed, _ := New().SetParticipants([]participant.Participant{{Alias: "ada", Status: participant.StatusCrashed, Since: now}})
 	if !crashed.WantsTick() {
 		t.Fatal("expected true for crashed participant")
+	}
+}
+
+func TestCell_longAliasDoesNotTruncateElapsed(t *testing.T) {
+	now := time.Unix(100, 0)
+	// Alias longer than aliasMax; elapsed must still appear in full.
+	ps := []participant.Participant{
+		{Alias: "verylongaliasname", Status: participant.StatusWorking, Since: now.Add(-5 * time.Second)},
+	}
+	out := ansi.Strip(renderParticipantCells(cellWidth()*4, now, ps))
+	if !strings.Contains(out, "(5s)") {
+		t.Errorf("elapsed must not be truncated when alias is long; got %q", out)
+	}
+}
+
+func TestCell_elapsedImmediatelyAfterAlias(t *testing.T) {
+	now := time.Unix(100, 0)
+	ps := []participant.Participant{
+		{Alias: "ada", Status: participant.StatusWorking, Since: now.Add(-5 * time.Second)},
+	}
+	out := ansi.Strip(renderParticipantCells(cellWidth()*4, now, ps))
+	// elapsed must appear right after alias with no padding gap between them
+	if !strings.Contains(out, "ada (5s)") {
+		t.Errorf("expected 'ada (5s)' without padding gap; got %q", out)
+	}
+}
+
+func TestCell_colorPreservesContent(t *testing.T) {
+	now := time.Unix(100, 0)
+	plain := []participant.Participant{
+		{Alias: "ada", Status: participant.StatusIdle, Since: now},
+	}
+	colored := []participant.Participant{
+		{Alias: "ada", Status: participant.StatusIdle, Since: now, Color: "#ff0000"},
+	}
+	w := cellWidth() * 4
+	// Stripped content must be identical whether a color is set or not.
+	if ansi.Strip(renderParticipantCells(w, now, plain)) != ansi.Strip(renderParticipantCells(w, now, colored)) {
+		t.Error("expected same visible content with and without color")
+	}
+}
+
+func TestCell_colorUnsetAddsNoExtraEscapes(t *testing.T) {
+	now := time.Unix(100, 0)
+	w := cellWidth() * 4
+	plain := renderParticipantCells(w, now, []participant.Participant{
+		{Alias: "ada", Status: participant.StatusIdle, Since: now},
+	})
+	colored := renderParticipantCells(w, now, []participant.Participant{
+		{Alias: "ada", Status: participant.StatusIdle, Since: now, Color: "#ff0000"},
+	})
+	// Color is the only permitted difference between the two outputs.
+	// Stripping escape codes from both must yield the same string.
+	if ansi.Strip(plain) != ansi.Strip(colored) {
+		t.Errorf("expected stripped plain == stripped colored;\nplain:   %q\ncolored: %q", ansi.Strip(plain), ansi.Strip(colored))
+	}
+	// And plain must have no MORE escape codes than colored.
+	if len(plain) > len(ansi.Strip(plain)) && len(colored) <= len(ansi.Strip(colored)) {
+		t.Error("plain output has escape codes but colored output does not — unexpected")
 	}
 }
 

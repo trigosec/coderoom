@@ -75,6 +75,10 @@ Each participant cell renders as:
 <glyph> <alias> (<elapsed>)
 ```
 
+The entire cell (glyph, alias, and elapsed) is rendered in the participant's
+assigned colour. Cells for participants with no colour set are rendered in the
+default terminal colour.
+
 Examples:
 
 - Idle: `● ada`

@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	rw "github.com/mattn/go-runewidth"
 	"github.com/trigosec/coderoom/internal/participant"
 )
 
@@ -76,15 +78,26 @@ func padOrTruncateToWidth(s string, width int) string {
 	return out
 }
 
-func renderAliasCell(alias string) string {
-	if ansi.StringWidth(alias) > aliasMax {
-		// Best-effort ellipsis truncate.
-		runes := []rune(alias)
-		if len(runes) > 0 {
-			alias = string(runes[:max(aliasMax-1, 0)]) + "…"
-		}
+// truncateToWidth truncates s to at most maxW display columns, appending "…"
+// if truncation occurred.
+func truncateToWidth(s string, maxW int) string {
+	if ansi.StringWidth(s) <= maxW {
+		return s
 	}
-	return padOrTruncateToWidth(alias, aliasMax)
+	if maxW <= 1 {
+		return ""
+	}
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		cw := rw.RuneWidth(r)
+		if w+cw+1 > maxW { // reserve 1 column for the ellipsis
+			break
+		}
+		b.WriteRune(r)
+		w += cw
+	}
+	return b.String() + "…"
 }
 
 func cellWidth() int {
@@ -163,9 +176,18 @@ func renderCell(p participant.Participant, now time.Time, width int) string {
 		glyph = "●"
 	}
 
-	base := glyph + " " + renderAliasCell(p.Alias)
+	elapsed := ""
 	if showElapsed {
-		base += " (" + formatElapsed(now.Sub(p.Since)) + ")"
+		elapsed = " (" + formatElapsed(now.Sub(p.Since)) + ")"
 	}
-	return padOrTruncateToWidth(base, width)
+	// Reserve columns for glyph + separator + elapsed so truncation never
+	// bites into the elapsed suffix.
+	reserved := ansi.StringWidth(glyph) + 1 + ansi.StringWidth(elapsed)
+	aliasAvail := min(aliasMax, max(0, width-reserved))
+	base := glyph + " " + truncateToWidth(p.Alias, aliasAvail) + elapsed
+	cell := padOrTruncateToWidth(base, width)
+	if p.Color != "" {
+		cell = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Color)).Render(cell)
+	}
+	return cell
 }
