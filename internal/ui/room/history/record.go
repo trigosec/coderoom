@@ -110,12 +110,13 @@ func renderAgentOutput(r Record, width int, colors func(string) string) string {
 
 func renderRoutingFooter(aliases []string, colors func(string) string) string {
 	parts := make([]string, len(aliases))
+	indent := strings.Repeat(" ", ansi.StringWidth(promptPrefix))
 	for i, alias := range aliases {
 		color := colors(alias)
 		if color != "" {
-			parts[i] = routingArrow + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(alias)
+			parts[i] = indent + routingArrow + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(alias)
 		} else {
-			parts[i] = routingArrow + alias
+			parts[i] = indent + routingArrow + alias
 		}
 	}
 	return strings.Join(parts, "    ")

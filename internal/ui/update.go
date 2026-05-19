@@ -132,10 +132,6 @@ func (m Model) handleAgentLifecycleEvent(e session.Event) (Model, bool) {
 
 func (m Model) handleMessageEvent(e session.Event) Model {
 	switch e.Kind {
-	case session.KindBroadcast:
-		m.room = m.room.AppendSystem("[all] " + e.Text)
-	case session.KindSharedSend:
-		m.room = m.room.AppendSystem("[→ " + e.Alias + "] " + e.Text)
 	case session.KindSharedNotice:
 		m.room = m.room.AppendSystem("[notice → " + e.Alias + "]")
 	case session.KindAgentLog:

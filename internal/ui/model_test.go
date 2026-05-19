@@ -74,8 +74,6 @@ func TestHandleEvent_systemRecords(t *testing.T) {
 		event session.Event
 		want  string
 	}{
-		{"broadcast", session.Event{Kind: session.KindBroadcast, Text: "hello"}, "[all] hello"},
-		{"sharedSend", session.Event{Kind: session.KindSharedSend, Alias: "ada", Text: "do it"}, "[→ ada] do it"},
 		{"sharedNotice", session.Event{Kind: session.KindSharedNotice, Alias: "ada"}, "[notice → ada]"},
 	}
 	for _, tt := range tests {
@@ -86,6 +84,20 @@ func TestHandleEvent_systemRecords(t *testing.T) {
 				t.Errorf("expected system record %q; records: %v", tt.want, m.room.HistoryRecords())
 			}
 		})
+	}
+}
+
+func TestHandleEvent_broadcastAndSharedSendProduceNoSystemRecord(t *testing.T) {
+	events := []session.Event{
+		{Kind: session.KindBroadcast, Text: "hello"},
+		{Kind: session.KindSharedSend, Alias: "ada", Text: "do it"},
+	}
+	for _, e := range events {
+		m := makeReadyModel(t)
+		m = pushEvent(m, e)
+		if len(m.room.HistoryRecords()) != 0 {
+			t.Errorf("expected no system record for %v; got %v", e.Kind, m.room.HistoryRecords())
+		}
 	}
 }
 
