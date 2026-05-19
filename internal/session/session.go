@@ -256,6 +256,10 @@ func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
 		s.handleAgentLog(alias, msg.Text)
 	case agent.MessageDelta:
 		s.handleAgentDelta(alias, msg.Text)
+	case agent.MessageReasoning:
+		s.handleAgentReasoning(alias, msg.Text)
+	case agent.MessageReasoningContinue:
+		s.notify(Event{Kind: KindReasoningContinue, Alias: alias})
 	case agent.MessageDone:
 		s.handleAgentDone(alias)
 	}
@@ -278,6 +282,18 @@ func (s *Session) handleAgentDelta(alias string, text string) {
 		}
 	})
 	s.notify(Event{Kind: KindDelta, Alias: alias, Text: text})
+}
+
+func (s *Session) handleAgentReasoning(alias string, text string) {
+	if text == "" {
+		return
+	}
+	s.withParticipant(alias, func(p *participant.Participant) {
+		if p.Status != participant.StatusWorking {
+			p.MarkWorking(s.now())
+		}
+	})
+	s.notify(Event{Kind: KindReasoningDelta, Alias: alias, Text: text})
 }
 
 func (s *Session) handleAgentDone(alias string) {

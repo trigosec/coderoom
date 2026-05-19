@@ -95,6 +95,12 @@ func WithContext(ctx context.Context) Option {
 	}
 }
 
+// WithModel sets the model Codex will use (e.g. "o3-mini"). If not set, Codex
+// uses its default model.
+func WithModel(model string) Option {
+	return func(c *Client) { c.proc.model = model }
+}
+
 // WithAskForApprovalPolicy configures Codex's command approval policy.
 // See `codex --help` for possible values (e.g. "untrusted", "on-request", "never").
 // Use `AskDefault` to omit the flag and let Codex choose.

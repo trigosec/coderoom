@@ -92,10 +92,44 @@ func (m Model) MarkDeparted(alias string) Model {
 	return m.syncViewport()
 }
 
-// ClearStreaming removes alias from the active-streaming set.
+// HandleReasoningDelta appends or extends the reasoning streaming record for alias.
+func (m Model) HandleReasoningDelta(alias, text string) Model {
+	wasAtBottom := m.viewport.AtBottom()
+	if idx, ok := m.reasoningStreaming[alias]; ok {
+		m.records[idx].Body += text
+		m.renderedRecords[idx] = renderRecord(m.records[idx], m.viewport.Width, m.resolveColor)
+	} else {
+		idx = len(m.records)
+		m.reasoningStreaming[alias] = idx
+		r := Record{Kind: RecordKindReasoning, Alias: alias, Body: text}
+		m.records = append(m.records, r)
+		m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
+	}
+	m = m.syncViewport()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
+// ClearStreaming removes alias from both active-streaming sets.
 func (m Model) ClearStreaming(alias string) Model {
 	delete(m.streaming, alias)
+	delete(m.reasoningStreaming, alias)
 	return m
+}
+
+// ClearReasoningStreaming seals the open reasoning record for alias without
+// affecting the output streaming slot or participant status.
+func (m Model) ClearReasoningStreaming(alias string) Model {
+	delete(m.reasoningStreaming, alias)
+	return m
+}
+
+// IsReasoningStreaming reports whether alias currently has an open reasoning record.
+func (m Model) IsReasoningStreaming(alias string) bool {
+	_, ok := m.reasoningStreaming[alias]
+	return ok
 }
 
 // Update forwards the message to the viewport (handles mouse scroll, etc.).

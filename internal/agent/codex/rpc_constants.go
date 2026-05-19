@@ -11,6 +11,10 @@ const (
 
 	methodAgentDelta = "item/agentMessage/delta"
 
+	methodReasoningTextDelta        = "item/reasoning/textDelta"
+	methodReasoningSummaryTextDelta = "item/reasoning/summaryTextDelta"
+	methodReasoningSummaryPartAdded = "item/reasoning/summaryPartAdded"
+
 	methodCommandExecutionRequestApproval = "item/commandExecution/requestApproval"
 	methodFileChangeRequestApproval       = "item/fileChange/requestApproval"
 	methodPermissionsRequestApproval      = "item/permissions/requestApproval"

@@ -87,7 +87,11 @@ func rpcHandshake(c *Client) (string, error) {
 		return "", err
 	}
 
-	if err := rpcWrite(c, methodThreadStart, threadStartParams{Cwd: c.proc.cwd}); err != nil {
+	tsParams := threadStartParams{Cwd: c.proc.cwd}
+	if c.proc.model != "" {
+		tsParams.Model = &c.proc.model
+	}
+	if err := rpcWrite(c, methodThreadStart, tsParams); err != nil {
 		return "", err
 	}
 	raw, err := readResponse(c)

@@ -107,6 +107,11 @@ func (m Model) HistoryHeight() int { return m.history.Height() }
 // IsStreaming reports whether alias currently has an open turn.
 func (m Model) IsStreaming(alias string) bool { return m.history.IsStreaming(alias) }
 
+// IsReasoningStreaming reports whether alias currently has an open reasoning record.
+func (m Model) IsReasoningStreaming(alias string) bool {
+	return m.history.IsReasoningStreaming(alias)
+}
+
 // StreamingIdx returns the record index for the given streaming alias.
 func (m Model) StreamingIdx(alias string) (int, bool) { return m.history.StreamingIdx(alias) }
 
@@ -206,6 +211,19 @@ func (m Model) AppendLog(alias, text string) Model {
 // HandleDelta appends streaming output for alias.
 func (m Model) HandleDelta(alias, text string) Model {
 	m.history = m.history.HandleDelta(alias, text)
+	return m
+}
+
+// HandleReasoningDelta appends a streaming reasoning fragment for alias.
+func (m Model) HandleReasoningDelta(alias, text string) Model {
+	m.history = m.history.HandleReasoningDelta(alias, text)
+	return m
+}
+
+// HandleReasoningContinue seals the open reasoning record for alias so the
+// next delta opens a fresh one.
+func (m Model) HandleReasoningContinue(alias string) Model {
+	m.history = m.history.ClearReasoningStreaming(alias)
 	return m
 }
 

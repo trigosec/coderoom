@@ -11,11 +11,13 @@ const (
 	KindAgentCrashed  Kind = "agent.crashed"
 	KindAgentLog      Kind = "agent.log" // diagnostic line from the agent process (e.g. stderr)
 
-	KindBroadcast    Kind = "message.broadcast" // message to all agents
-	KindSharedSend   Kind = "message.shared"    // instruction to one agent, visible to all
-	KindSharedNotice Kind = "message.notice"    // context notice forwarded to a listener
-	KindDelta        Kind = "message.delta"     // streaming text fragment
-	KindDone         Kind = "message.done"      // turn complete
+	KindBroadcast         Kind = "message.broadcast"          // message to all agents
+	KindSharedSend        Kind = "message.shared"             // instruction to one agent, visible to all
+	KindSharedNotice      Kind = "message.notice"             // context notice forwarded to a listener
+	KindDelta             Kind = "message.delta"              // streaming text fragment
+	KindReasoningDelta    Kind = "message.reasoning"          // streaming reasoning fragment
+	KindReasoningContinue Kind = "message.reasoning.continue" // reasoning record boundary; seal current, next delta opens fresh
+	KindDone              Kind = "message.done"               // turn complete
 )
 
 // Event is a runtime notification emitted by the session controller.

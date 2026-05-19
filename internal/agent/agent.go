@@ -24,6 +24,12 @@ const (
 	MessageDone MessageKind = "done" // final message of a turn
 	// MessageLog is a diagnostic line from the agent process (e.g. stderr).
 	MessageLog MessageKind = "log" // diagnostic line from the agent process (e.g. stderr)
+	// MessageReasoning is a streaming fragment of the agent's reasoning (raw or summary).
+	MessageReasoning MessageKind = "reasoning"
+	// MessageReasoningContinue signals a boundary between reasoning summary parts.
+	// The current open reasoning record should be sealed; the next delta opens a
+	// fresh one. No status change implied.
+	MessageReasoningContinue MessageKind = "reasoning.continue"
 )
 
 // Message is a semantic unit of output from an agent turn.

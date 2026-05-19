@@ -18,6 +18,7 @@ type process struct {
 
 	askForApproval AskForApprovalPolicy
 	sandboxMode    SandboxMode
+	model          string
 }
 
 func newProc(cwd string) *process {

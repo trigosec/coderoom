@@ -241,6 +241,64 @@ func TestMarkDeparted_greyRepaintOnCrash(t *testing.T) {
 	}
 }
 
+// --- reasoning streaming ---
+
+func TestHandleReasoningDelta_firstDeltaCreatesRecord(t *testing.T) {
+	m := makeReadyModel(t)
+	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: "let me think"})
+	recs := m.room.HistoryRecords()
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(recs))
+	}
+	if recs[0].Kind != history.RecordKindReasoning {
+		t.Errorf("expected reasoning record, got kind %d", recs[0].Kind)
+	}
+	if recs[0].Body != "let me think" {
+		t.Errorf("expected body 'let me think', got %q", recs[0].Body)
+	}
+	if !m.room.IsReasoningStreaming("ada") {
+		t.Error("expected ada to be reasoning-streaming")
+	}
+}
+
+func TestHandleReasoningDelta_appendsInPlace(t *testing.T) {
+	m := makeReadyModel(t)
+	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: "step 1"})
+	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: " step 2"})
+	recs := m.room.HistoryRecords()
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 record (in-place append), got %d", len(recs))
+	}
+	if recs[0].Body != "step 1 step 2" {
+		t.Errorf("expected body 'step 1 step 2', got %q", recs[0].Body)
+	}
+}
+
+func TestHandleReasoningDelta_independentOfOutputStreaming(t *testing.T) {
+	m := makeReadyModel(t)
+	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: "thinking"})
+	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "responding"})
+	recs := m.room.HistoryRecords()
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 records (reasoning + output), got %d", len(recs))
+	}
+	if recs[0].Kind != history.RecordKindReasoning {
+		t.Errorf("expected first record to be reasoning, got kind %d", recs[0].Kind)
+	}
+	if recs[1].Kind != history.RecordKindAgentOutput {
+		t.Errorf("expected second record to be agent output, got kind %d", recs[1].Kind)
+	}
+}
+
+func TestKindDone_clearsReasoningStreaming(t *testing.T) {
+	m := makeReadyModel(t)
+	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: "thinking"})
+	m = pushEvent(m, session.Event{Kind: session.KindDone, Alias: "ada"})
+	if m.room.IsReasoningStreaming("ada") {
+		t.Error("expected reasoning streaming to be cleared after KindDone")
+	}
+}
+
 // --- streaming cleanup ---
 
 func TestStreamingCleared_onStop(t *testing.T) {

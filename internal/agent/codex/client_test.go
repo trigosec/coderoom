@@ -50,6 +50,17 @@ func TestCodexArgs_override(t *testing.T) {
 	}
 }
 
+func TestCodexArgs_modelNotInArgs(t *testing.T) {
+	// Model is passed via thread/start JSON params, not as a CLI flag.
+	t.Setenv("CODEX_VERSION_OVERRIDE", "")
+	args := codexArgs("", "")
+	for _, a := range args {
+		if a == "--model" {
+			t.Errorf("--model must not appear in CLI args, got %v", args)
+		}
+	}
+}
+
 func TestRead_turnCompleted(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/completed\",\"params\":{}}\n")
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
@@ -73,6 +84,47 @@ func TestRead_delta(t *testing.T) {
 	}
 	if msg.Kind != agent.MessageDelta || msg.Text != "hello" {
 		t.Errorf("expected delta %q, got kind=%q text=%q", "hello", msg.Kind, msg.Text)
+	}
+}
+
+func TestRead_reasoningTextDelta(t *testing.T) {
+	stdout := bytes.NewBufferString("{\"method\":\"item/reasoning/textDelta\",\"params\":{\"delta\":\"let me think\",\"contentIndex\":0,\"itemId\":\"i1\",\"threadId\":\"t1\",\"turnId\":\"u1\"}}\n")
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Kind != agent.MessageReasoning || msg.Text != "let me think" {
+		t.Errorf("expected reasoning %q, got kind=%q text=%q", "let me think", msg.Kind, msg.Text)
+	}
+}
+
+func TestRead_reasoningSummaryTextDelta(t *testing.T) {
+	stdout := bytes.NewBufferString("{\"method\":\"item/reasoning/summaryTextDelta\",\"params\":{\"delta\":\"summary fragment\",\"summaryIndex\":0,\"itemId\":\"i1\",\"threadId\":\"t1\",\"turnId\":\"u1\"}}\n")
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Kind != agent.MessageReasoning || msg.Text != "summary fragment" {
+		t.Errorf("expected reasoning %q, got kind=%q text=%q", "summary fragment", msg.Kind, msg.Text)
+	}
+}
+
+func TestRead_reasoningSummaryPartAdded_continue(t *testing.T) {
+	stdout := bytes.NewBufferString(
+		"{\"method\":\"item/reasoning/summaryPartAdded\",\"params\":{\"summaryIndex\":0,\"itemId\":\"i1\",\"threadId\":\"t1\",\"turnId\":\"u1\"}}\n",
+	)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Kind != agent.MessageReasoningContinue {
+		t.Errorf("expected MessageReasoningContinue, got %q", msg.Kind)
 	}
 }
 

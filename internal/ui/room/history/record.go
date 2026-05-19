@@ -18,6 +18,7 @@ const (
 	RecordKindAgentOutput                   // streaming response from an agent
 	RecordKindSystem                        // lifecycle and routing notices
 	RecordKindLog                           // agent diagnostic line (stderr)
+	RecordKindReasoning                     // streaming internal reasoning trace from an agent
 )
 
 // Record is a single displayable entry in the conversation history.
@@ -35,10 +36,11 @@ var (
 )
 
 const (
-	promptPrefix = "❯ "
-	logPrefix    = "▸ "
-	agentBullet  = "● "
-	routingArrow = "→ "
+	promptPrefix    = "❯ "
+	logPrefix       = "▸ "
+	agentBullet     = "● "
+	reasoningBullet = "◈ "
+	routingArrow    = "→ "
 )
 
 func renderRecord(r Record, width int, colors func(string) string) string {
@@ -51,6 +53,8 @@ func renderRecord(r Record, width int, colors func(string) string) string {
 		return systemStyle.Render(ansi.Wrap(r.Body, width, ""))
 	case RecordKindLog:
 		return logStyle.Render(renderLogBody(r.Body, width))
+	case RecordKindReasoning:
+		return renderReasoning(r, width, colors)
 	}
 	return r.Body
 }
@@ -106,6 +110,22 @@ func renderAgentOutput(r Record, width int, colors func(string) string) string {
 	}
 	body := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
 	return header + "\n\n" + body
+}
+
+func renderReasoning(r Record, width int, colors func(string) string) string {
+	color := colors(r.Alias)
+	var style lipgloss.Style
+	if color != "" {
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Faint(true)
+	} else {
+		style = lipgloss.NewStyle().Faint(true)
+	}
+	header := style.Render(reasoningBullet + r.Alias + " (thinking)")
+	if r.Body == "" {
+		return header
+	}
+	body := wrapLine(agentBodyIndent+r.Body, width, agentBodyIndent)
+	return header + "\n\n" + style.Render(body)
 }
 
 func renderRoutingFooter(aliases []string, colors func(string) string) string {

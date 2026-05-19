@@ -6,15 +6,16 @@ import (
 
 // Model holds the conversation record list and its viewport.
 type Model struct {
-	viewport        viewport.Model
-	records         []Record
-	renderedRecords []string
-	streaming       map[string]int
-	departed        map[string]bool
-	debugRowNums    bool
-	ready           bool
-	colorByAlias    func(string) string
-	departedColor   string
+	viewport           viewport.Model
+	records            []Record
+	renderedRecords    []string
+	streaming          map[string]int // alias → index of open RecordKindAgentOutput
+	reasoningStreaming map[string]int // alias → index of open RecordKindReasoning
+	departed           map[string]bool
+	debugRowNums       bool
+	ready              bool
+	colorByAlias       func(string) string
+	departedColor      string
 }
 
 // New returns an uninitialised Model; call SetSize before first use.
@@ -22,12 +23,13 @@ type Model struct {
 // departedColor is applied to records belonging to agents that have left.
 func New(colorByAlias func(string) string, departedColor string) Model {
 	return Model{
-		records:         []Record{},
-		renderedRecords: []string{},
-		streaming:       make(map[string]int),
-		departed:        make(map[string]bool),
-		colorByAlias:    colorByAlias,
-		departedColor:   departedColor,
+		records:            []Record{},
+		renderedRecords:    []string{},
+		streaming:          make(map[string]int),
+		reasoningStreaming: make(map[string]int),
+		departed:           make(map[string]bool),
+		colorByAlias:       colorByAlias,
+		departedColor:      departedColor,
 	}
 }
 

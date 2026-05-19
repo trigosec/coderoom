@@ -138,6 +138,10 @@ func (m Model) handleMessageEvent(e session.Event) Model {
 		m.room = m.room.AppendLog(e.Alias, e.Text)
 	case session.KindDelta:
 		m.room = m.room.HandleDelta(e.Alias, e.Text)
+	case session.KindReasoningDelta:
+		m.room = m.room.HandleReasoningDelta(e.Alias, e.Text)
+	case session.KindReasoningContinue:
+		m.room = m.room.HandleReasoningContinue(e.Alias)
 	case session.KindDone:
 		m.room = m.room.HandleDone(e.Alias)
 	default:

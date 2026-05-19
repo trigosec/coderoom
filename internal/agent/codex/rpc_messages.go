@@ -18,6 +18,14 @@ func messageFromEnvelope(msg rpcEnvelope) (agent.Message, bool, error) {
 			return agent.Message{}, false, fmt.Errorf("parse delta params: %w", err)
 		}
 		return agent.Message{Kind: agent.MessageDelta, Text: p.Delta}, true, nil
+	case methodReasoningTextDelta, methodReasoningSummaryTextDelta:
+		var p deltaParams
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			return agent.Message{}, false, fmt.Errorf("parse reasoning delta params: %w", err)
+		}
+		return agent.Message{Kind: agent.MessageReasoning, Text: p.Delta}, true, nil
+	case methodReasoningSummaryPartAdded:
+		return agent.Message{Kind: agent.MessageReasoningContinue}, true, nil
 	case methodTurnCompleted:
 		return agent.Message{Kind: agent.MessageDone}, true, nil
 	case methodTurnFailed:
