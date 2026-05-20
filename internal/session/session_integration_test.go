@@ -73,8 +73,11 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	}
 	drainUntil(t, events, session.KindAgentStarted, 10*time.Second)
 
-	if err := s.Execute(session.BroadcastCommand{Text: "What is 2+2? Reply with just the number."}); err != nil {
-		t.Fatalf("broadcast: %v", err)
+	if err := s.Execute(session.SharedSendCommand{
+		Alias:      "ada",
+		TextDirect: "What is 2+2? Reply with just the number.",
+	}); err != nil {
+		t.Fatalf("shared send: %v", err)
 	}
 	drainUntil(t, events, session.KindDone, 60*time.Second)
 

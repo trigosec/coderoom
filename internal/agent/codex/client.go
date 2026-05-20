@@ -6,6 +6,7 @@ package codex
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +52,12 @@ type Client struct {
 		listener agent.ApprovalListener
 		inbox    chan approvalRequest
 		bufInbox chan approvalRequest
+	}
+
+	notice struct {
+		mu    sync.Mutex
+		state noticeState
+		buf   strings.Builder
 	}
 
 	lifecycle struct {
@@ -233,6 +240,41 @@ func (c *Client) Send(prompt string) error {
 		c.turn.mu.Lock()
 		c.turn.state = turnState{kind: turnIdle}
 		c.turn.mu.Unlock()
+	}
+	return err
+}
+
+// SendNotice delivers context to the agent without expecting a substantive
+// response. The prompt is wrapped with a CONTEXT UPDATE prefix instructing the
+// model to return only {"acknowledge":true}. Any JSON response containing
+// "acknowledge":true is silently discarded; other responses surface as reasoning.
+func (c *Client) SendNotice(prompt string) error {
+	c.turn.mu.Lock()
+	if c.turn.state.kind != turnIdle {
+		c.turn.mu.Unlock()
+		return agent.ErrTurnInProgress
+	}
+	c.turn.state = turnState{kind: turnInflightUnknownID}
+	threadID := c.turn.threadID
+	c.turn.mu.Unlock()
+
+	c.notice.mu.Lock()
+	c.notice.state = noticePending
+	c.notice.buf.Reset()
+	c.notice.mu.Unlock()
+
+	err := rpcWrite(c, methodTurnStart, turnStartParams{
+		ThreadID:     threadID,
+		Input:        []turnInput{{Type: "text", Text: noticeContextPrefix + prompt}},
+		OutputSchema: noticeOutputSchema,
+	})
+	if err != nil {
+		c.turn.mu.Lock()
+		c.turn.state = turnState{kind: turnIdle}
+		c.turn.mu.Unlock()
+		c.notice.mu.Lock()
+		c.notice.state = noticeIdle
+		c.notice.mu.Unlock()
 	}
 	return err
 }

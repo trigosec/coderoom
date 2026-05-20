@@ -94,9 +94,8 @@ func (c CancelCommand) execute(s *Session) error {
 	return nil
 }
 
-// BroadcastCommand sends a message to the shared room and to all agents.
-// All agents receive the broadcast; initiative governs whether they may
-// take action without being explicitly addressed.
+// BroadcastCommand delivers context to all agents without expecting a response.
+// Every participant receives a SendNotice so the message is silently acknowledged.
 type BroadcastCommand struct {
 	Text string
 }
@@ -105,7 +104,7 @@ func (c BroadcastCommand) execute(s *Session) error {
 	s.notify(Event{Kind: KindBroadcast, Text: c.Text})
 	var errs []error
 	for _, p := range s.RoutableParticipants() {
-		if err := p.Agent.Send(c.Text); err != nil {
+		if err := p.Agent.SendNotice(c.Text); err != nil {
 			errs = append(errs, fmt.Errorf("broadcast to %q: %w", p.Alias, err))
 		}
 	}
@@ -146,7 +145,7 @@ func (c SharedSendCommand) execute(s *Session) error {
 		if other.Alias == c.Alias {
 			continue
 		}
-		if err := other.Agent.Send(c.TextListeners); err != nil {
+		if err := other.Agent.SendNotice(c.TextListeners); err != nil {
 			errs = append(errs, fmt.Errorf("notice to %q: %w", other.Alias, err))
 			continue
 		}

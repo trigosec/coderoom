@@ -32,8 +32,9 @@ type threadStartResult struct {
 }
 
 type turnStartParams struct {
-	ThreadID string      `json:"threadId"`
-	Input    []turnInput `json:"input"`
+	ThreadID     string          `json:"threadId"`
+	Input        []turnInput     `json:"input"`
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 }
 
 type turnInput struct {

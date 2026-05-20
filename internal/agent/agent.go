@@ -45,6 +45,11 @@ type Agent interface {
 	// Send writes a prompt to the agent and returns immediately.
 	// Events arrive via Read().
 	Send(prompt string) error
+	// SendNotice delivers context to the agent without expecting a substantive
+	// response. Implementations are responsible for instructing the model to
+	// acknowledge with a minimal signal and suppressing the acknowledgment from
+	// Read(). Non-compliant responses surface as reasoning rather than output.
+	SendNotice(prompt string) error
 	// Read blocks until the next meaningful message arrives from the agent.
 	// Returns an error if the process has exited or the turn has failed.
 	Read() (Message, error)

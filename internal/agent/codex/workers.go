@@ -89,6 +89,13 @@ func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool 
 		}
 	}
 	c.updateTurnState(msg.Method, started)
+	switch c.interceptNotice(ctx, msg) {
+	case noticeContinue:
+		return true
+	case noticeExit:
+		return false
+	case noticeUnhandled:
+	}
 	agentMsg, ok, err := messageFromEnvelope(msg)
 	if err != nil {
 		readMsg := readMessage{err: err}

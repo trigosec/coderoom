@@ -50,6 +50,12 @@ func (m *mockAgent) Send(text string) error {
 	m.mu.Unlock()
 	return m.sendErr
 }
+func (m *mockAgent) SendNotice(text string) error {
+	m.mu.Lock()
+	m.sends = append(m.sends, text)
+	m.mu.Unlock()
+	return m.sendErr
+}
 func (m *mockAgent) Read() (agent.Message, error) {
 	msg, ok := <-m.ch
 	if !ok {

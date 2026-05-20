@@ -12,6 +12,7 @@ type fakeAgent struct{}
 
 func (fakeAgent) Start() error                 { return nil }
 func (fakeAgent) Send(string) error            { return nil }
+func (fakeAgent) SendNotice(string) error      { return nil }
 func (fakeAgent) Read() (agent.Message, error) { return agent.Message{}, errors.New("no messages") }
 func (fakeAgent) Interrupt() error             { return nil }
 func (fakeAgent) Stop() error                  { return nil }

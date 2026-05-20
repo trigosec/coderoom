@@ -5,7 +5,7 @@ receive a listener notice via `TextListeners`. The problem: LLMs treat every
 message as a prompt and respond with a full turn. Listener agents should receive
 context silently — they should not produce output unless explicitly addressed.
 
-Status: design (not yet implemented).
+Status: implemented (Codex adapter); other backends TBD.
 
 ---
 
@@ -91,27 +91,20 @@ reliability warrants it.
 
 ## Codex adapter internals
 
-### Turn ID tracking
+### Single in-flight turn invariant
 
-When `SendNotice` writes a `turn/start` request, it records the request's RPC ID
-in a `pendingNoticeReqs` set. The `turn/start` response carries the `turnId`
-assigned by Codex. When that response is received in the read loop, the turn ID
-is moved from `pendingNoticeReqs` into a `noticeTurnIDs` set. All subsequent
-processing for that `turnId` is subject to acknowledgment filtering.
+The Codex adapter enforces that only one turn is in flight at a time (a second
+`Send*` call returns `agent.ErrTurnInProgress`). Because there is never more than
+one active turn, notice filtering does not need to track `turnId`: the notice
+state machine attaches to "the currently running turn".
 
-```
-SendNotice → writes turn/start with id=N
-           → pendingNoticeReqs[N] = true
-
-read loop: sees response {id:N, result:{turnId:"t42"}}
-         → delete pendingNoticeReqs[N]
-         → noticeTurnIDs["t42"] = true
-```
+If the adapter ever supports multiple concurrent turns, the notice filter would
+need to become per-turn and be keyed by `turnId` (or request id) to avoid
+cross-talk.
 
 ### Buffering and the `{` heuristic
 
-For a turn whose ID is in `noticeTurnIDs`, the read loop inspects deltas before
-queuing them:
+When a notice turn is active, the read loop inspects deltas before queuing them:
 
 1. If no buffering is active for this turn and the first non-whitespace character
    of the delta is **not** `{`: the turn is treated as non-compliant immediately.
@@ -123,8 +116,12 @@ queuing them:
 
 3. On `turn/completed` for a buffered turn: evaluate the buffer (see below).
 
-4. On `turn/failed` or read error during a buffered or relaying notice turn:
-   discard the buffer; emit nothing. The turn is gone.
+4. On `turn/failed` during a buffered notice turn: discard the buffer; emit
+   nothing. The turn is gone.
+
+   On `turn/failed` during a relaying notice turn: emit `MessageDone` after the
+   already-relayed reasoning deltas. This prevents the participant from getting
+   stuck in `working` (since a reasoning delta transitions status to working).
 
 ### Acknowledgment check
 
@@ -137,7 +134,6 @@ type ackResponse struct {
 var r ackResponse
 if err := json.Unmarshal([]byte(buf), &r); err == nil && r.Acknowledge {
     // compliant — discard silently; do not emit MessageDone
-    delete(noticeTurnIDs, turnID)
     return
 }
 // non-compliant — fall through to relay
@@ -146,7 +142,8 @@ if err := json.Unmarshal([]byte(buf), &r); err == nil && r.Acknowledge {
 Any JSON response containing `"acknowledge": true` is treated as compliant and
 discarded, regardless of other fields present. `json.Unmarshal` into a struct
 silently ignores unknown fields; this is the intended behaviour, not a bug.
-No `MessageDone` is emitted; the participant never transitions to `working`.
+For a compliant ack, no `MessageDone` is emitted and the adapter emits no
+messages at all, so the participant never transitions to `working`.
 
 ### Non-compliant relay
 
@@ -163,10 +160,17 @@ the shared room as a faint `◈ alias (thinking)` reasoning record, not as a mai
 agent response. This reflects the semantic reality: the agent responded to a
 context update it was not asked to act on.
 
+### Malformed deltas
+
+If a delta notification cannot be parsed, the adapter ignores it for notice
+filtering purposes. The goal is to keep listener notices from breaking the main
+read loop; the notice turn will still be completed/failed by the normal lifecycle
+notifications.
+
 ### State cleanup
 
-`noticeTurnIDs` entries are removed when the turn completes (compliant or not) or
-when the process stops. Entries do not accumulate across turns.
+The notice filter state and its buffer are reset when the notice turn completes
+(compliant or not) or fails. State does not accumulate across turns.
 
 ---
 
@@ -176,7 +180,7 @@ when the process stops. Entries do not accumulate across turns.
 
 ```
 SendNotice("...")  →  turn/start{id:1} → Codex
-                   ←  response{id:1, turnId:"t1"}
+                   ←  turn/started{turnId:"t1"}
                    ←  item/agentMessage/delta '{'
                    ←  item/agentMessage/delta '"acknowledge":true}'
                    ←  turn/completed{turnId:"t1"}
@@ -188,7 +192,7 @@ Read() callers: nothing emitted
 
 ```
 SendNotice("...")  →  turn/start{id:1} → Codex
-                   ←  response{id:1, turnId:"t1"}
+                   ←  turn/started{turnId:"t1"}
                    ←  item/agentMessage/delta 'I think...'
                    ←  item/agentMessage/delta ' the code looks fine.'
                    ←  turn/completed{turnId:"t1"}
