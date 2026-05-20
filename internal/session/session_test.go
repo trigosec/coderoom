@@ -306,6 +306,57 @@ func TestBroadcast_emitsAndSendsToAllAgents(t *testing.T) {
 		}
 		a.mu.Unlock()
 	}
+
+	for _, alias := range []string{"ada", "turing"} {
+		p, ok := s.Participant(alias)
+		if !ok {
+			t.Fatalf("expected participant %q", alias)
+		}
+		if p.Status != participant.StatusWorking {
+			t.Fatalf("expected %q status %q, got %q", alias, participant.StatusWorking, p.Status)
+		}
+	}
+}
+
+func TestBroadcast_sendError_doesNotMarkWorking(t *testing.T) {
+	obs := newTestObserver()
+	a1 := newMockAgent()
+	a1.sendErr = errors.New("send failed")
+	a2 := newMockAgent()
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    a1,
+		"turing": a2,
+	}))
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.BroadcastCommand{Text: "hello"}); err == nil {
+		t.Fatal("expected broadcast error, got nil")
+	}
+	mustReceive(t, obs.ch, session.KindBroadcast)
+
+	p, ok := s.Participant("ada")
+	if !ok {
+		t.Fatal("expected participant ada")
+	}
+	if p.Status == participant.StatusWorking {
+		t.Fatalf("expected ada not to be marked %q on send error", participant.StatusWorking)
+	}
+
+	p, ok = s.Participant("turing")
+	if !ok {
+		t.Fatal("expected participant turing")
+	}
+	if p.Status != participant.StatusWorking {
+		t.Fatalf("expected turing status %q, got %q", participant.StatusWorking, p.Status)
+	}
 }
 
 func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
@@ -349,6 +400,47 @@ func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 		t.Errorf("other agent did not receive context notice")
 	}
 	turing.mu.Unlock()
+}
+
+func TestSharedSend_sendError_doesNotMarkWorking(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	ada.sendErr = errors.New("send failed")
+	turing := newMockAgent()
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    ada,
+		"turing": turing,
+	}))
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
+	if err == nil {
+		t.Fatal("expected shared send error, got nil")
+	}
+
+	p, ok := s.Participant("ada")
+	if !ok {
+		t.Fatal("expected participant ada")
+	}
+	if p.Status == participant.StatusWorking {
+		t.Fatalf("expected ada not to be marked %q on send error", participant.StatusWorking)
+	}
+
+	p, ok = s.Participant("turing")
+	if !ok {
+		t.Fatal("expected participant turing")
+	}
+	if p.Status == participant.StatusWorking {
+		t.Fatalf("expected turing not to be marked %q on send error", participant.StatusWorking)
+	}
 }
 
 func TestSharedSend_notFound(t *testing.T) {

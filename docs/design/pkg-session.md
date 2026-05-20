@@ -53,8 +53,7 @@ type RemoveCommand struct {
 }
 
 // BroadcastCommand sends a message to the shared room and to all agents.
-// All agents receive the broadcast; initiative governs whether they may
-// take action without being explicitly addressed.
+// A broadcast is explicitly addressed to all agents (it is a real `Send` to each).
 type BroadcastCommand struct {
     Text string
 }

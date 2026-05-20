@@ -11,7 +11,7 @@ Status: implemented (Codex adapter); other backends TBD.
 
 ## Goals
 
-- Listener agents receive broadcast context without generating visible output.
+- Listener agents receive notice context without generating visible output.
 - Non-compliant responses (agent ignores the instruction) surface as reasoning
   records rather than main agent output, and do not go unnoticed.
 - The filtering logic lives entirely inside the codex adapter. The session and TUI
@@ -226,5 +226,6 @@ contract.
   whitespace before testing the character. No special case needed.
 - **`BroadcastCommand` and initiative**: a broadcast goes to all agents as a real
   `Send`, not `SendNotice`. Agents with `InitiativeManual` should not respond to
-  broadcasts not addressed to them — that is a routing concern, not a notice
-  concern, and is deferred to the router design.
+  unsolicited prompts; a broadcast is explicitly addressed to everyone, so it is
+  expected to elicit responses. If this is too noisy, introduce an explicit
+  notice-style broadcast command rather than overloading `SendNotice`.

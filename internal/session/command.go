@@ -94,8 +94,7 @@ func (c CancelCommand) execute(s *Session) error {
 	return nil
 }
 
-// BroadcastCommand delivers context to all agents without expecting a response.
-// Every participant receives a SendNotice so the message is silently acknowledged.
+// BroadcastCommand sends a message to all agents.
 type BroadcastCommand struct {
 	Text string
 }
@@ -104,9 +103,13 @@ func (c BroadcastCommand) execute(s *Session) error {
 	s.notify(Event{Kind: KindBroadcast, Text: c.Text})
 	var errs []error
 	for _, p := range s.RoutableParticipants() {
-		if err := p.Agent.SendNotice(c.Text); err != nil {
+		if err := p.Agent.Send(c.Text); err != nil {
 			errs = append(errs, fmt.Errorf("broadcast to %q: %w", p.Alias, err))
+			continue
 		}
+		s.withParticipant(p.Alias, func(p *participant.Participant) {
+			p.MarkWorking(s.now())
+		})
 	}
 	return errors.Join(errs...)
 }
@@ -129,7 +132,6 @@ func (c SharedSendCommand) execute(s *Session) error {
 			return
 		}
 		a = p.Agent
-		p.MarkWorking(s.now())
 	}); !ok {
 		return fmt.Errorf("participant %q not found", c.Alias)
 	}
@@ -139,6 +141,9 @@ func (c SharedSendCommand) execute(s *Session) error {
 	if err := a.Send(c.TextDirect); err != nil {
 		return fmt.Errorf("send to %q: %w", c.Alias, err)
 	}
+	s.withParticipant(c.Alias, func(p *participant.Participant) {
+		p.MarkWorking(s.now())
+	})
 	s.notify(Event{Kind: KindSharedSend, Alias: c.Alias, Text: c.TextDirect})
 	var errs []error
 	for _, other := range s.RoutableParticipants() {
