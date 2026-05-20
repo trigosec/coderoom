@@ -1,6 +1,11 @@
 package history
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 func TestResolveColor_activeReturnsFromLookup(t *testing.T) {
 	m := New(func(alias string) string {
@@ -29,5 +34,30 @@ func TestResolveColor_departedTakesPrecedenceOverActive(t *testing.T) {
 	m = m.MarkDeparted("ada")
 	if got := m.resolveColor("ada"); got != grey {
 		t.Errorf("want departed color %q, got %q", grey, got)
+	}
+}
+
+func TestJoinRenderedForViewport_insertsBlankLineBetweenNonSystemRecords(t *testing.T) {
+	out := joinRenderedForViewport([]Record{
+		{Kind: RecordKindUserInput},
+		{Kind: RecordKindAgentOutput},
+	}, []string{"a", "b"})
+	if strings.Count(out, "\n") != 2 {
+		t.Fatalf("expected 2 newlines between non-system records, got %d (%q)", strings.Count(out, "\n"), out)
+	}
+	if ansi.Strip(out) != "a\n\nb" {
+		t.Fatalf("unexpected joined output: %q", ansi.Strip(out))
+	}
+}
+
+func TestJoinRenderedForViewport_systemRecordsStayCompact(t *testing.T) {
+	out := joinRenderedForViewport([]Record{
+		{Kind: RecordKindUserInput},
+		{Kind: RecordKindSystem},
+		{Kind: RecordKindSystem},
+		{Kind: RecordKindAgentOutput},
+	}, []string{"u", "s1", "s2", "a"})
+	if ansi.Strip(out) != "u\ns1\ns2\n\na" {
+		t.Fatalf("unexpected joined output: %q", ansi.Strip(out))
 	}
 }

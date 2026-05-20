@@ -126,3 +126,32 @@ func TestFormat_boldNotTwoItalics(t *testing.T) {
 		}
 	})
 }
+
+func TestFormatWithStyles_plainTextUsesBaseStyle(t *testing.T) {
+	withANSIProfile(t, func() {
+		in := "plain **bold** plain"
+		base := lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+		span := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+		out := FormatWithStyles(
+			in,
+			base,
+			span,
+		)
+		if got := ansi.Strip(out); got != in {
+			t.Fatalf("expected stripped output to equal input\ngot: %q", got)
+		}
+
+		// Verify that non-span segments are rendered with the base style, and
+		// span segments are rendered with the span style. Avoid asserting on a
+		// specific SGR sequence (ANSI16 vs ANSI256 vs TrueColor).
+		if !strings.Contains(out, base.Render("plain ")) {
+			t.Fatalf("expected base style to apply to leading plain segment, got: %q", out)
+		}
+		if !strings.Contains(out, span.Bold(true).Render("**bold**")) {
+			t.Fatalf("expected span style to apply to bold span, got: %q", out)
+		}
+		if !strings.Contains(out, base.Render(" plain")) {
+			t.Fatalf("expected base style to apply to trailing plain segment, got: %q", out)
+		}
+	})
+}

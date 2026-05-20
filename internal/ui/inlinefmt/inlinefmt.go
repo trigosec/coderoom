@@ -80,6 +80,42 @@ func Format(s string, base lipgloss.Style) string {
 	return out.String()
 }
 
+// FormatWithStyles applies inline formatting to s, rendering non-span text with
+// baseStyle and matched spans with spanStyle.
+//
+// This is useful when the caller wants a "default" style for the whole string
+// but wants emphasis spans to visually pop with a different style.
+func FormatWithStyles(s string, baseStyle, spanStyle lipgloss.Style) string {
+	if s == "" {
+		return s
+	}
+
+	var out strings.Builder
+	for i := 0; i < len(s); {
+		openPos, ok := nextOpenerIndex(s, i)
+		if !ok {
+			out.WriteString(baseStyle.Render(s[i:]))
+			break
+		}
+		if openPos > i {
+			out.WriteString(baseStyle.Render(s[i:openPos]))
+			i = openPos
+		}
+
+		rendered, advance, matched := tryMatchAt(s, i, spanStyle)
+		if matched {
+			out.WriteString(rendered)
+			i += advance
+			continue
+		}
+
+		consume := consumeUnclosableAt(s, i)
+		out.WriteString(baseStyle.Render(s[i : i+consume]))
+		i += consume
+	}
+	return out.String()
+}
+
 func nextOpenerIndex(s string, start int) (int, bool) {
 	best := -1
 	for _, c := range candidates {

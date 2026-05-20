@@ -114,18 +114,26 @@ func renderAgentOutput(r Record, width int, colors func(string) string) string {
 
 func renderReasoning(r Record, width int, colors func(string) string) string {
 	color := colors(r.Alias)
-	var style lipgloss.Style
+	var headerStyle lipgloss.Style
 	if color != "" {
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Faint(true)
+		headerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Faint(true)
 	} else {
-		style = lipgloss.NewStyle().Faint(true)
+		headerStyle = lipgloss.NewStyle().Faint(true)
 	}
-	header := style.Render(reasoningBullet + r.Alias + " (thinking)")
+	header := headerStyle.Render(reasoningBullet + r.Alias + " (thinking)")
 	if r.Body == "" {
 		return header
 	}
-	body := wrapLine(agentBodyIndent+r.Body, width, agentBodyIndent)
-	return header + "\n\n" + style.Render(body)
+	bodyText := r.Body
+	if color != "" {
+		// Keep the base text aligned with system messages, and use the
+		// participant color only for inline emphasis spans (e.g. **bold**).
+		bodyText = inlinefmt.FormatWithStyles(bodyText, systemStyle, lipgloss.NewStyle().Foreground(lipgloss.Color(color)))
+	} else {
+		bodyText = systemStyle.Render(bodyText)
+	}
+	body := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
+	return header + "\n\n" + body
 }
 
 func renderRoutingFooter(aliases []string, colors func(string) string) string {

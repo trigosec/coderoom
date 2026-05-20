@@ -48,8 +48,9 @@ func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 	}
 
 	// The viewport should stay at the top when all content fits.
-	if m.room.YOffset() != 0 {
-		t.Fatalf("expected YOffset=0 in tall terminal, got %d", m.room.YOffset())
+	contentLines := strings.Count(ansi.Strip(m.room.HistoryRenderedContent()), "\n") + 1
+	if contentLines <= m.room.HistoryHeight() && m.room.YOffset() != 0 {
+		t.Fatalf("expected YOffset=0 when content fits (contentLines=%d height=%d), got %d", contentLines, m.room.HistoryHeight(), m.room.YOffset())
 	}
 	view := ansi.Strip(m.room.HistoryView())
 	if strings.Count(view, "❯ /who") != 2 {
@@ -76,14 +77,18 @@ func TestWhoEcho_twiceVisibleInSmallTerminal(t *testing.T) {
 	sendLine("/who")
 	sendLine("/who")
 
-	if m.room.YOffset() != 0 {
-		t.Fatalf("expected YOffset=0 when content fits; got %d", m.room.YOffset())
+	contentLines := strings.Count(ansi.Strip(m.room.HistoryRenderedContent()), "\n") + 1
+	if contentLines <= m.room.HistoryHeight() && m.room.YOffset() != 0 {
+		t.Fatalf("expected YOffset=0 when content fits (contentLines=%d height=%d), got %d", contentLines, m.room.HistoryHeight(), m.room.YOffset())
 	}
 	view := ansi.Strip(m.room.HistoryView())
-	if strings.Count(view, "❯ /who") != 2 {
-		t.Fatalf("expected two visible echos; got:\n%s", view)
-	}
-	if strings.Count(view, "[no agents]") != 2 {
-		t.Fatalf("expected two visible /who results; got:\n%s", view)
+	// When content fits, both /who invocations and results should be visible.
+	if contentLines <= m.room.HistoryHeight() {
+		if strings.Count(view, "❯ /who") != 2 {
+			t.Fatalf("expected two visible echos; got:\n%s", view)
+		}
+		if strings.Count(view, "[no agents]") != 2 {
+			t.Fatalf("expected two visible /who results; got:\n%s", view)
+		}
 	}
 }

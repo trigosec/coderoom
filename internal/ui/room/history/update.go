@@ -167,6 +167,30 @@ func (m Model) syncViewport() Model {
 	if !m.ready {
 		return m
 	}
-	m.viewport.SetContent(strings.Join(m.renderedRecords, "\n"))
+	m.viewport.SetContent(joinRenderedForViewport(m.records, m.renderedRecords))
 	return m
+}
+
+func joinRenderedForViewport(records []Record, rendered []string) string {
+	if len(rendered) == 0 {
+		return ""
+	}
+	// Add a blank line between records for readability in the viewport, but never
+	// insert a blank line *above* a system record. This keeps system notices
+	// tightly attached to the line above (e.g. command echo → status lines),
+	// while still allowing spacing after the system block before the next record.
+	//
+	// NOTE: blank lines increase rendered height and can trigger scrolling earlier.
+	var b strings.Builder
+	for i, rec := range rendered {
+		if i > 0 {
+			sep := "\n\n"
+			if i < len(records) && records[i].Kind == RecordKindSystem {
+				sep = "\n"
+			}
+			b.WriteString(sep)
+		}
+		b.WriteString(rec)
+	}
+	return b.String()
 }
