@@ -98,18 +98,6 @@ func containsApprovalOption(opts []agent.ApprovalOption, want agent.ApprovalOpti
 	return false
 }
 
-func startClient(t *testing.T, c agent.Agent) {
-	t.Helper()
-	if err := c.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := c.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
-	})
-}
-
 func assertSawApprovalKind(t *testing.T, approvals <-chan agent.ApprovalRequest, want agent.ApprovalKind, timeout time.Duration) {
 	t.Helper()
 	deadline := time.After(timeout)
