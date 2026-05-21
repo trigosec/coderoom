@@ -2,20 +2,26 @@ package history
 
 import (
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/trigosec/coderoom/internal/agent"
 )
+
+// streamSlot tracks an open streaming record by its StreamID.
+type streamSlot struct {
+	recordIdx int
+	msg       agent.Message // accumulates fragments via Message.Accumulate
+}
 
 // Model holds the conversation record list and its viewport.
 type Model struct {
-	viewport           viewport.Model
-	records            []Record
-	renderedRecords    []string
-	streaming          map[string]int // alias → index of open RecordKindAgentOutput
-	reasoningStreaming map[string]int // alias → index of open RecordKindReasoning
-	departed           map[string]bool
-	debugRowNums       bool
-	ready              bool
-	colorByAlias       func(string) string
-	departedColor      string
+	viewport        viewport.Model
+	records         []Record
+	renderedRecords []string
+	streaming       map[agent.StreamID]streamSlot // streamID → open record slot
+	departed        map[string]bool
+	debugRowNums    bool
+	ready           bool
+	colorByAlias    func(string) string
+	departedColor   string
 }
 
 // New returns an uninitialised Model; call SetSize before first use.
@@ -23,13 +29,12 @@ type Model struct {
 // departedColor is applied to records belonging to agents that have left.
 func New(colorByAlias func(string) string, departedColor string) Model {
 	return Model{
-		records:            []Record{},
-		renderedRecords:    []string{},
-		streaming:          make(map[string]int),
-		reasoningStreaming: make(map[string]int),
-		departed:           make(map[string]bool),
-		colorByAlias:       colorByAlias,
-		departedColor:      departedColor,
+		records:         []Record{},
+		renderedRecords: []string{},
+		streaming:       make(map[agent.StreamID]streamSlot),
+		departed:        make(map[string]bool),
+		colorByAlias:    colorByAlias,
+		departedColor:   departedColor,
 	}
 }
 
@@ -50,16 +55,26 @@ func (m Model) Ready() bool { return m.ready }
 // Records returns the current record slice.
 func (m Model) Records() []Record { return m.records }
 
-// IsStreaming reports whether alias currently has an open turn.
+// IsStreaming reports whether alias currently has any open stream.
 func (m Model) IsStreaming(alias string) bool {
-	_, ok := m.streaming[alias]
-	return ok
+	for _, slot := range m.streaming {
+		if m.records[slot.recordIdx].Alias == alias {
+			return true
+		}
+	}
+	return false
 }
 
-// StreamingIdx returns the record index for the given streaming alias.
+// StreamingIdx returns the record index for the open output stream of alias.
 func (m Model) StreamingIdx(alias string) (int, bool) {
-	idx, ok := m.streaming[alias]
-	return idx, ok
+	for _, slot := range m.streaming {
+		if _, ok := slot.msg.Content.(agent.Output); ok {
+			if m.records[slot.recordIdx].Alias == alias {
+				return slot.recordIdx, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // IsDeparted reports whether alias has left or crashed.

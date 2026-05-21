@@ -208,28 +208,9 @@ func (m Model) AppendLog(alias, text string) Model {
 	return m
 }
 
-// HandleDelta appends streaming output for alias.
-func (m Model) HandleDelta(alias, text string) Model {
-	m.history = m.history.HandleDelta(alias, text)
-	return m
-}
-
-// HandleReasoningDelta appends a streaming reasoning fragment for alias.
-func (m Model) HandleReasoningDelta(alias, text string) Model {
-	m.history = m.history.HandleReasoningDelta(alias, text)
-	return m
-}
-
-// HandleReasoningContinue seals the open reasoning record for alias so the
-// next delta opens a fresh one.
-func (m Model) HandleReasoningContinue(alias string) Model {
-	m.history = m.history.ClearReasoningStreaming(alias)
-	return m
-}
-
-// HandleDone marks streaming as completed for alias.
-func (m Model) HandleDone(alias string) Model {
-	m.history = m.history.ClearStreaming(alias)
+// HandleAgentMessage routes an agent message to history for streaming record management.
+func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
+	m.history = m.history.HandleAgentMessage(alias, msg)
 	return m
 }
 

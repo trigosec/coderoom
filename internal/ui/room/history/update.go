@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/trigosec/coderoom/internal/agent"
 )
 
 // SetSize initialises or resizes the viewport.
@@ -61,24 +62,72 @@ func (m Model) AppendLogRecord(alias, body string) Model {
 	return m.AppendRecord(Record{Kind: RecordKindLog, Alias: alias, Body: body})
 }
 
-// HandleDelta appends or extends the streaming record for alias.
-func (m Model) HandleDelta(alias, text string) Model {
+// HandleAgentMessage appends or extends a streaming record based on msg.
+// Output+ModeFlush (turn-end) clears all open streams for alias.
+// Reasoning+ModeFlush clears only the matching reasoning stream.
+func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
+	switch msg.Content.(type) {
+	case agent.Output:
+		if msg.Mode == agent.ModeFlush {
+			return m.clearStreamsForAlias(alias)
+		}
+		return m.appendOrExtend(alias, msg)
+	case agent.Reasoning:
+		if msg.Mode == agent.ModeFlush {
+			delete(m.streaming, msg.StreamID)
+			return m
+		}
+		return m.appendOrExtend(alias, msg)
+	}
+	return m
+}
+
+func (m Model) appendOrExtend(alias string, msg agent.Message) Model {
 	wasAtBottom := m.viewport.AtBottom()
-	if idx, ok := m.streaming[alias]; ok {
-		m.records[idx].Body += text
-		m.renderedRecords[idx] = renderRecord(m.records[idx], m.viewport.Width, m.resolveColor)
+	if slot, ok := m.streaming[msg.StreamID]; ok {
+		if accumulated, err := slot.msg.Accumulate(msg); err == nil {
+			m.records[slot.recordIdx].Body = bodyFrom(accumulated)
+			m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
+			m.streaming[msg.StreamID] = streamSlot{slot.recordIdx, accumulated}
+		} else {
+			// Content-type mismatch on a live stream: preserve the existing record
+			// and open a fresh one rather than wiping the accumulated body.
+			m = m.openRecord(alias, msg)
+		}
 	} else {
-		idx = len(m.records)
-		m.streaming[alias] = idx
-		r := Record{Kind: RecordKindAgentOutput, Alias: alias, Body: text}
-		m.records = append(m.records, r)
-		m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
+		m = m.openRecord(alias, msg)
 	}
 	m = m.syncViewport()
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	}
 	return m
+}
+
+func (m Model) openRecord(alias string, msg agent.Message) Model {
+	idx := len(m.records)
+	r := Record{Kind: recordKindFor(msg), Alias: alias, Body: bodyFrom(msg)}
+	m.records = append(m.records, r)
+	m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
+	m.streaming[msg.StreamID] = streamSlot{idx, msg}
+	return m
+}
+
+func bodyFrom(msg agent.Message) string {
+	switch c := msg.Content.(type) {
+	case agent.Output:
+		return c.Text
+	case agent.Reasoning:
+		return c.Text
+	}
+	return ""
+}
+
+func recordKindFor(msg agent.Message) RecordKind {
+	if _, ok := msg.Content.(agent.Reasoning); ok {
+		return RecordKindReasoning
+	}
+	return RecordKindAgentOutput
 }
 
 // MarkDeparted records alias as departed and re-renders its affected records.
@@ -92,44 +141,30 @@ func (m Model) MarkDeparted(alias string) Model {
 	return m.syncViewport()
 }
 
-// HandleReasoningDelta appends or extends the reasoning streaming record for alias.
-func (m Model) HandleReasoningDelta(alias, text string) Model {
-	wasAtBottom := m.viewport.AtBottom()
-	if idx, ok := m.reasoningStreaming[alias]; ok {
-		m.records[idx].Body += text
-		m.renderedRecords[idx] = renderRecord(m.records[idx], m.viewport.Width, m.resolveColor)
-	} else {
-		idx = len(m.records)
-		m.reasoningStreaming[alias] = idx
-		r := Record{Kind: RecordKindReasoning, Alias: alias, Body: text}
-		m.records = append(m.records, r)
-		m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
-	}
-	m = m.syncViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-	return m
-}
-
-// ClearStreaming removes alias from both active-streaming sets.
+// ClearStreaming removes all open streams for alias (e.g., on agent departure).
 func (m Model) ClearStreaming(alias string) Model {
-	delete(m.streaming, alias)
-	delete(m.reasoningStreaming, alias)
+	return m.clearStreamsForAlias(alias)
+}
+
+func (m Model) clearStreamsForAlias(alias string) Model {
+	for streamID, slot := range m.streaming {
+		if m.records[slot.recordIdx].Alias == alias {
+			delete(m.streaming, streamID)
+		}
+	}
 	return m
 }
 
-// ClearReasoningStreaming seals the open reasoning record for alias without
-// affecting the output streaming slot or participant status.
-func (m Model) ClearReasoningStreaming(alias string) Model {
-	delete(m.reasoningStreaming, alias)
-	return m
-}
-
-// IsReasoningStreaming reports whether alias currently has an open reasoning record.
+// IsReasoningStreaming reports whether alias has an open reasoning stream.
 func (m Model) IsReasoningStreaming(alias string) bool {
-	_, ok := m.reasoningStreaming[alias]
-	return ok
+	for _, slot := range m.streaming {
+		if _, ok := slot.msg.Content.(agent.Reasoning); ok {
+			if m.records[slot.recordIdx].Alias == alias {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Update forwards the message to the viewport (handles mouse scroll, etc.).

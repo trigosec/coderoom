@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room"
@@ -139,31 +138,9 @@ func (m Model) handleMessageEvent(e session.Event) Model {
 		m.room = m.room.AppendLog(e.Alias, e.Text)
 	case session.KindAgentMessage:
 		if e.Msg != nil {
-			m = m.handleAgentMsg(e.Alias, *e.Msg)
+			m.room = m.room.HandleAgentMessage(e.Alias, *e.Msg)
 		}
 	default:
-	}
-	return m
-}
-
-func (m Model) handleAgentMsg(alias string, msg agent.Message) Model {
-	switch c := msg.Content.(type) {
-	case agent.Output:
-		switch msg.Mode {
-		case agent.ModeStream:
-			m.room = m.room.HandleDelta(alias, c.Text)
-		case agent.ModeFlush:
-			m.room = m.room.HandleDone(alias)
-		default:
-		}
-	case agent.Reasoning:
-		switch msg.Mode {
-		case agent.ModeStream:
-			m.room = m.room.HandleReasoningDelta(alias, c.Text)
-		case agent.ModeFlush:
-			m.room = m.room.HandleReasoningContinue(alias)
-		default:
-		}
 	}
 	return m
 }
