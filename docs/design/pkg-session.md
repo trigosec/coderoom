@@ -102,23 +102,28 @@ Multiple observers are supported (e.g. TUI + event logger).
 type Kind string
 
 const (
-    KindAgentStarted Kind = "agent.started"
-    KindAgentStopped Kind = "agent.stopped"
-    KindAgentCrashed Kind = "agent.crashed"
-    KindAgentLog     Kind = "agent.log"         // diagnostic line from the agent (e.g. stderr); always forwarded, rendering is the observer's choice
-    KindBroadcast    Kind = "message.broadcast" // message to all agents
-    KindSharedSend   Kind = "message.shared"   // instruction to one agent, visible to all
-    KindSharedNotice Kind = "message.notice"   // context notice forwarded to a listener
-    KindDelta        Kind = "message.delta"    // streaming text fragment
-    KindDone         Kind = "message.done"     // turn complete
+    KindAgentStarting Kind = "agent.starting"   // agent process is being started
+    KindAgentStarted  Kind = "agent.started"    // agent is ready to receive messages
+    KindAgentStopped  Kind = "agent.stopped"    // agent was cleanly removed
+    KindAgentCrashed  Kind = "agent.crashed"    // agent exited unexpectedly
+    KindAgentLog      Kind = "agent.log"        // diagnostic line from the agent (e.g. stderr); always forwarded, rendering is the observer's choice
+    KindAgentMessage  Kind = "agent.message"    // typed agent output; see Msg field
+    KindBroadcast     Kind = "message.broadcast" // message sent to all agents
+    KindSharedSend    Kind = "message.shared"   // instruction to one agent, visible to all
+    KindSharedNotice  Kind = "message.notice"   // context notice forwarded to a listener
 )
 
 type Event struct {
     Kind  Kind
-    Alias string // participant alias the event relates to
-    Text  string // message text or delta fragment
+    Alias string          // participant alias the event relates to
+    Text  string          // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
+    Msg   *agent.Message  // for KindAgentMessage; nil for all other kinds
 }
 ```
+
+`KindAgentMessage` carries the full `agent.Message` value without translation. Observers type-switch on `event.Msg.Content` to handle specific content types (`Output`, `Reasoning`, `Command`, `FileChange`, etc.). See [`pkg-agent-messages.md`](pkg-agent-messages.md) for the message model.
+
+`KindAgentLog` is kept as a dedicated kind with `Text` set directly. This lets observers handle diagnostic lines without inspecting message content.
 
 The relationship between session events and the persistent event log (`internal/event`) is deferred — the two will be connected when session state persistence is implemented.
 
@@ -128,7 +133,12 @@ The relationship between session events and the persistent event log (`internal/
 
 `InviteCommand` calls `registry.Add` then `agent.Start`. On success, it emits `KindAgentStarted` and launches a reader goroutine for that agent.
 
-The reader goroutine loops on `agent.Read()`, translating `agent.Message` values into session `Event` values and calling `observer.OnEvent`. When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent context cancellation) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
+The reader goroutine loops on `agent.Read()`, forwarding each message to observers as a `KindAgentMessage` event (or `KindAgentLog` for `Log` content). The session also inspects messages for participant state management — it does not accumulate or translate content:
+
+- First `Output` or `Reasoning` fragment (`ModeStream`) → `MarkWorking`
+- Turn-level `ModeFlush` (`codex:turn:<turnId>`) → `MarkIdle`
+
+When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent stop channel) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
 
 `RemoveCommand` removes the participant from the registry, cancels the reader goroutine's context (so it will emit `KindAgentStopped` rather than `KindAgentCrashed` when it exits), then calls `agent.Stop`.
 
@@ -144,7 +154,7 @@ The reader goroutine loops on `agent.Read()`, translating `agent.Message` values
 | `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `KindSharedSend` event (addressed agent) and one `KindSharedNotice` event per notified listener |
 | `PrivateSendCommand` | Sends text to the addressed agent only; no shared room event; no other agents notified |
 
-Shared room visibility is a property of the event kind. The TUI renders `KindBroadcast` events to all views and `KindDelta`/`KindDone` to the relevant agent's private view.
+Shared room visibility is a property of the event kind. The TUI renders `KindBroadcast` events to all views and `KindAgentMessage` events to the relevant agent's view (shared or private, depending on routing policy).
 
 ---
 

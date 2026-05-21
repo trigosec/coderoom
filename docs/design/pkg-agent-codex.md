@@ -12,28 +12,19 @@ This document covers two packages designed together:
 ### Agent interface
 
 ```go
-type MessageKind string
-
-const (
-    MessageDelta MessageKind = "delta" // streaming text fragment
-    MessageDone  MessageKind = "done"  // final message of a turn
-    MessageLog   MessageKind = "log"   // diagnostic line from the agent process (e.g. stderr)
-)
-
-type Message struct {
-    Kind MessageKind
-    Text string
-}
-
 type Agent interface {
     Start() error
     Send(prompt string) error
+    SendNotice(prompt string) error
     Read() (Message, error)
+    Interrupt() error
     Stop() error
 }
 ```
 
 Errors — both IO errors and turn failures — are returned as the `error` return value of `Read()`. There is one place to check for errors.
+
+`Message` and all content types (`Output`, `Reasoning`, `Command`, `FileChange`, `Log`, etc.) are defined in `internal/agent`. See [`pkg-agent-messages.md`](pkg-agent-messages.md) for the full message model, streaming lifecycle, and accumulation semantics.
 
 ### SendAndWait
 
@@ -43,7 +34,7 @@ Errors — both IO errors and turn failures — are returned as the `error` retu
 func SendAndWait(a Agent, prompt string) (string, error)
 ```
 
-It calls `Send` then loops `Read` until it observes `MessageDone`, accumulating `MessageDelta` values. `MessageLog` messages are silently discarded — `SendAndWait` returns only the agent's text output, not diagnostic noise. Because `Read()` returns a semantic type, `SendAndWait` requires no backend knowledge.
+It calls `Send` then accumulates `Output` stream messages until the turn-level `ModeFlush`, returning the full text response. `Log` messages are discarded. `SendAndWait` is a convenience for callers that only need the final text response and do not need to observe intermediate tool activity.
 
 `Send` + `Read` are the low-level primitives for callers that need to process output as it streams, including `MessageLog` messages.
 
@@ -74,12 +65,16 @@ The API follows the same model as the `http` package: calls are blocking. If the
 
 The Codex-specific mapping is:
 
-| Source | Message |
+| Source | Message(s) |
 |---|---|
-| `item/agentMessage/delta` notification | `{Kind: MessageDelta, Text: "..."}` |
-| `turn/completed` notification | `{Kind: MessageDone, Text: ""}` |
-| `turn/failed` notification | error returned from `Read()` |
-| stderr line from the process | `{Kind: MessageLog, Text: "..."}` |
+| `item/agentMessage/delta` | `{ID: "codex:output:<turnId>", Mode: ModeStream, Content: Output{Text: "..."}}` |
+| `item/reasoning/delta` | `{ID: "codex:reasoning:<itemId>", Mode: ModeStream, Content: Reasoning{Text: "..."}}` |
+| `item/commandExecution/outputDelta` | `{ID: "codex:command:<itemId>", Mode: ModeStream, Content: Command{Output: "..."}}` |
+| `item/completed` (commandExecution) | `{..., Mode: ModeStream, Content: Command{ExitCode: &n}}` then `{..., Mode: ModeFlush, Content: Empty{}}` |
+| `item/completed` (fileChange) | `{ID: "codex:filechange:<itemId>", Mode: ModeStream, Content: FileChange{...}}` then ModeFlush |
+| `turn/completed` | `{ID: "codex:turn:<turnId>", Mode: ModeFlush, Content: Empty{}}` |
+| `turn/failed` | error returned from `Read()` |
+| stderr line | `{ID: "codex:log:<…>", Mode: ModeSingle, Content: Log{Text: "..."}}` |
 
 Stderr is captured via a dedicated pipe and read by a background goroutine started in `Start()`. Lines are queued internally and surfaced through `Read()` alongside stdout-derived messages. This keeps the `Read()` interface as the single point of consumption for all agent output.
 
