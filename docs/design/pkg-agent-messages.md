@@ -1,6 +1,6 @@
 # Package analysis: Codex item lifecycle API (v2)
 
-This document analyzes the **Codex app-server v2 “item lifecycle” API** as represented by the JSON Schemas in `codex-json-schema/v2/`.
+This document analyzes the **Codex app-server v2 "item lifecycle" API** as represented by the JSON Schemas in `codex-json-schema/v2/`.
 
 Codex emits structured units called **ThreadItems** and reports their lifecycle via notifications such as `item/started` and `item/completed`. Some item types also have additional delta-style notifications (e.g. command output deltas).
 
@@ -22,7 +22,7 @@ For low-relevance item types that don't need rich rendering (`imageView`, `enter
 
 ### Message model
 
-`agent.Message` is redesigned around three orthogonal concepts:
+`agent.Message` is designed around three orthogonal concepts:
 
 - **`StreamID`** — which logical stream this message belongs to; messages sharing an ID form a stream
 - **`Mode`** — the streaming lifecycle signal for this message
@@ -32,26 +32,14 @@ For low-relevance item types that don't need rich rendering (`imageView`, `enter
 // StreamID identifies a logical message stream. Messages sharing an ID form one
 // stream. The consumer uses it for grouping only — never parse or construct it
 // outside the adapter.
-//
-// Consumer rule: compare StreamIDs for equality only. Never branch on prefixes
-// or substrings. Any semantic behavior (e.g. acting on turn end) must be driven
-// by receiving ModeFlush for the specific StreamID the adapter assigned — not by
-// inspecting the ID string.
-//
-// Format: "<provider>:<kind>:<id>"
-// Examples:
-//   codex:output:<turnId>       LLM text output stream
-//   codex:reasoning:<itemId>    reasoning segment
-//   codex:command:<itemId>      command execution
-//   codex:turn:<turnId>         turn-level flush
 type StreamID string
 
 type Mode int
 
 const (
-    ModeStream  Mode = iota // fragment or snapshot; more messages with this ID follow
-    ModeFlush               // this stream is done; Content is Empty
-    ModeSingle              // standalone message; not part of a stream
+    ModeStream Mode = iota // fragment; a ModeFlush with the same content type follows
+    ModeFlush              // stream is closed; carries the same content type as ModeStream
+    ModeSingle             // standalone message; not part of a stream
 )
 
 // MessageContent is implemented only by types in this package.
@@ -60,25 +48,29 @@ type MessageContent interface {
 }
 
 type Message struct {
-    ID      StreamID
-    Mode    Mode
-    Content MessageContent
+    StreamID StreamID
+    Mode     Mode
+    Content  MessageContent
 }
 ```
 
 ### Mode semantics
 
-`Mode` is the sole lifecycle signal — it replaces both `MessageKind` and `ToolUpdateStatus`:
+`Mode` is the sole lifecycle signal:
 
 | Mode | Content | Meaning |
 |---|---|---|
-| `ModeStream` | Output, Reasoning, Command, FileChange, … | fragment; a `ModeFlush` with the same ID follows |
-| `ModeFlush` | always `Empty` | this stream is closed; no content |
-| `ModeSingle` | LogLine, Command, FileChange, … | complete, standalone; not part of a stream |
+| `ModeStream` | Output, Reasoning, … | fragment; a `ModeFlush` with the same content type follows |
+| `ModeFlush` | same type as stream (zero-value payload) | this stream is closed |
+| `ModeSingle` | Log | complete, standalone; not part of a stream |
 
-**`ModeFlush` always carries `Empty`.** No exceptions. The ID distinguishes what is being closed: flushing `codex:reasoning:<itemId>` closes a reasoning segment; flushing `codex:turn:<turnId>` closes the turn.
+**`ModeFlush` carries the same content type as its stream's `ModeStream` messages**, with a zero-value payload. This lets consumers dispatch entirely on content type without inspecting `Mode` to determine what kind of stream is closing.
 
-**The adapter never accumulates.** It emits raw fragments on `ModeStream` for all streaming content types without exception. When Codex's `item/completed` notification arrives — which carries authoritative final state such as `exitCode` and `aggregatedOutput` — the adapter emits it as a final `ModeStream` followed immediately by `ModeFlush + Empty`. This harmonises tool completion with all other stream types: the final state always arrives as a stream message, and the flush is always a pure boundary signal.
+**Turn-end** is signalled by `Output + ModeFlush`. The adapter emits it from `turn/completed` regardless of whether any output was produced in the turn. For reasoning-only turns the flush arrives with no preceding `Output + ModeStream`.
+
+**Reasoning segment end** is signalled by `Reasoning + ModeFlush`. Multiple reasoning segments can occur within a single turn, each with a distinct `StreamID`.
+
+**The adapter never accumulates.** It emits raw fragments on `ModeStream` and the typed zero-value flush on `ModeFlush`.
 
 ### Accumulation via `Message.Accumulate`
 
@@ -87,7 +79,9 @@ Accumulation is explicit and uniform across all content types:
 ```go
 // Accumulate merges next into m, returning the updated message.
 // Used by consumers to build up stream state across ModeStream messages.
-// Returns an error if the messages are incompatible (ID mismatch, content type mismatch).
+// Returns an error if the StreamIDs or content types are incompatible.
+// When next is ModeFlush the returned message carries the same content as m
+// (the flush payload is empty) with Mode set to ModeFlush.
 func (m Message) Accumulate(next Message) (Message, error)
 ```
 
@@ -101,44 +95,59 @@ for current.Mode == ModeStream {
     current, err = current.Accumulate(next)
     // ...
 }
-// current.Mode == ModeFlush or ModeSingle: stream is done, current holds final state
+// current.Mode == ModeFlush: stream is done, current holds final state
 ```
 
 `Accumulate` merge semantics per content type:
 
 - **`Output`** — concatenate the `Text` attribute
 - **`Reasoning`** — concatenate the `Text` attribute
-- **`Command`** — concatenate `Output`; take `ExitCode` from `next` when non-nil
-- **`FileChange`** — append `Changes`; take `Status` from `next`
-- **`Empty`** — no merge; propagates `ModeFlush`
 
-Returning an error on ID or content type mismatch makes stream corruption explicit.
+Returning an error on StreamID or content type mismatch makes stream corruption explicit.
+
+A flush carries a zero-value payload, so `StreamMessage.Accumulate(FlushMessage)` preserves the accumulated content and sets `Mode` to `ModeFlush`:
+
+```
+// Output (text): accumulate then flush
+{ID: "codex:turn:<turnId>",  Mode: ModeStream, Content: Output{Text: "Hel"}}
+{ID: "codex:turn:<turnId>",  Mode: ModeStream, Content: Output{Text: "lo"}}
+{ID: "codex:turn:<turnId>",  Mode: ModeFlush,  Content: Output{}}          // turn-end
+
+// After Accumulate:
+{ID: "codex:turn:<turnId>",  Mode: ModeFlush,  Content: Output{Text: "Hello"}}
+```
 
 Sequences:
 
 ```
-// Command (streaming): item/completed maps to a final ModeStream + ModeFlush
-{ID: "codex:command:call_xyz", Mode: ModeStream, Content: Command{Output: "par"}}
-{ID: "codex:command:call_xyz", Mode: ModeStream, Content: Command{Output: "tial"}}
-{ID: "codex:command:call_xyz", Mode: ModeStream, Content: Command{ExitCode: &0}}
-{ID: "codex:command:call_xyz", Mode: ModeFlush,  Content: Empty{}}
+// Output (text): turn-end on Output+ModeFlush
+{ID: "codex:turn:<turnId>",  Mode: ModeStream, Content: Output{Text: "Hel"}}
+{ID: "codex:turn:<turnId>",  Mode: ModeStream, Content: Output{Text: "lo"}}
+{ID: "codex:turn:<turnId>",  Mode: ModeFlush,  Content: Output{}}
 
-// Output (text): same pattern
-{ID: "codex:output:<turnId>",  Mode: ModeStream, Content: Output{Text: "Hel"}}
-{ID: "codex:output:<turnId>",  Mode: ModeStream, Content: Output{Text: "lo"}}
-{ID: "codex:output:<turnId>",  Mode: ModeFlush,  Content: Empty{}}
-
-// Reasoning (two segments)
+// Reasoning (two segments): each ends with Reasoning+ModeFlush
 {ID: "codex:reasoning:msg_1",  Mode: ModeStream, Content: Reasoning{Text: "..."}}
-{ID: "codex:reasoning:msg_1",  Mode: ModeFlush,  Content: Empty{}}
+{ID: "codex:reasoning:msg_1",  Mode: ModeFlush,  Content: Reasoning{}}
 {ID: "codex:reasoning:msg_2",  Mode: ModeStream, Content: Reasoning{Text: "..."}}
-{ID: "codex:reasoning:msg_2",  Mode: ModeFlush,  Content: Empty{}}
+{ID: "codex:reasoning:msg_2",  Mode: ModeFlush,  Content: Reasoning{}}
 
-// Turn end
-{ID: "codex:turn:<turnId>",    Mode: ModeFlush,  Content: Empty{}}
+// Log (standalone)
+{ID: "codex:log",              Mode: ModeSingle, Content: Log{Text: "npm warn ..."}}
+```
 
-// MCP tool call (non-streaming)
-{ID: "codex:mcptool:call_abc", Mode: ModeSingle, Content: MCPToolCall{...}}
+### Stream IDs
+
+StreamIDs are constructed by adapter-internal helpers in `stream_ids.go` and are never parsed or constructed by consumers.
+
+**Consumer rule: compare StreamIDs for equality only.** Never branch on prefixes, suffixes, or substrings. All semantic behavior — turn-end, reasoning segment close, log routing — is driven by the content type and mode of the message, not by inspecting the ID string. The `codex:turn:` / `codex:reasoning:` prefixes visible in the examples are an implementation detail of the Codex adapter and must not leak into consumer logic.
+
+```go
+func turnStreamID(turnID string) StreamID      // "codex:turn:<turnID>"
+func reasoningStreamID(itemID string) StreamID // "codex:reasoning:<itemID>"
+
+const logStreamID         = StreamID("codex:log")
+const noticeRelayStreamID = StreamID("codex:notice-relay")
+const noticeTurnStreamID  = StreamID("codex:notice-turn")
 ```
 
 ### Content types
@@ -146,12 +155,10 @@ Sequences:
 All content types implement `MessageContent` via an unexported method:
 
 ```go
-type Empty     struct{}
 type Output    struct{ Text string }
 type Reasoning struct{ Text string }
 type Log       struct{ Text string }
 
-func (Empty) content()     {}
 func (Output) content()    {}
 func (Reasoning) content() {}
 func (Log) content()       {}
@@ -290,7 +297,7 @@ The `item` field in `ItemStartedNotification` / `ItemCompletedNotification` is a
 - `exitedReviewMode`
 - `contextCompaction`
 
-The rest of this document summarizes the schema-defined fields for each type, focusing on what is relevant to “action/context in the transcript”.
+The rest of this document summarizes the schema-defined fields for each type, focusing on what is relevant to "action/context in the transcript".
 
 ---
 
@@ -341,7 +348,7 @@ Related notifications:
 - `FileChangeOutputDeltaNotification`: exists but is marked deprecated.
 
 Transcript relevance:
-- High. File diffs/paths are critical context for “what changed”.
+- High. File diffs/paths are critical context for "what changed".
 
 ### `mcpToolCall`
 
@@ -362,7 +369,7 @@ Optional fields:
 - `mcpAppResourceUri`: string|null
 
 Transcript relevance:
-- Medium to high. This is a “tool run” with arguments and structured result/error.
+- Medium to high. This is a "tool run" with arguments and structured result/error.
 
 ### `dynamicToolCall`
 
@@ -382,7 +389,7 @@ Optional fields:
 - `contentItems`: array|null of `DynamicToolCallOutputContentItem`
 
 Transcript relevance:
-- Medium. Similar to `mcpToolCall` but “dynamic” namespace/tooling.
+- Medium. Similar to `mcpToolCall` but "dynamic" namespace/tooling.
 
 ### `collabAgentToolCall`
 
@@ -430,7 +437,7 @@ Required fields:
 - `path`: absolute path
 
 Transcript relevance:
-- Low to medium. Useful as context (“looked at file X.png”).
+- Low to medium. Useful as context ("looked at file X.png").
 
 ### `imageGeneration`
 
@@ -483,4 +490,4 @@ These exist in the ThreadItem union but are already surfaced via dedicated strea
 - `plan` (has `text`)
 - `userMessage` / `hookPrompt`
 
-Coderoom will continue treating chat/reasoning via delta notifications and handle “action/context items” via lifecycle notifications, consistent with the streaming model described above.
+Coderoom will continue treating chat/reasoning via delta notifications and handle "action/context items" via lifecycle notifications, consistent with the streaming model described above.

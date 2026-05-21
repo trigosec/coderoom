@@ -54,8 +54,16 @@ type turnStartedParams struct {
 	} `json:"turn"`
 }
 
-type deltaParams struct {
-	Delta string `json:"delta"`
+type notificationParams struct {
+	Delta  string `json:"delta"`
+	ItemID string `json:"itemId"`
+	TurnID string `json:"turnId"`
+}
+
+type turnCompletedParams struct {
+	Turn struct {
+		ID string `json:"id"`
+	} `json:"turn"`
 }
 
 // rpcEnvelope is the minimal wire envelope used for decoding unknown messages.

@@ -27,7 +27,7 @@ func (o chanObserver) OnEvent(e session.Event) {
 
 // drainUntil reads from ch until an event of the expected kind arrives or the
 // timeout elapses. It discards events of other kinds so callers don't need to
-// drain intermediate deltas before waiting for KindDone.
+// drain intermediate deltas before waiting for a lifecycle event.
 func drainUntil(t *testing.T, ch <-chan session.Event, want session.Kind, timeout time.Duration) session.Event {
 	t.Helper()
 	deadline := time.After(timeout)
@@ -44,6 +44,29 @@ func drainUntil(t *testing.T, ch <-chan session.Event, want session.Kind, timeou
 		case <-deadline:
 			t.Fatalf("timed out after %s waiting for %q event", timeout, want)
 			return session.Event{}
+		}
+	}
+}
+
+// drainUntilIdle reads events until the turn-end signal arrives: a KindAgentMessage
+// carrying Output+ModeFlush, which means the agent has returned to idle.
+func drainUntilIdle(t *testing.T, ch <-chan session.Event, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("events channel closed while waiting for agent idle")
+				return
+			}
+			if ev.Kind == session.KindAgentMessage && ev.Msg != nil {
+				if _, ok := ev.Msg.Content.(agent.Output); ok && ev.Msg.Mode == agent.ModeFlush {
+					return
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out after %s waiting for agent idle", timeout)
 		}
 	}
 }
@@ -79,7 +102,7 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("shared send: %v", err)
 	}
-	drainUntil(t, events, session.KindDone, 60*time.Second)
+	drainUntilIdle(t, events, 60*time.Second)
 
 	if err := s.Execute(session.RemoveCommand{Alias: "ada"}); err != nil {
 		t.Fatalf("remove: %v", err)

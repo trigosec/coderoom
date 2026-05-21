@@ -13,12 +13,13 @@ import (
 )
 
 // TestSendNotice_silentAck verifies that SendNotice produces no visible output.
-// A notice turn must complete silently — no MessageDelta and no MessageReasoning
-// should be emitted before the probe turn's own MessageDone.
+// A notice turn must complete silently — no output deltas (Output+ModeStream) and
+// no reasoning deltas (Reasoning+ModeStream) should be emitted before the probe
+// turn's own turn-end flush (Output+ModeFlush).
 //
-// The probe turn (a follow-up Send) anchors the boundary: the relay path always
-// produces MessageReasoning+MessageDone with no preceding MessageDelta, so any
-// MessageDone appearing before a MessageDelta is proof of a notice leak.
+// The probe turn (a follow-up Send) anchors the boundary: the relay path emits
+// reasoning deltas followed by a turn-end flush with no preceding output delta,
+// so a turn-end flush before any output delta is proof of a notice leak.
 func TestSendNotice_silentAck(t *testing.T) {
 	cwd, _ := os.Getwd()
 	c := codex.New(cwd, codex.WithObserver(wireObserverForTest(t)))
@@ -59,10 +60,10 @@ func TestSendNotice_silentAck(t *testing.T) {
 		}
 	}
 
-	// Drain until the probe turn's MessageDone. The relay path emits
-	// MessageReasoning+MessageDone with no MessageDelta; the probe turn emits
-	// MessageDelta before MessageDone. A MessageDone before any MessageDelta
-	// therefore means the notice turn leaked output.
+	// Drain until the probe turn's turn-end flush (Output+ModeFlush). The relay
+	// path emits reasoning deltas and a turn-end flush with no output delta; the
+	// probe turn emits an output delta before its turn-end flush. A turn-end flush
+	// before any output delta means the notice turn leaked output.
 	var seenDelta bool
 	probeDeadline := time.After(30 * time.Second)
 loop:
@@ -72,18 +73,21 @@ loop:
 			if r.err != nil {
 				break loop
 			}
-			switch r.msg.Kind {
-			case agent.MessageDelta:
-				seenDelta = true
-			case agent.MessageReasoning:
-				if !seenDelta {
-					t.Errorf("notice turn leaked reasoning: %q", r.msg.Text)
+			switch c := r.msg.Content.(type) {
+			case agent.Output:
+				switch r.msg.Mode {
+				case agent.ModeStream:
+					seenDelta = true
+				case agent.ModeFlush:
+					if !seenDelta {
+						t.Errorf("notice turn leaked: turn-end without preceding output delta")
+					}
+					break loop
 				}
-			case agent.MessageDone:
-				if !seenDelta {
-					t.Errorf("notice turn leaked: MessageDone without preceding MessageDelta")
+			case agent.Reasoning:
+				if r.msg.Mode == agent.ModeStream && !seenDelta {
+					t.Errorf("notice turn leaked reasoning: %q", c.Text)
 				}
-				break loop
 			}
 		case <-probeDeadline:
 			t.Fatal("probe turn did not complete within 30s")

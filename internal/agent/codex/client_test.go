@@ -69,8 +69,8 @@ func TestRead_turnCompleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageDone {
-		t.Errorf("expected Kind=%q, got %q", agent.MessageDone, msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for turn/completed, got mode=%v", msg.Mode)
 	}
 }
 
@@ -82,8 +82,9 @@ func TestRead_delta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageDelta || msg.Text != "hello" {
-		t.Errorf("expected delta %q, got kind=%q text=%q", "hello", msg.Kind, msg.Text)
+	out, ok := msg.Content.(agent.Output)
+	if !ok || out.Text != "hello" {
+		t.Errorf("expected Output{hello}, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 }
 
@@ -95,8 +96,9 @@ func TestRead_reasoningTextDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageReasoning || msg.Text != "let me think" {
-		t.Errorf("expected reasoning %q, got kind=%q text=%q", "let me think", msg.Kind, msg.Text)
+	r, ok := msg.Content.(agent.Reasoning)
+	if !ok || r.Text != "let me think" {
+		t.Errorf("expected Reasoning{let me think}, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 }
 
@@ -108,8 +110,9 @@ func TestRead_reasoningSummaryTextDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageReasoning || msg.Text != "summary fragment" {
-		t.Errorf("expected reasoning %q, got kind=%q text=%q", "summary fragment", msg.Kind, msg.Text)
+	r, ok := msg.Content.(agent.Reasoning)
+	if !ok || r.Text != "summary fragment" {
+		t.Errorf("expected Reasoning{summary fragment}, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 }
 
@@ -123,8 +126,8 @@ func TestRead_reasoningSummaryPartAdded_continue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageReasoningContinue {
-		t.Errorf("expected MessageReasoningContinue, got %q", msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for summaryPartAdded, got mode=%v", msg.Mode)
 	}
 }
 
@@ -150,8 +153,8 @@ func TestRead_skipsResponseLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageDone {
-		t.Errorf("expected Kind=%q, got %q", agent.MessageDone, msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for turn/completed, got mode=%v", msg.Mode)
 	}
 }
 
@@ -167,8 +170,8 @@ func TestRead_skipsUnknownNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageDone {
-		t.Errorf("expected Kind=%q after skipping unknown notification, got %q", agent.MessageDone, msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush after skipping unknown notification, got mode=%v", msg.Mode)
 	}
 }
 

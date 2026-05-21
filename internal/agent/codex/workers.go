@@ -38,10 +38,17 @@ type approvalRequest struct {
 func readCodexErrWorker(ctx context.Context, c *Client) {
 	r := c.proc.codexErr
 	for chunk := range linestream.BatchReader(r) {
+		rm := readMessage{
+			msg: agent.Message{
+				StreamID: logStreamID,
+				Mode:     agent.ModeSingle,
+				Content:  agent.Log{Text: chunk},
+			},
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case c.read.messages <- readMessage{msg: agent.Message{Kind: agent.MessageLog, Text: chunk}}:
+		case c.read.messages <- rm:
 		}
 	}
 }
@@ -66,7 +73,13 @@ func readCodexOutWorker(ctx context.Context, c *Client) {
 
 func handleStdoutReadError(ctx context.Context, c *Client, err error) bool {
 	if nonJSON, ok := isNonJSONStdoutLine(err); ok {
-		readMsg := readMessage{msg: agent.Message{Kind: agent.MessageLog, Text: nonJSON.FormatLogLine()}}
+		readMsg := readMessage{
+			msg: agent.Message{
+				StreamID: logStreamID,
+				Mode:     agent.ModeSingle,
+				Content:  agent.Log{Text: nonJSON.FormatLogLine()},
+			},
+		}
 		return sendBufMessage(ctx, c, readMsg)
 	}
 	readMsg := readMessage{err: err}
@@ -286,7 +299,13 @@ func containsOption(opts []agent.ApprovalOption, choice agent.ApprovalOption) bo
 }
 
 func emitApprovalLog(ctx context.Context, c *Client, text string) {
-	msg := readMessage{msg: agent.Message{Kind: agent.MessageLog, Text: "codex: " + text}}
+	msg := readMessage{
+		msg: agent.Message{
+			StreamID: logStreamID,
+			Mode:     agent.ModeSingle,
+			Content:  agent.Log{Text: "codex: " + text},
+		},
+	}
 	select {
 	case c.read.messages <- msg:
 	case <-ctx.Done():

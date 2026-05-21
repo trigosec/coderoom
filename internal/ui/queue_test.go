@@ -10,8 +10,8 @@ func TestEventQueue_deliversInOrder(t *testing.T) {
 	q := newEventQueue()
 	want := []session.Event{
 		{Kind: session.KindAgentStarted, Alias: "ada"},
-		{Kind: session.KindDelta, Text: "hello"},
-		{Kind: session.KindDone, Alias: "ada"},
+		{Kind: session.KindAgentLog, Alias: "ada", Text: "hello"},
+		{Kind: session.KindAgentStopped, Alias: "ada"},
 	}
 	go func() {
 		for _, e := range want {
@@ -36,7 +36,7 @@ func TestEventQueue_concurrentProducers(t *testing.T) {
 	for range 2 {
 		go func() {
 			for range n {
-				q.Push(session.Event{Kind: session.KindDelta})
+				q.Push(session.Event{Kind: session.KindAgentLog})
 			}
 		}()
 	}

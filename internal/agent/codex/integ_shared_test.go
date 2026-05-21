@@ -45,7 +45,8 @@ func startClient(t *testing.T, c agent.Agent) {
 	})
 }
 
-// readResponse drains Read() until MessageDone and returns accumulated delta text.
+// readResponse drains Read() until the turn-end flush (Output+ModeFlush) and
+// returns the accumulated output text.
 func readResponse(t *testing.T, c *codex.Client, timeout time.Duration) string {
 	t.Helper()
 	var sb strings.Builder
@@ -57,11 +58,13 @@ func readResponse(t *testing.T, c *codex.Client, timeout time.Duration) string {
 			if err != nil {
 				return
 			}
-			switch msg.Kind {
-			case agent.MessageDelta:
-				sb.WriteString(msg.Text)
-			case agent.MessageDone:
-				return
+			if out, ok := msg.Content.(agent.Output); ok {
+				switch msg.Mode {
+				case agent.ModeStream:
+					sb.WriteString(out.Text)
+				case agent.ModeFlush:
+					return
+				}
 			}
 		}
 	}()

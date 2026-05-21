@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/history"
@@ -105,7 +106,9 @@ func TestHandleEvent_broadcastAndSharedSendProduceNoSystemRecord(t *testing.T) {
 
 func TestHandleDelta_firstDeltaCreatesRecord(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"},
+	}})
 	recs := m.room.HistoryRecords()
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(recs))
@@ -128,8 +131,12 @@ func TestHandleDelta_firstDeltaCreatesRecord(t *testing.T) {
 
 func TestHandleDelta_subsequentDeltaAppendsInPlace(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: " world"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"},
+	}})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: " world"},
+	}})
 	recs := m.room.HistoryRecords()
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record (in-place append), got %d", len(recs))
@@ -142,9 +149,15 @@ func TestHandleDelta_subsequentDeltaAppendsInPlace(t *testing.T) {
 
 func TestHandleDelta_twoAgentsStreamConcurrently(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "a"})
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "bob", Text: "b"})
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "2"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out-ada", Mode: agent.ModeStream, Content: agent.Output{Text: "a"},
+	}})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "bob", Msg: &agent.Message{
+		StreamID: "out-bob", Mode: agent.ModeStream, Content: agent.Output{Text: "b"},
+	}})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out-ada", Mode: agent.ModeStream, Content: agent.Output{Text: "2"},
+	}})
 	recs := m.room.HistoryRecords()
 	if len(recs) != 2 {
 		t.Fatalf("expected 2 records, got %d", len(recs))
@@ -161,16 +174,22 @@ func TestHandleDelta_twoAgentsStreamConcurrently(t *testing.T) {
 
 func TestHandleEvent_kindDoneClearsStreaming(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
-	m = pushEvent(m, session.Event{Kind: session.KindDone, Alias: "ada"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"},
+	}})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "turn1", Mode: agent.ModeFlush, Content: agent.Output{},
+	}})
 	if m.room.IsStreaming("ada") {
-		t.Error("expected streaming to be cleared after KindDone")
+		t.Error("expected streaming to be cleared after turn flush")
 	}
 }
 
 func TestHandleEvent_agentStoppedClearsStreaming(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "mid-stream"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "mid-stream"},
+	}})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
 	if m.room.IsStreaming("ada") {
 		t.Error("streaming should be cleared when agent stops mid-turn")
@@ -224,8 +243,12 @@ func TestShowHelp_coversAllCommands(t *testing.T) {
 
 func TestMarkDeparted_greyRepaintOnStop(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
-	m = pushEvent(m, session.Event{Kind: session.KindDone, Alias: "ada"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"},
+	}})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "turn1", Mode: agent.ModeFlush, Content: agent.Output{},
+	}})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
 	if !m.room.IsDeparted("ada") {
 		t.Error("expected ada in departed map after stop")
@@ -234,7 +257,9 @@ func TestMarkDeparted_greyRepaintOnStop(t *testing.T) {
 
 func TestMarkDeparted_greyRepaintOnCrash(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "hello"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"},
+	}})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentCrashed, Alias: "ada"})
 	if !m.room.IsDeparted("ada") {
 		t.Error("expected ada in departed map after crash")
@@ -245,7 +270,9 @@ func TestMarkDeparted_greyRepaintOnCrash(t *testing.T) {
 
 func TestHandleReasoningDelta_firstDeltaCreatesRecord(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: "let me think"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: "let me think"},
+	}})
 	recs := m.room.HistoryRecords()
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(recs))
@@ -263,8 +290,12 @@ func TestHandleReasoningDelta_firstDeltaCreatesRecord(t *testing.T) {
 
 func TestHandleReasoningDelta_appendsInPlace(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: "step 1"})
-	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: " step 2"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: "step 1"},
+	}})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: " step 2"},
+	}})
 	recs := m.room.HistoryRecords()
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record (in-place append), got %d", len(recs))
@@ -276,8 +307,12 @@ func TestHandleReasoningDelta_appendsInPlace(t *testing.T) {
 
 func TestHandleReasoningDelta_independentOfOutputStreaming(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: "thinking"})
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "responding"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: "thinking"},
+	}})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "responding"},
+	}})
 	recs := m.room.HistoryRecords()
 	if len(recs) != 2 {
 		t.Fatalf("expected 2 records (reasoning + output), got %d", len(recs))
@@ -292,10 +327,14 @@ func TestHandleReasoningDelta_independentOfOutputStreaming(t *testing.T) {
 
 func TestKindDone_clearsReasoningStreaming(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindReasoningDelta, Alias: "ada", Text: "thinking"})
-	m = pushEvent(m, session.Event{Kind: session.KindDone, Alias: "ada"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: "thinking"},
+	}})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "turn1", Mode: agent.ModeFlush, Content: agent.Output{},
+	}})
 	if m.room.IsReasoningStreaming("ada") {
-		t.Error("expected reasoning streaming to be cleared after KindDone")
+		t.Error("expected reasoning streaming to be cleared after turn flush")
 	}
 }
 
@@ -303,7 +342,9 @@ func TestKindDone_clearsReasoningStreaming(t *testing.T) {
 
 func TestStreamingCleared_onStop(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{Kind: session.KindDelta, Alias: "ada", Text: "mid-stream"})
+	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+		StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "mid-stream"},
+	}})
 	if !m.room.IsStreaming("ada") {
 		t.Fatal("expected ada to be streaming after delta")
 	}

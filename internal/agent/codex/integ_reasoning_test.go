@@ -12,7 +12,8 @@ import (
 )
 
 // TestClientReasoningMessages verifies that reasoning notifications from a
-// reasoning-capable model are delivered as MessageReasoning before MessageDone.
+// reasoning-capable model are delivered as Reasoning+ModeStream before the
+// turn-end Output+ModeFlush.
 func TestClientReasoningMessages(t *testing.T) {
 	cwd, _ := os.Getwd()
 	c := codex.New(cwd, codex.WithModel("gpt-5.2"), codex.WithObserver(wireObserverForTest(t)))
@@ -32,18 +33,21 @@ func TestClientReasoningMessages(t *testing.T) {
 				t.Errorf("Read: %v", err)
 				return
 			}
-			switch msg.Kind {
-			case agent.MessageReasoning:
-				if msg.Text == "" {
-					t.Error("received MessageReasoning with empty text")
+			switch c := msg.Content.(type) {
+			case agent.Reasoning:
+				if msg.Mode == agent.ModeStream {
+					if c.Text == "" {
+						t.Error("received Reasoning ModeStream with empty text")
+					}
+					reasoningCount++
 				}
-				reasoningCount++
-			case agent.MessageReasoningContinue:
-				// boundary between summary parts — expected, no action needed
-			case agent.MessageDone:
-				return
+				// ModeFlush marks reasoning segment boundary — expected, no action needed
+			case agent.Output:
+				if msg.Mode == agent.ModeFlush {
+					return
+				}
 			default:
-				t.Logf("unexpected message kind %q (text: %q)", msg.Kind, msg.Text)
+				t.Logf("unexpected message content type %T (mode: %v)", msg.Content, msg.Mode)
 			}
 		}
 	}()
@@ -55,6 +59,6 @@ func TestClientReasoningMessages(t *testing.T) {
 	}
 
 	if reasoningCount == 0 {
-		t.Error("expected at least one MessageReasoning before MessageDone")
+		t.Error("expected at least one Reasoning+ModeStream before turn-end")
 	}
 }

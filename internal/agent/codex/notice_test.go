@@ -41,7 +41,7 @@ func TestNoticeFilter_compliantAck(t *testing.T) {
 
 	msg, err := c.Read()
 	if err == nil {
-		t.Fatalf("expected no message to be emitted for acknowledged notice; got kind=%q text=%q", msg.Kind, msg.Text)
+		t.Fatalf("expected no message to be emitted for acknowledged notice; got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 }
 
@@ -55,7 +55,7 @@ func TestNoticeFilter_compliantAckWithExtraFields(t *testing.T) {
 
 	msg, err := c.Read()
 	if err == nil {
-		t.Fatalf("expected no message for ack with extra fields; got kind=%q text=%q", msg.Kind, msg.Text)
+		t.Fatalf("expected no message for ack with extra fields; got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 }
 
@@ -66,12 +66,13 @@ func TestNoticeFilter_emptyResponse(t *testing.T) {
 
 	msg, err := c.Read()
 	if err == nil {
-		t.Fatalf("expected no message for empty notice response; got kind=%q text=%q", msg.Kind, msg.Text)
+		t.Fatalf("expected no message for empty notice response; got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 }
 
 // TestNoticeFilter_nonCompliantProse verifies that a prose response (first char
-// is not '{') is relayed as MessageReasoning followed by MessageDone.
+// is not '{') is relayed as Reasoning then a reasoning-stream flush then a
+// turn-level flush.
 func TestNoticeFilter_nonCompliantProse(t *testing.T) {
 	stdout := turnStarted +
 		agentDelta(`I think the code looks fine.`) +
@@ -82,21 +83,33 @@ func TestNoticeFilter_nonCompliantProse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageReasoning || msg.Text != "I think the code looks fine." {
-		t.Errorf("expected reasoning relay, got kind=%q text=%q", msg.Kind, msg.Text)
+	r, ok := msg.Content.(agent.Reasoning)
+	if !ok || r.Text != "I think the code looks fine." {
+		t.Errorf("expected Reasoning relay, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 
+	// reasoning-stream flush
 	msg, err = c.Read()
 	if err != nil {
-		t.Fatalf("unexpected error on done: %v", err)
+		t.Fatalf("unexpected error on reasoning flush: %v", err)
 	}
-	if msg.Kind != agent.MessageDone {
-		t.Errorf("expected MessageDone after relayed reasoning, got kind=%q", msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for reasoning stream end, got mode=%v", msg.Mode)
+	}
+
+	// turn-level flush
+	msg, err = c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error on turn flush: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for turn end, got mode=%v", msg.Mode)
 	}
 }
 
 // TestNoticeFilter_nonCompliantJSON verifies that a JSON response that parses
-// but lacks "acknowledge":true is replayed as one MessageReasoning + MessageDone.
+// but lacks "acknowledge":true is replayed as Reasoning then reasoning-stream
+// flush then turn-level flush.
 func TestNoticeFilter_nonCompliantJSON(t *testing.T) {
 	stdout := turnStarted +
 		agentDelta(`{\"status\":\"ok\"}`) +
@@ -107,21 +120,33 @@ func TestNoticeFilter_nonCompliantJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageReasoning {
-		t.Errorf("expected MessageReasoning for non-ack JSON, got kind=%q", msg.Kind)
+	if _, ok := msg.Content.(agent.Reasoning); !ok {
+		t.Errorf("expected Reasoning for non-ack JSON, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 
+	// reasoning-stream flush
 	msg, err = c.Read()
 	if err != nil {
-		t.Fatalf("unexpected error on done: %v", err)
+		t.Fatalf("unexpected error on reasoning flush: %v", err)
 	}
-	if msg.Kind != agent.MessageDone {
-		t.Errorf("expected MessageDone, got kind=%q", msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for reasoning stream end, got mode=%v", msg.Mode)
+	}
+
+	// turn-level flush
+	msg, err = c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error on turn flush: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for turn end, got mode=%v", msg.Mode)
 	}
 }
 
 // TestNoticeFilter_nonCompliantMultiDeltaRelay verifies that multiple deltas
 // are all relayed as reasoning when the first char is not '{'.
+//
+//nolint:cyclop
 func TestNoticeFilter_nonCompliantMultiDeltaRelay(t *testing.T) {
 	stdout := turnStarted +
 		agentDelta(`step one`) +
@@ -133,24 +158,36 @@ func TestNoticeFilter_nonCompliantMultiDeltaRelay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageReasoning || msg.Text != "step one" {
-		t.Errorf("expected first reasoning delta, got kind=%q text=%q", msg.Kind, msg.Text)
+	r, ok := msg.Content.(agent.Reasoning)
+	if !ok || r.Text != "step one" {
+		t.Errorf("expected first Reasoning delta, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 
 	msg, err = c.Read()
 	if err != nil {
 		t.Fatalf("unexpected error on second delta: %v", err)
 	}
-	if msg.Kind != agent.MessageReasoning || msg.Text != " step two" {
-		t.Errorf("expected second reasoning delta, got kind=%q text=%q", msg.Kind, msg.Text)
+	r, ok = msg.Content.(agent.Reasoning)
+	if !ok || r.Text != " step two" {
+		t.Errorf("expected second Reasoning delta, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 
+	// reasoning-stream flush
 	msg, err = c.Read()
 	if err != nil {
-		t.Fatalf("unexpected error on done: %v", err)
+		t.Fatalf("unexpected error on reasoning flush: %v", err)
 	}
-	if msg.Kind != agent.MessageDone {
-		t.Errorf("expected MessageDone, got kind=%q", msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for reasoning stream end, got mode=%v", msg.Mode)
+	}
+
+	// turn-level flush
+	msg, err = c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error on turn flush: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for turn end, got mode=%v", msg.Mode)
 	}
 }
 
@@ -164,12 +201,12 @@ func TestNoticeFilter_turnFailed_buffering(t *testing.T) {
 
 	msg, err := c.Read()
 	if err == nil {
-		t.Fatalf("expected no message for failed buffered notice; got kind=%q text=%q", msg.Kind, msg.Text)
+		t.Fatalf("expected no message for failed buffered notice; got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 }
 
-// TestNoticeFilter_turnFailed_relaying verifies that a failed notice turn
-// while relaying emits MessageDone to return the participant to idle.
+// TestNoticeFilter_turnFailed_relaying verifies that a failed notice turn while
+// relaying emits a reasoning-stream flush then a turn-level flush.
 func TestNoticeFilter_turnFailed_relaying(t *testing.T) {
 	stdout := turnStarted +
 		agentDelta(`some prose`) +
@@ -180,16 +217,26 @@ func TestNoticeFilter_turnFailed_relaying(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageReasoning {
-		t.Errorf("expected MessageReasoning before failed turn, got kind=%q", msg.Kind)
+	if _, ok := msg.Content.(agent.Reasoning); !ok {
+		t.Errorf("expected Reasoning before failed turn, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 
+	// reasoning-stream flush
 	msg, err = c.Read()
 	if err != nil {
-		t.Fatalf("unexpected error on done: %v", err)
+		t.Fatalf("unexpected error on reasoning flush: %v", err)
 	}
-	if msg.Kind != agent.MessageDone {
-		t.Errorf("expected MessageDone after failed relaying notice, got kind=%q", msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for reasoning stream end, got mode=%v", msg.Mode)
+	}
+
+	// turn-level flush
+	msg, err = c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error on turn flush: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush after failed relaying notice, got mode=%v", msg.Mode)
 	}
 }
 
@@ -204,14 +251,15 @@ func TestNoticeFilter_noNoticeState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msg.Kind != agent.MessageDelta || msg.Text != "hello" {
-		t.Errorf("expected normal delta, got kind=%q text=%q", msg.Kind, msg.Text)
+	out, ok := msg.Content.(agent.Output)
+	if !ok || out.Text != "hello" {
+		t.Errorf("expected Output{hello}, got mode=%v content=%T", msg.Mode, msg.Content)
 	}
 	msg, err = c.Read()
 	if err != nil {
-		t.Fatalf("unexpected error on done: %v", err)
+		t.Fatalf("unexpected error on turn flush: %v", err)
 	}
-	if msg.Kind != agent.MessageDone {
-		t.Errorf("expected MessageDone, got kind=%q", msg.Kind)
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush for turn/completed, got mode=%v", msg.Mode)
 	}
 }

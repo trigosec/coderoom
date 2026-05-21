@@ -76,17 +76,7 @@ func (c *Client) interceptNotice(ctx context.Context, msg rpcEnvelope) noticeOut
 		return c.handleNoticeCompleted(ctx)
 
 	case methodTurnFailed:
-		c.notice.mu.Lock()
-		prevState := c.notice.state
-		c.notice.state = noticeIdle
-		c.notice.buf.Reset()
-		c.notice.mu.Unlock()
-		if prevState == noticeRelaying {
-			// Reasoning deltas were already emitted; emit done to return the
-			// participant to idle rather than leaving it stuck in working.
-			return outcomeOf(sendBufMessage(ctx, c, readMessage{msg: agent.Message{Kind: agent.MessageDone}}))
-		}
-		return noticeContinue
+		return c.handleNoticeFailed(ctx)
 
 	default:
 		// Approval requests and other protocol messages pass through unfiltered.
@@ -95,7 +85,7 @@ func (c *Client) interceptNotice(ctx context.Context, msg rpcEnvelope) noticeOut
 }
 
 func (c *Client) handleNoticeDelta(ctx context.Context, msg rpcEnvelope) noticeOutcome {
-	var p deltaParams
+	var p notificationParams
 	if err := json.Unmarshal(msg.Params, &p); err != nil || p.Delta == "" {
 		return noticeContinue
 	}
@@ -122,7 +112,7 @@ func (c *Client) handleNoticeDelta(ctx context.Context, msg rpcEnvelope) noticeO
 		}
 		c.notice.state = noticeRelaying
 		c.notice.mu.Unlock()
-		return outcomeOf(sendBufMessage(ctx, c, readMessage{msg: agent.Message{Kind: agent.MessageReasoning, Text: p.Delta}}))
+		return relayDelta(ctx, c, p.Delta)
 
 	case noticeBuffering:
 		c.notice.buf.WriteString(p.Delta)
@@ -131,7 +121,7 @@ func (c *Client) handleNoticeDelta(ctx context.Context, msg rpcEnvelope) noticeO
 
 	case noticeRelaying:
 		c.notice.mu.Unlock()
-		return outcomeOf(sendBufMessage(ctx, c, readMessage{msg: agent.Message{Kind: agent.MessageReasoning, Text: p.Delta}}))
+		return relayDelta(ctx, c, p.Delta)
 
 	default:
 		c.notice.mu.Unlock()
@@ -159,18 +149,69 @@ func (c *Client) handleNoticeCompleted(ctx context.Context) noticeOutcome {
 		if err := json.Unmarshal([]byte(buf), &r); err == nil && r.Acknowledge {
 			return noticeContinue
 		}
-		// Not acknowledged: replay as reasoning then emit done.
-		if o := outcomeOf(sendBufMessage(ctx, c, readMessage{msg: agent.Message{Kind: agent.MessageReasoning, Text: buf}})); o == noticeExit {
+		// Not acknowledged: replay as reasoning then flush both streams.
+		if o := relayDelta(ctx, c, buf); o == noticeExit {
 			return noticeExit
 		}
-		return outcomeOf(sendBufMessage(ctx, c, readMessage{msg: agent.Message{Kind: agent.MessageDone}}))
+		return relayAndTurnFlush(ctx, c)
 
 	case noticeRelaying:
-		return outcomeOf(sendBufMessage(ctx, c, readMessage{msg: agent.Message{Kind: agent.MessageDone}}))
+		// Flush reasoning stream then emit turn-level flush.
+		return relayAndTurnFlush(ctx, c)
 
 	default:
 		return noticeUnhandled
 	}
+}
+
+// relayDelta emits a single reasoning-stream delta fragment.
+func relayDelta(ctx context.Context, c *Client, text string) noticeOutcome {
+	rm := readMessage{
+		msg: agent.Message{
+			StreamID: noticeRelayStreamID,
+			Mode:     agent.ModeStream,
+			Content:  agent.Reasoning{Text: text},
+		},
+	}
+	return outcomeOf(sendBufMessage(ctx, c, rm))
+}
+
+// relayAndTurnFlush flushes the reasoning relay stream and then emits the
+// turn-level output flush so the participant returns to idle.
+func relayAndTurnFlush(ctx context.Context, c *Client) noticeOutcome {
+	rm := readMessage{
+		msg: agent.Message{
+			StreamID: noticeRelayStreamID,
+			Mode:     agent.ModeFlush,
+			Content:  agent.Reasoning{},
+		},
+	}
+	if o := outcomeOf(sendBufMessage(ctx, c, rm)); o == noticeExit {
+		return noticeExit
+	}
+	rm = readMessage{
+		msg: agent.Message{
+			StreamID: noticeTurnStreamID,
+			Mode:     agent.ModeFlush,
+			Content:  agent.Output{},
+		},
+	}
+	return outcomeOf(sendBufMessage(ctx, c, rm))
+}
+
+// handleNoticeFailed handles methodTurnFailed during a notice turn.
+func (c *Client) handleNoticeFailed(ctx context.Context) noticeOutcome {
+	c.notice.mu.Lock()
+	prevState := c.notice.state
+	c.notice.state = noticeIdle
+	c.notice.buf.Reset()
+	c.notice.mu.Unlock()
+	if prevState == noticeRelaying {
+		// Reasoning deltas were already emitted; flush reasoning stream then
+		// emit a turn-level flush so the participant returns to idle.
+		return relayAndTurnFlush(ctx, c)
+	}
+	return noticeContinue
 }
 
 // outcomeOf converts the bool returned by sendBufMessage into a noticeOutcome.

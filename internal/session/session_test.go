@@ -501,28 +501,35 @@ func TestPrivateSend_notFound(t *testing.T) {
 
 func TestReaderLoop_emitsDelta(t *testing.T) {
 	obs := newTestObserver()
-	a := newMockAgent(agent.Message{Kind: agent.MessageDelta, Text: "hello"})
+	a := newMockAgent(agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}})
 	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
-	ev := mustReceive(t, obs.ch, session.KindDelta)
-	if ev.Text != "hello" {
-		t.Errorf("expected delta %q, got %q", "hello", ev.Text)
+	ev := mustReceive(t, obs.ch, session.KindAgentMessage)
+	if ev.Msg == nil {
+		t.Fatal("expected Msg to be set on KindAgentMessage event")
+	}
+	out, ok := ev.Msg.Content.(agent.Output)
+	if !ok || out.Text != "hello" {
+		t.Errorf("expected Output{hello}, got content=%T", ev.Msg.Content)
 	}
 }
 
 func TestReaderLoop_emitsDone(t *testing.T) {
 	obs := newTestObserver()
-	a := newMockAgent(agent.Message{Kind: agent.MessageDone})
+	a := newMockAgent(agent.Message{StreamID: "turn1", Mode: agent.ModeFlush, Content: agent.Output{}})
 	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
-	mustReceive(t, obs.ch, session.KindDone)
+	ev := mustReceive(t, obs.ch, session.KindAgentMessage)
+	if ev.Msg == nil || ev.Msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush message for turn done")
+	}
 }
 
 func TestMultipleObservers_bothNotified(t *testing.T) {
@@ -539,7 +546,7 @@ func TestMultipleObservers_bothNotified(t *testing.T) {
 
 func TestReaderLoop_emitsAgentLog(t *testing.T) {
 	obs := newTestObserver()
-	a := newMockAgent(agent.Message{Kind: agent.MessageLog, Text: "npm warn something"})
+	a := newMockAgent(agent.Message{StreamID: "codex:log", Mode: agent.ModeSingle, Content: agent.Log{Text: "npm warn something"}})
 	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 

@@ -5,7 +5,6 @@ package agent
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
 var (
@@ -14,29 +13,75 @@ var (
 	ErrTurnInProgress = errors.New("turn already in progress")
 )
 
-// MessageKind identifies the type of an agent output message.
-type MessageKind string
+// StreamID identifies a logical message stream. Messages sharing an ID form one
+// stream. The consumer uses it for grouping only — never parse or construct it
+// outside the adapter.
+//
+// Consumer rule: compare StreamIDs for equality only. Never branch on prefixes,
+// suffixes, or substrings. All semantic behavior is driven by content type and
+// mode, not by the ID string.
+type StreamID string
 
+// Mode is the streaming lifecycle signal for a message.
+type Mode int
+
+// Streaming lifecycle signals for a Message.
 const (
-	// MessageDelta is a streaming text fragment from the agent.
-	MessageDelta MessageKind = "delta" // streaming text fragment
-	// MessageDone marks completion of the current turn.
-	MessageDone MessageKind = "done" // final message of a turn
-	// MessageLog is a diagnostic line from the agent process (e.g. stderr).
-	MessageLog MessageKind = "log" // diagnostic line from the agent process (e.g. stderr)
-	// MessageReasoning is a streaming fragment of the agent's reasoning (raw or summary).
-	MessageReasoning MessageKind = "reasoning"
-	// MessageReasoningContinue signals a boundary between reasoning summary parts.
-	// The current open reasoning record should be sealed; the next delta opens a
-	// fresh one. No status change implied.
-	MessageReasoningContinue MessageKind = "reasoning.continue"
+	ModeStream Mode = iota // fragment; a ModeFlush with the same content type follows
+	ModeFlush              // stream is closed; carries the same content type as ModeStream
+	ModeSingle             // standalone message; not part of a stream
 )
+
+// MessageContent is implemented only by types in this package.
+type MessageContent interface {
+	content()
+}
 
 // Message is a semantic unit of output from an agent turn.
 type Message struct {
-	Kind MessageKind
-	Text string
+	StreamID StreamID
+	Mode     Mode
+	Content  MessageContent
 }
+
+// Accumulate merges next into m, returning the updated message.
+// Used by consumers to build up stream state across ModeStream messages.
+// Returns an error if the StreamIDs or content types are incompatible.
+// When next is ModeFlush the returned message carries the same content as m
+// (the flush payload is empty) with Mode set to ModeFlush.
+func (m Message) Accumulate(next Message) (Message, error) {
+	if m.StreamID != next.StreamID {
+		return Message{}, fmt.Errorf("stream ID mismatch: %s vs %s", m.StreamID, next.StreamID)
+	}
+	switch c := m.Content.(type) {
+	case Output:
+		if nc, ok := next.Content.(Output); ok {
+			return Message{StreamID: m.StreamID, Mode: next.Mode, Content: Output{Text: c.Text + nc.Text}}, nil
+		}
+	case Reasoning:
+		if nc, ok := next.Content.(Reasoning); ok {
+			return Message{StreamID: m.StreamID, Mode: next.Mode, Content: Reasoning{Text: c.Text + nc.Text}}, nil
+		}
+	}
+	return Message{}, fmt.Errorf("incompatible content types: %T and %T", m.Content, next.Content)
+}
+
+// Content types. Value receivers are deliberate: all payload fields are
+// reference types in Go, so copying a struct header is always cheap. Value
+// receivers avoid nil pointer concerns and keep type switch cases free of *.
+
+// Output carries agent-produced text during a turn.
+type Output struct{ Text string }
+
+// Reasoning carries an extended-thinking fragment from the agent.
+type Reasoning struct{ Text string }
+
+// Log carries a diagnostic or process-level log line.
+type Log struct{ Text string }
+
+func (Output) content()    {}
+func (Reasoning) content() {}
+func (Log) content()       {}
 
 // Agent manages the lifecycle of and communication with an AI agent process.
 type Agent interface {
@@ -65,26 +110,28 @@ type Agent interface {
 }
 
 // SendAndWait sends a prompt and blocks until the turn is complete,
-// returning the accumulated response text.
+// returning the accumulated output text.
+//
+// Turn completion is signalled by Output+ModeFlush. Turns are strictly
+// sequential so there is at most one output stream in flight at a time.
 func SendAndWait(a Agent, prompt string) (string, error) {
 	if err := a.Send(prompt); err != nil {
 		return "", fmt.Errorf("send: %w", err)
 	}
-	var sb strings.Builder
+	var sb []byte
 	for {
 		msg, err := a.Read()
 		if err != nil {
 			return "", fmt.Errorf("read: %w", err)
 		}
-		switch msg.Kind {
-		case MessageDelta:
-			sb.WriteString(msg.Text)
-		case MessageDone:
-			return sb.String(), nil
-		case MessageLog:
-			// Intentionally ignored: SendAndWait returns only the agent's text output.
-		default:
-			// Unknown message kinds are ignored for forward compatibility.
+		if c, ok := msg.Content.(Output); ok {
+			switch msg.Mode {
+			case ModeStream:
+				sb = append(sb, c.Text...)
+			case ModeFlush:
+				return string(sb), nil
+			default:
+			}
 		}
 	}
 }

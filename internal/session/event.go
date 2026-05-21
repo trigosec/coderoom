@@ -1,5 +1,7 @@
 package session
 
+import "github.com/trigosec/coderoom/internal/agent"
+
 // Kind identifies the type of a session event.
 type Kind string
 
@@ -9,22 +11,20 @@ const (
 	KindAgentStarted  Kind = "agent.started"
 	KindAgentStopped  Kind = "agent.stopped"
 	KindAgentCrashed  Kind = "agent.crashed"
-	KindAgentLog      Kind = "agent.log" // diagnostic line from the agent process (e.g. stderr)
+	KindAgentLog      Kind = "agent.log"     // diagnostic line from the agent process (e.g. stderr)
+	KindAgentMessage  Kind = "agent.message" // typed agent output; see Msg field
 
-	KindBroadcast         Kind = "message.broadcast"          // message to all agents
-	KindSharedSend        Kind = "message.shared"             // instruction to one agent, visible to all
-	KindSharedNotice      Kind = "message.notice"             // context notice forwarded to a listener
-	KindDelta             Kind = "message.delta"              // streaming text fragment
-	KindReasoningDelta    Kind = "message.reasoning"          // streaming reasoning fragment
-	KindReasoningContinue Kind = "message.reasoning.continue" // reasoning record boundary; seal current, next delta opens fresh
-	KindDone              Kind = "message.done"               // turn complete
+	KindBroadcast    Kind = "message.broadcast" // message sent to all agents
+	KindSharedSend   Kind = "message.shared"    // instruction to one agent, visible to all
+	KindSharedNotice Kind = "message.notice"    // context notice forwarded to a listener
 )
 
 // Event is a runtime notification emitted by the session controller.
 type Event struct {
 	Kind  Kind
-	Alias string // participant alias the event relates to
-	Text  string // message text or delta fragment
+	Alias string         // participant alias the event relates to
+	Text  string         // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
+	Msg   *agent.Message // for KindAgentMessage; nil for all other kinds
 }
 
 // Observer receives session events. Implementations must be fast; a blocking

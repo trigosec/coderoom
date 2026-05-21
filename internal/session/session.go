@@ -250,55 +250,39 @@ func (s *Session) kindForReadError(stop <-chan struct{}) Kind {
 	}
 }
 
+func (s *Session) markWorking(alias string) {
+	s.withParticipant(alias, func(p *participant.Participant) {
+		if p.Status != participant.StatusWorking {
+			p.MarkWorking(s.now())
+		}
+	})
+}
+
 func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
-	switch msg.Kind {
-	case agent.MessageLog:
-		s.handleAgentLog(alias, msg.Text)
-	case agent.MessageDelta:
-		s.handleAgentDelta(alias, msg.Text)
-	case agent.MessageReasoning:
-		s.handleAgentReasoning(alias, msg.Text)
-	case agent.MessageReasoningContinue:
-		s.notify(Event{Kind: KindReasoningContinue, Alias: alias})
-	case agent.MessageDone:
-		s.handleAgentDone(alias)
-	}
-}
-
-func (s *Session) handleAgentLog(alias string, text string) {
-	if text == "" {
-		return
-	}
-	s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: text})
-}
-
-func (s *Session) handleAgentDelta(alias string, text string) {
-	if text == "" {
-		return
-	}
-	s.withParticipant(alias, func(p *participant.Participant) {
-		if p.Status != participant.StatusWorking {
-			p.MarkWorking(s.now())
+	switch c := msg.Content.(type) {
+	case agent.Log:
+		if c.Text != "" {
+			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: c.Text})
 		}
-	})
-	s.notify(Event{Kind: KindDelta, Alias: alias, Text: text})
-}
-
-func (s *Session) handleAgentReasoning(alias string, text string) {
-	if text == "" {
 		return
-	}
-	s.withParticipant(alias, func(p *participant.Participant) {
-		if p.Status != participant.StatusWorking {
-			p.MarkWorking(s.now())
+	case agent.Output:
+		switch msg.Mode {
+		case agent.ModeStream:
+			s.markWorking(alias)
+		case agent.ModeFlush:
+			s.withParticipant(alias, func(p *participant.Participant) {
+				p.MarkIdle(s.now())
+			})
+		default:
 		}
-	})
-	s.notify(Event{Kind: KindReasoningDelta, Alias: alias, Text: text})
-}
+	case agent.Reasoning:
+		switch msg.Mode {
+		case agent.ModeStream:
+			s.markWorking(alias)
+		default:
+		}
+	}
 
-func (s *Session) handleAgentDone(alias string) {
-	s.withParticipant(alias, func(p *participant.Participant) {
-		p.MarkIdle(s.now())
-	})
-	s.notify(Event{Kind: KindDone, Alias: alias})
+	m := msg
+	s.notify(Event{Kind: KindAgentMessage, Alias: alias, Msg: &m})
 }
