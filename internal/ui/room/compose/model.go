@@ -2,12 +2,9 @@
 package compose
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/rivo/uniseg"
 )
 
 // Model holds the textarea and its height constraints.
@@ -15,7 +12,7 @@ type Model struct {
 	input     textarea.Model
 	maxH      int
 	visH      int // total visual rows (cached)
-	scrollOff int // approximate first visible visual row (cached)
+	scrollOff int // first visible visual row (cached)
 }
 
 // New creates a focused Model with default decorations applied.
@@ -41,7 +38,13 @@ func (m Model) SetWidth(w int) Model {
 // SetMaxHeightFromTotal derives the input height cap from the total terminal
 // height and recalculates the current input height.
 func (m Model) SetMaxHeightFromTotal(totalH int) Model {
-	m.maxH = inputMaxHeight(totalH)
+	// Keep space for:
+	//   - at least 1 line of history viewport
+	//   - 2 separator lines (top + bottom)
+	//
+	// When the terminal is very small, this clamps the input to avoid the layout
+	// exceeding totalH.
+	m.maxH = min(inputMaxHeight(totalH), max(totalH-3, 1))
 	return m.recalcHeight()
 }
 
@@ -76,7 +79,9 @@ func (m Model) Blur() Model {
 }
 
 func inputMaxHeight(totalH int) int {
-	return min(8, max(totalH/3, 1))
+	// Prefer enough room to show a short wrapped paragraph without immediately
+	// hiding the first visual row.
+	return min(8, max(totalH/3, 3))
 }
 
 // HasAbove reports whether content is scrolled above the visible area.
@@ -88,52 +93,53 @@ func (m Model) HasBelow() bool { return m.scrollOff+m.input.Height() < m.visH }
 func (m Model) recalcHeight() Model {
 	m.input = applyDecorations(m.input)
 	if m.maxH > 0 {
-		m.visH = visualRowCount(m.input.Value(), m.input.Width())
-		m.input.SetHeight(min(max(m.visH, 1), m.maxH))
-		m.scrollOff = m.approximateScrollOff()
+		// textarea.Model.Width() is the *content width* (prompt/borders excluded),
+		// so do not subtract promptWidth here.
+		m.visH = countVisualRows(m.input.Value(), m.input.Width())
+		h := min(max(m.visH, 1), m.maxH)
+		m.input.SetHeight(h)
+		m.scrollOff = m.computeScrollOff()
 	}
 	return m
 }
 
-// approximateScrollOff estimates the first visible visual row by assuming the
-// textarea has scrolled to keep the cursor at the bottom of the viewport. This
-// is accurate when typing at the end of the buffer (the common case) and
-// slightly over-estimates when the cursor is in the middle of the visible area.
-func (m Model) approximateScrollOff() int {
+// computeScrollOff keeps the cursor within the visible region, matching the
+// textarea viewport behavior but using our own rendered-line model.
+func (m Model) computeScrollOff() int {
 	h := m.input.Height()
-	if m.visH <= h {
+	if h <= 0 || m.visH <= h {
 		return 0
 	}
-	cursorLogLine := m.input.Line()
-	contentW := m.input.Width() - promptWidth
-	if contentW <= 0 {
-		return max(0, cursorLogLine-h+1)
+	cursorRow := m.cursorVisualRow()
+	if cursorRow < 0 {
+		cursorRow = 0
 	}
-	visual := 0
-	idx := 0
-	for line := range strings.SplitSeq(m.input.Value(), "\n") {
-		w := uniseg.StringWidth(line)
-		visual += max(1, (w+contentW-1)/contentW)
-		if idx == cursorLogLine {
-			break
-		}
-		idx++
+	maxOff := max(0, m.visH-h)
+
+	off := m.scrollOff
+	if off < 0 {
+		off = 0
 	}
-	return max(0, visual-h)
+	if off > maxOff {
+		off = maxOff
+	}
+
+	if cursorRow < off {
+		off = cursorRow
+	} else if cursorRow >= off+h {
+		off = cursorRow - h + 1
+	}
+	return clamp(off, 0, maxOff)
 }
 
-// visualRowCount returns the number of terminal rows needed to render text
-// given totalWidth (the full textarea width including the prompt prefix).
-func visualRowCount(text string, totalWidth int) int {
-	contentW := totalWidth - promptWidth
-	if contentW <= 0 {
-		return max(1, strings.Count(text, "\n")+1)
+func (m Model) cursorVisualRow() int {
+	row, _ := cursorVisualRowCol(m.input, m.input.Width())
+	return row
+}
+
+func clamp(v, low, high int) int {
+	if high < low {
+		panic("clamp: high < low")
 	}
-	total := 0
-	for line := range strings.SplitSeq(text, "\n") {
-		w := uniseg.StringWidth(line)
-		rows := max(1, (w+contentW-1)/contentW)
-		total += rows
-	}
-	return max(1, total)
+	return min(high, max(low, v))
 }
