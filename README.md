@@ -1,101 +1,99 @@
 # Code Room
 
-A CLI-native multi-agent coding workspace.
+A CLI-native workspace for coordinating AI coding agents.
 
-Code Room lets you invite multiple AI coding tools into a shared session, assign them roles, control their autonomy, and coordinate their collaboration through structured communication channels.
-
-Rather than being another coding agent, Code Room acts as a coordination layer for multiple agents working together in a controlled environment.
+Code Room brings mob programming to the terminal: a small team of specialised agents (builder, architect, reviewer, security) working together in a shared room, with git as the common workspace and you as the decision authority.
 
 ---
 
 ## The Problem
 
-A single LLM does not consistently produce the quality needed for production code. Different models have different blind spots. A reviewer that did not write the code catches things the author missed — the same reason human code review works.
+Mob programming is a high-bandwidth way to work. The whole team focuses on one task, sharing ideas, challenging assumptions, and converging on better solutions for hard problems.
 
-Working with LLMs well requires structure: clear roles, controlled autonomy, and a shared workspace where the human remains the decision authority.
+AI agents are powerful, but without a mob-style workflow the work can fragment across tools and threads. It becomes harder to keep a shared understanding, avoid duplicated effort, and review the changes with confidence.
 
-Code Room formalises that structure.
-
----
-
-## How It Works
-
-A session consists of multiple AI agents, each with:
-
-- **A backend**: the underlying CLI tool (Claude Code, Codex, Aider, etc.)
-- **An alias**: a human-friendly name for interaction (e.g. `ada`, `turing`)
-- **A role**: a behavioral contract (builder, reviewer, tester, architect)
-- **Capabilities**: what the agent is allowed to do (read, write, test, shell)
-- **An initiative level**: how autonomously the agent acts
-
-Agents share a git worktree. The repo is the shared workspace. `git diff` is the shared language of change.
+Code Room aims to replicate the mob programming experience in the terminal, with named roles, a shared room for coordination, and a shared git workspace where the human remains the decision authority.
 
 ---
 
-## Example Session
+## Status (Shared Room Alpha)
+
+This repository is early-stage:
+
+- The UI is a **single shared room** (no private agent tabs yet).
+- The focus is on **comfortable single-agent use**.
+- The current backend is **Codex app-server** (driven over JSON-RPC via stdio).
+
+Roadmap: see `docs/roadmap.md`.
+
+---
+
+## Quick start
+
+Prerequisites:
+
+- Go (see `go.mod`)
+- Node.js + `npx`
+- A working Codex CLI setup (sanity check: `npx @openai/codex app-server` should start)
+
+Build and run:
 
 ```
-/create session bugfix-auth
-/invite claude-code as ada role builder
-/invite codex as turing role reviewer
-
-/task "Fix failing OAuth refresh test"
-
-@ada implement the fix
-@turing review the diff
-@hopper run tests
-
-/commit "Fix OAuth refresh test"
+make build
+./bin/coderoom
 ```
 
 ---
 
-## Roles
+## Using Code Room (today)
 
-| Role | Responsibility |
-|---|---|
-| Builder | Writes and modifies code |
-| Reviewer | Critiques changes, identifies issues |
-| Tester | Runs tests, validates behaviour |
-| Architect | Proposes system design decisions |
-| Security Reviewer | Evaluates risks and vulnerabilities |
+Start one agent:
 
----
+```
+/invite ada
+```
 
-## Initiative Levels
+`ada` is the alias you will use to address this agent in the room. For now,
+the backend (Codex) and role are implicit; a future version will let you
+specify both.
 
-| Level | Behaviour |
-|---|---|
-| Manual | Only acts when explicitly addressed |
-| Suggestive | May comment, cannot change state |
-| Active | May propose changes |
-| Autonomous | May act within policy constraints |
+Send a message:
 
-Start explicit. Grant autonomy gradually.
+```
+@ada implement a small change: ...
+```
 
----
+Useful commands:
 
-## Design Principles
+```
+/who            # show roster
+/help           # show commands
+/cancel <alias> # interrupt current work (best-effort)
+/remove <alias> # stop + remove agent
+/quit           # exit
+```
 
-1. Human-in-the-loop authority
-2. Agents are collaborators, not owners
-3. Shared room is the coordination layer
-4. Git is the source of truth
-5. Explicit before autonomous
-6. Transparency over hidden behaviour
+If only one agent is present, plain text is broadcast to it (equivalent to
+sending to that agent).
 
 ---
 
-## Status
+## Design docs
 
-Early stage. Architecture is defined. Implementation is starting.
-
-Contributions, issues, and feedback welcome.
+- `docs/design/concept.md`
+- `docs/design/architecture.md`
 
 ---
 
-## Motivation
+## Development
 
-This project grew out of a personal workflow: using two LLMs in structured roles (one implements, one reviews) produces materially better code than using one. Code Room is the attempt to formalise and automate that pattern.
+```
+make test  # quick test suite
+make check # golangci-lint and test suite with -race
+```
 
-More context: [Quality vs Vibes: what disciplined AI-assisted development looks like](#)
+Integration tests (require external CLIs):
+
+```
+make test-integration
+```
