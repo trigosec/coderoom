@@ -79,6 +79,59 @@ func TestView_singleLine(t *testing.T) {
 	}
 }
 
+func TestUp_onFirstLine_movesToFirstChar(t *testing.T) {
+	m := New()
+	m = m.SetWidth(40).SetMaxHeightFromTotal(30).SetValue("hello\nworld")
+
+	// Move to first line.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.input.Line(); got != 0 {
+		t.Fatalf("expected to be on first line, got %d", got)
+	}
+	// Put cursor at a non-zero column on the first line.
+	// Note: this mutates the textarea directly (bypassing Update/recalcHeight),
+	// which is intentional here: the test is about cursor movement semantics.
+	m.input.SetCursor(3)
+	if off := m.input.LineInfo().ColumnOffset; off == 0 {
+		t.Fatalf("expected cursor column >0 before Up, got %d", off)
+	}
+
+	// Up at top should move to first character.
+	beforeLI := m.input.LineInfo()
+	if !m.input.Focused() {
+		t.Fatal("expected textarea to be focused")
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	li := m.input.LineInfo()
+	if got := m.input.Line(); got != 0 {
+		t.Fatalf("expected to remain on first line after Up, got %d", got)
+	}
+	if li.StartColumn != 0 || li.ColumnOffset != 0 {
+		t.Fatalf("expected cursor at col 0 after Up at top, got start=%d offset=%d (before ro=%d h=%d; after ro=%d h=%d)",
+			li.StartColumn, li.ColumnOffset, beforeLI.RowOffset, beforeLI.Height, li.RowOffset, li.Height)
+	}
+}
+
+func TestDown_onLastLine_movesToLastChar(t *testing.T) {
+	m := New()
+	m = m.SetWidth(40).SetMaxHeightFromTotal(30).SetValue("hello\nworld")
+
+	// Ensure we are on last line and move cursor to start.
+	if got := m.input.Line(); got != 1 {
+		t.Fatalf("expected to start on last line, got %d", got)
+	}
+	m.input.CursorStart()
+	if off := m.input.LineInfo().ColumnOffset; off != 0 {
+		t.Fatalf("expected cursor at start before Down, got %d", off)
+	}
+
+	// Down at bottom should move to end of line.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if off := m.input.LineInfo().ColumnOffset; off != len("world") {
+		t.Fatalf("expected cursor to move to end of line (%d), got %d", len("world"), off)
+	}
+}
+
 func TestView_multiLine_continuationIndented(t *testing.T) {
 	m := New()
 	m = m.SetWidth(40).SetMaxHeightFromTotal(20).SetValue("first\nsecond")

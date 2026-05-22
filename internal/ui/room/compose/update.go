@@ -67,38 +67,88 @@ func textareaPasteString(msg tea.Msg) (string, bool) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
-		if m.input.Value() == "" {
-			return m, nil
-		}
-		m.input.Reset()
-		return m.recalcHeight(), nil
-	case tea.KeyEnter:
-		if msg.Alt {
-			m.input.InsertRune('\n')
-			return m.recalcHeight(), nil
-		}
-		// Non-Alt Enter is handled by the parent; treat as no-op here.
-		return m, nil
-	default:
-		// Only apply rune-by-rune for actual pastes. IMEs can also emit multi-rune
-		// KeyRunes, and per-rune updates make input feel sluggish.
-		if msg.Type == tea.KeyRunes && msg.Paste && len(msg.Runes) > 1 {
-			var cmds []tea.Cmd
-			for _, r := range msg.Runes {
-				m = m.recalcHeight()
-				var cmd tea.Cmd
-				m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-				cmds = append(cmds, cmd)
-				m = m.recalcHeight()
-			}
-			return m, tea.Batch(cmds...)
-		}
+	if out, ok := m.handleCtrlCKey(msg); ok {
+		return out, nil
+	}
+	if out, ok := m.handleEnterKey(msg); ok {
+		return out, nil
+	}
+	if out, cmd, ok := m.handleNavKey(msg); ok {
+		return out, cmd
+	}
+	return m.handleTextKey(msg)
+}
 
-		m = m.recalcHeight()
+func (m Model) handleCtrlCKey(msg tea.KeyMsg) (Model, bool) {
+	if msg.Type != tea.KeyCtrlC {
+		return m, false
+	}
+	if m.input.Value() == "" {
+		return m, true
+	}
+	m.input.Reset()
+	return m.recalcHeight(), true
+}
+
+func (m Model) handleEnterKey(msg tea.KeyMsg) (Model, bool) {
+	if msg.Type != tea.KeyEnter {
+		return m, false
+	}
+	if msg.Alt {
+		m.input.InsertRune('\n')
+		return m.recalcHeight(), true
+	}
+	// Non-Alt Enter is handled by the parent; treat as no-op here.
+	return m, true
+}
+
+func (m Model) handleNavKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+	switch msg.Type {
+	case tea.KeyUp:
+		// When already on the first visual row of the buffer, Up moves to the
+		// first character.
+		li := m.input.LineInfo()
+		if m.input.Line() == 0 && li.RowOffset == 0 && li.ColumnOffset > 0 {
+			m.input.CursorStart()
+			return m.recalcHeight(), nil, true
+		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
-		return m.recalcHeight(), cmd
+		return m.recalcHeight(), cmd, true
+	case tea.KeyDown:
+		// When already on the last line, Down moves to the last character.
+		lastLine := m.input.LineCount() - 1
+		li := m.input.LineInfo()
+		if m.input.Line() >= lastLine && li.RowOffset+1 >= li.Height {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnd})
+			return m.recalcHeight(), cmd, true
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m.recalcHeight(), cmd, true
+	default:
+		return m, nil, false
 	}
+}
+
+func (m Model) handleTextKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// Only apply rune-by-rune for actual pastes. IMEs can also emit multi-rune
+	// KeyRunes, and per-rune updates make input feel sluggish.
+	if msg.Type == tea.KeyRunes && msg.Paste && len(msg.Runes) > 1 {
+		var cmds []tea.Cmd
+		for _, r := range msg.Runes {
+			m = m.recalcHeight()
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			cmds = append(cmds, cmd)
+			m = m.recalcHeight()
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	m = m.recalcHeight()
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m.recalcHeight(), cmd
 }

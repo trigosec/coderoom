@@ -14,9 +14,9 @@ Goal: work comfortably with a single agent in the shared room.
 ### UI: Compose
 
 [X] Very long lines don’t display well (repro: a 3-line wrapped sentence).
-- Cursor movement:
-  - Up should move to the first character when already on the first line.
-  - Down should move to the last character when already on the last line.
+[X] Cursor movement:
+  [X] Up should move to the first character when already on the first line.
+  [X] Down should move to the last character when already on the last line.
 
 ### UI: History
 
