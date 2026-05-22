@@ -20,11 +20,10 @@ Goal: work comfortably with a single agent in the shared room.
 
 ### UI: History
 
-- Command records are too verbose:
-  - Show the command (truncate after first line / first N columns).
-  - Avoid displaying command output inline by default.
-  - Provide a clear affordance for viewing full command + output (e.g. “focus
-    history then `Ctrl+g`”).
+[X] Command records are too verbose:
+  [X] Show the command (truncate after first 3 lines).
+  [X] Avoid displaying command output inline by default.
+  [X] Provide a clear affordance for viewing full command + output (e.g. “focus history then `Ctrl+g`”).
 [X] Command prefix alignment:
   [X] Commands currently show `$` but skip the `<glyph> <participant>:` line.
   [X] Add the same participant prefix line used by other content, so command

@@ -41,7 +41,11 @@ func (m Model) RenderedContent() string {
 // PlainText returns the ANSI-stripped, double-newline-joined rendered records
 // for transcript export.
 func (m Model) PlainText() string {
-	return strings.Join(m.renderedRecords, "\n\n")
+	parts := make([]string, 0, len(m.records))
+	for _, r := range m.records {
+		parts = append(parts, renderRecordForTranscript(r, m.resolveColor))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // DebugLabel returns a compact summary string for the separator label.
