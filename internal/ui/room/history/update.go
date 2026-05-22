@@ -129,12 +129,17 @@ func (m Model) sealCommandStream(streamID agent.StreamID) Model {
 	if !ok {
 		return m
 	}
+	wasAtBottom := m.viewport.AtBottom()
 	if c, ok := slot.msg.Content.(agent.Command); ok {
 		m.records[slot.recordIdx].ExitCode = c.ExitCode
 	}
 	m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
 	delete(m.streaming, streamID)
-	return m.syncViewport()
+	m = m.syncViewport()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+	return m
 }
 
 func bodyFrom(msg agent.Message) string {
