@@ -102,6 +102,24 @@ type requestPermissionProfile struct {
 	Network    json.RawMessage `json:"network"`
 }
 
+// itemLifecycleParams is the shared shape for item/started and item/completed.
+type itemLifecycleParams struct {
+	TurnID string          `json:"turnId"`
+	Item   json.RawMessage `json:"item"`
+}
+
+// commandExecutionItem is the subset of CommandExecutionThreadItem fields used
+// by coderoom. Adapter-irrelevant fields (processId, source, commandActions)
+// are omitted.
+type commandExecutionItem struct {
+	Type             string `json:"type"`
+	ID               string `json:"id"`
+	Command          string `json:"command"`
+	Cwd              string `json:"cwd"`
+	AggregatedOutput string `json:"aggregatedOutput"`
+	ExitCode         *int   `json:"exitCode"`
+}
+
 type commandDecisionResult struct {
 	Decision string `json:"decision"`
 }

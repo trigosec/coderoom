@@ -131,6 +131,117 @@ func TestRead_reasoningSummaryPartAdded_continue(t *testing.T) {
 	}
 }
 
+func TestRead_itemStarted_commandExecution(t *testing.T) {
+	item := `{"type":"commandExecution","id":"cmd1","command":"ls -la","cwd":"/tmp","status":"inProgress","commandActions":[]}`
+	params := `{"turnId":"t1","threadId":"th1","startedAtMs":0,"item":` + item + `}`
+	stdout := bytes.NewBufferString(`{"method":"item/started","params":` + params + `}` + "\n")
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cmd, ok := msg.Content.(agent.Command)
+	if !ok {
+		t.Fatalf("expected Command content, got %T", msg.Content)
+	}
+	if msg.Mode != agent.ModeStream {
+		t.Errorf("expected ModeStream, got mode=%v", msg.Mode)
+	}
+	if cmd.Command != "ls -la" || cmd.Cwd != "/tmp" {
+		t.Errorf("unexpected command fields: command=%q cwd=%q", cmd.Command, cmd.Cwd)
+	}
+}
+
+func TestRead_itemStarted_nonCommand_skipped(t *testing.T) {
+	// item/started for a non-commandExecution type must be silently skipped.
+	nonCmd := `{"type":"agentMessage","id":"a1","text":"hi"}`
+	params := `{"turnId":"t1","threadId":"th1","startedAtMs":0,"item":` + nonCmd + `}`
+	stdout := bytes.NewBufferString(
+		`{"method":"item/started","params":` + params + `}` + "\n" +
+			`{"method":"turn/completed","params":{"turn":{"id":"t1"}}}` + "\n",
+	)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush from turn/completed after skip, got mode=%v", msg.Mode)
+	}
+}
+
+func TestRead_commandExecutionOutputDelta(t *testing.T) {
+	params := `{"itemId":"cmd1","turnId":"t1","threadId":"th1","delta":"hello\n"}`
+	stdout := bytes.NewBufferString(`{"method":"item/commandExecution/outputDelta","params":` + params + `}` + "\n")
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cmd, ok := msg.Content.(agent.Command)
+	if !ok {
+		t.Fatalf("expected Command content, got %T", msg.Content)
+	}
+	if msg.Mode != agent.ModeStream {
+		t.Errorf("expected ModeStream, got mode=%v", msg.Mode)
+	}
+	if cmd.Output != "hello\n" {
+		t.Errorf("unexpected output: %q", cmd.Output)
+	}
+}
+
+func TestRead_itemCompleted_commandExecution(t *testing.T) {
+	item := `{"type":"commandExecution","id":"cmd1","command":"ls","cwd":"/tmp","status":"completed","commandActions":[],"exitCode":0}`
+	params := `{"turnId":"t1","threadId":"th1","completedAtMs":0,"item":` + item + `}`
+	stdout := bytes.NewBufferString(`{"method":"item/completed","params":` + params + `}` + "\n")
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	// item/completed emits two messages: ModeStream with ExitCode, then zero-value ModeFlush.
+	assertCommandExitCodeStream(t, c, 0)
+	assertCommandZeroFlush(t, c)
+}
+
+func assertCommandExitCodeStream(t *testing.T, c *Client, wantExit int) {
+	t.Helper()
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("Read (exit code stream): %v", err)
+	}
+	cmd, ok := msg.Content.(agent.Command)
+	if !ok {
+		t.Fatalf("expected Command content, got %T", msg.Content)
+	}
+	if msg.Mode != agent.ModeStream {
+		t.Errorf("expected ModeStream, got %v", msg.Mode)
+	}
+	if cmd.ExitCode == nil {
+		t.Error("ExitCode is nil on exit code stream message")
+	} else if *cmd.ExitCode != wantExit {
+		t.Errorf("expected ExitCode=%d, got %d", wantExit, *cmd.ExitCode)
+	}
+}
+
+func assertCommandZeroFlush(t *testing.T, c *Client) {
+	t.Helper()
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("Read (flush): %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush, got %v", msg.Mode)
+	}
+	flush, ok := msg.Content.(agent.Command)
+	if !ok {
+		t.Fatalf("expected Command content on flush, got %T", msg.Content)
+	}
+	if flush != (agent.Command{}) {
+		t.Errorf("expected zero-value Command on flush, got %+v", flush)
+	}
+}
+
 func TestRead_turnFailed(t *testing.T) {
 	stdout := bytes.NewBufferString("{\"method\":\"turn/failed\",\"params\":{}}\n")
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)

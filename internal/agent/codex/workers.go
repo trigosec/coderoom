@@ -109,17 +109,21 @@ func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool 
 		return false
 	case noticeUnhandled:
 	}
-	agentMsg, ok, err := messageFromEnvelope(msg)
+	agentMsgs, err := messageFromEnvelope(msg)
 	if err != nil {
-		readMsg := readMessage{err: err}
-		sendBufMessage(ctx, c, readMsg)
+		sendBufMessage(ctx, c, readMessage{err: err})
 		return false
 	}
-	if !ok {
-		return true
+	return sendAgentMessages(ctx, c, agentMsgs)
+}
+
+func sendAgentMessages(ctx context.Context, c *Client, msgs []agent.Message) bool {
+	for _, m := range msgs {
+		if !sendBufMessage(ctx, c, readMessage{msg: m}) {
+			return false
+		}
 	}
-	readMsg := readMessage{msg: agentMsg}
-	return sendBufMessage(ctx, c, readMsg)
+	return true
 }
 
 func sendBufMessage(ctx context.Context, c *Client, msg readMessage) bool {

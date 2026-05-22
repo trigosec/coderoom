@@ -2,6 +2,7 @@
 package history
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -19,14 +20,18 @@ const (
 	RecordKindSystem                        // lifecycle and routing notices
 	RecordKindLog                           // agent diagnostic line (stderr)
 	RecordKindReasoning                     // streaming internal reasoning trace from an agent
+	RecordKindCommand                       // shell command execution item from an agent
 )
 
 // Record is a single displayable entry in the conversation history.
 type Record struct {
-	Kind    RecordKind
-	Alias   string   // agent alias; empty for user input and system records
-	Body    string   // accumulated content; grows during streaming
-	Routing []string // aliases shown in the footer (broadcast / direct send)
+	Kind     RecordKind
+	Alias    string   // agent alias; empty for user input and system records
+	Body     string   // accumulated content; grows during streaming
+	Routing  []string // aliases shown in the footer (broadcast / direct send)
+	Cmd      string   // shell command string; set on RecordKindCommand
+	Cwd      string   // working directory for Cmd; set on RecordKindCommand
+	ExitCode *int     // process exit code; nil until RecordKindCommand is sealed
 }
 
 var (
@@ -40,6 +45,7 @@ const (
 	logPrefix       = "▸ "
 	agentBullet     = "● "
 	reasoningBullet = "◈ "
+	commandBullet   = "$ "
 	routingArrow    = "→ "
 )
 
@@ -55,6 +61,8 @@ func renderRecord(r Record, width int, colors func(string) string) string {
 		return logStyle.Render(renderLogBody(r.Body, width))
 	case RecordKindReasoning:
 		return renderReasoning(r, width, colors)
+	case RecordKindCommand:
+		return renderCommand(r, width, colors)
 	}
 	return r.Body
 }
@@ -134,6 +142,45 @@ func renderReasoning(r Record, width int, colors func(string) string) string {
 	}
 	body := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
 	return header + "\n\n" + body
+}
+
+func renderCommand(r Record, width int, colors func(string) string) string {
+	color := colors(r.Alias)
+	cmd := r.Cmd
+	if cmd == "" {
+		cmd = "…"
+	}
+	var header string
+	if color != "" {
+		header = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(commandBullet) + cmd
+	} else {
+		header = commandBullet + cmd
+	}
+
+	if r.Body == "" && r.ExitCode == nil {
+		return header
+	}
+
+	var sb strings.Builder
+	sb.WriteString(header)
+
+	if r.Body != "" {
+		sb.WriteString("\n\n")
+		lines := strings.Split(strings.TrimRight(r.Body, "\n"), "\n")
+		for i, line := range lines {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(wrapLine(agentBodyIndent+line, width, agentBodyIndent))
+		}
+	}
+
+	if r.ExitCode != nil {
+		sb.WriteString("\n")
+		sb.WriteString(logStyle.Render(fmt.Sprintf("%sexit %d", agentBodyIndent, *r.ExitCode)))
+	}
+
+	return sb.String()
 }
 
 func renderRoutingFooter(aliases []string, colors func(string) string) string {

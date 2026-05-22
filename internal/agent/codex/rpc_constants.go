@@ -15,6 +15,11 @@ const (
 	methodReasoningSummaryTextDelta = "item/reasoning/summaryTextDelta"
 	methodReasoningSummaryPartAdded = "item/reasoning/summaryPartAdded"
 
+	methodItemStarted   = "item/started"
+	methodItemCompleted = "item/completed"
+
+	methodCommandExecutionOutputDelta = "item/commandExecution/outputDelta"
+
 	methodCommandExecutionRequestApproval = "item/commandExecution/requestApproval"
 	methodFileChangeRequestApproval       = "item/fileChange/requestApproval"
 	methodPermissionsRequestApproval      = "item/permissions/requestApproval"

@@ -62,6 +62,25 @@ func (m Message) Accumulate(next Message) (Message, error) {
 		if nc, ok := next.Content.(Reasoning); ok {
 			return Message{StreamID: m.StreamID, Mode: next.Mode, Content: Reasoning{Text: c.Text + nc.Text}}, nil
 		}
+	case Command:
+		if nc, ok := next.Content.(Command); ok {
+			exitCode := nc.ExitCode
+			if exitCode == nil {
+				exitCode = c.ExitCode
+			}
+			output := c.Output
+			if nc.overrideOutput != nil {
+				output = *nc.overrideOutput
+			} else {
+				output += nc.Output
+			}
+			return Message{StreamID: m.StreamID, Mode: next.Mode, Content: Command{
+				Command:  c.Command,
+				Cwd:      c.Cwd,
+				Output:   output,
+				ExitCode: exitCode,
+			}}, nil
+		}
 	}
 	return Message{}, fmt.Errorf("incompatible content types: %T and %T", m.Content, next.Content)
 }
@@ -79,9 +98,36 @@ type Reasoning struct{ Text string }
 // Log carries a diagnostic or process-level log line.
 type Log struct{ Text string }
 
+// Command carries a shell command execution item from the agent.
+// On ModeStream: Output holds a stdout+stderr delta fragment; Command and Cwd
+// are populated only on the first fragment (item/started).
+// ExitCode is populated on the last stream message.
+type Command struct {
+	Command  string
+	Cwd      string
+	Output   string
+	ExitCode *int
+	// overrideOutput, when non-nil, replaces any accumulated Output on the
+	// next Accumulate call rather than being appended. It is never set on
+	// accumulated results — only on messages produced by adapters that receive
+	// a canonical complete output (e.g. aggregatedOutput from item/completed).
+	overrideOutput *string
+}
+
+// CommandWithOverrideOutput returns a Command whose Output, when accumulated,
+// replaces any previously accumulated delta output rather than appending to it.
+// output == "" is treated as absent (returns a zero-value Command).
+func CommandWithOverrideOutput(output string) Command {
+	if output == "" {
+		return Command{}
+	}
+	return Command{Output: output, overrideOutput: &output}
+}
+
 func (Output) content()    {}
 func (Reasoning) content() {}
 func (Log) content()       {}
+func (Command) content()   {}
 
 // Agent manages the lifecycle of and communication with an AI agent process.
 type Agent interface {

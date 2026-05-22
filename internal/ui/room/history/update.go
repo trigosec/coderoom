@@ -65,6 +65,8 @@ func (m Model) AppendLogRecord(alias, body string) Model {
 // HandleAgentMessage appends or extends a streaming record based on msg.
 // Output+ModeFlush (turn-end) clears all open streams for alias.
 // Reasoning+ModeFlush clears only the matching reasoning stream.
+// Command+ModeFlush seals the stream; the exit code was accumulated via the
+// preceding Command+ModeStream from item/completed.
 func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
 	switch msg.Content.(type) {
 	case agent.Output:
@@ -76,6 +78,11 @@ func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
 		if msg.Mode == agent.ModeFlush {
 			delete(m.streaming, msg.StreamID)
 			return m
+		}
+		return m.appendOrExtend(alias, msg)
+	case agent.Command:
+		if msg.Mode == agent.ModeFlush {
+			return m.sealCommandStream(msg.StreamID)
 		}
 		return m.appendOrExtend(alias, msg)
 	}
@@ -107,10 +114,27 @@ func (m Model) appendOrExtend(alias string, msg agent.Message) Model {
 func (m Model) openRecord(alias string, msg agent.Message) Model {
 	idx := len(m.records)
 	r := Record{Kind: recordKindFor(msg), Alias: alias, Body: bodyFrom(msg)}
+	if c, ok := msg.Content.(agent.Command); ok {
+		r.Cmd = c.Command
+		r.Cwd = c.Cwd
+	}
 	m.records = append(m.records, r)
 	m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
 	m.streaming[msg.StreamID] = streamSlot{idx, msg}
 	return m
+}
+
+func (m Model) sealCommandStream(streamID agent.StreamID) Model {
+	slot, ok := m.streaming[streamID]
+	if !ok {
+		return m
+	}
+	if c, ok := slot.msg.Content.(agent.Command); ok {
+		m.records[slot.recordIdx].ExitCode = c.ExitCode
+	}
+	m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
+	delete(m.streaming, streamID)
+	return m.syncViewport()
 }
 
 func bodyFrom(msg agent.Message) string {
@@ -119,13 +143,18 @@ func bodyFrom(msg agent.Message) string {
 		return c.Text
 	case agent.Reasoning:
 		return c.Text
+	case agent.Command:
+		return c.Output
 	}
 	return ""
 }
 
 func recordKindFor(msg agent.Message) RecordKind {
-	if _, ok := msg.Content.(agent.Reasoning); ok {
+	switch msg.Content.(type) {
+	case agent.Reasoning:
 		return RecordKindReasoning
+	case agent.Command:
+		return RecordKindCommand
 	}
 	return RecordKindAgentOutput
 }

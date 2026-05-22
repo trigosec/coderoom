@@ -11,6 +11,10 @@ func reasoningStreamID(itemID string) agent.StreamID {
 	return agent.StreamID("codex:reasoning:" + itemID)
 }
 
+func commandStreamID(itemID string) agent.StreamID {
+	return agent.StreamID("codex:command:" + itemID)
+}
+
 // Fixed stream IDs for synthetic and log streams.
 const (
 	logStreamID         = agent.StreamID("codex:log")
