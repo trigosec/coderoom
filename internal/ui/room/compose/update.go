@@ -24,13 +24,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if ok {
 				var cmds []tea.Cmd
 				for _, r := range s {
-					m = m.recalcHeight()
 					var cmd tea.Cmd
 					m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 					cmds = append(cmds, cmd)
-					m = m.recalcHeight()
 				}
-				return m, tea.Batch(cmds...)
+				return m.recalcHeight(), tea.Batch(cmds...)
 			}
 		}
 
@@ -138,13 +136,11 @@ func (m Model) handleTextKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if msg.Type == tea.KeyRunes && msg.Paste && len(msg.Runes) > 1 {
 		var cmds []tea.Cmd
 		for _, r := range msg.Runes {
-			m = m.recalcHeight()
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 			cmds = append(cmds, cmd)
-			m = m.recalcHeight()
 		}
-		return m, tea.Batch(cmds...)
+		return m.recalcHeight(), tea.Batch(cmds...)
 	}
 
 	m = m.recalcHeight()
