@@ -96,8 +96,8 @@ func TestHandleAgentMessage_commandFlush_sealsExitCodeAndClearsStream(t *testing
 func TestRenderCommand_headerOnly(t *testing.T) {
 	r := Record{Kind: RecordKindCommand, Alias: "bot", Cmd: "ls", Cwd: "/tmp"}
 	out := ansi.Strip(renderCommand(r, 80, func(string) string { return "" }))
-	if !strings.HasPrefix(out, "$ ls") {
-		t.Errorf("expected header starting with '$ ls', got %q", out)
+	if !strings.HasPrefix(out, "● bot:\n\n  $ ls") {
+		t.Errorf("expected header starting with participant prefix and command line, got %q", out)
 	}
 }
 
@@ -118,5 +118,25 @@ func TestRenderCommand_withOutputAndExitCode(t *testing.T) {
 	}
 	if !strings.Contains(out, "exit 0") {
 		t.Errorf("expected exit code in render, got %q", out)
+	}
+}
+
+func TestRenderCommandLine_longCmdWrapsWithoutRepeatingDollarPrefix(t *testing.T) {
+	// "  $ " is 4 columns wide; with width=10, contentWidth=6.
+	out := renderCommandLine("  $ ", "abcdefghij", 10)
+	lines := strings.Split(out, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped output to span multiple lines, got %q", out)
+	}
+	if lines[0] != "  $ abcdef" {
+		t.Errorf("unexpected first line, got %q", lines[0])
+	}
+	if lines[1] != "    ghij" {
+		t.Errorf("unexpected continuation indent/content, got %q", lines[1])
+	}
+	for i, line := range lines[1:] {
+		if strings.HasPrefix(line, "  $ ") {
+			t.Errorf("continuation line %d should not repeat command prefix, got %q", i+1, line)
+		}
 	}
 }

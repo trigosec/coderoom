@@ -152,17 +152,25 @@ func renderCommand(r Record, width int, colors func(string) string) string {
 	}
 	var header string
 	if color != "" {
-		header = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(commandBullet) + cmd
+		header = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(agentBullet+r.Alias) + ":"
 	} else {
-		header = commandBullet + cmd
+		header = agentBullet + r.Alias + ":"
 	}
 
+	commandPrompt := commandBullet
+	if color != "" {
+		commandPrompt = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(commandBullet)
+	}
+	commandLine := renderCommandLine(agentBodyIndent+commandPrompt, cmd, width)
+
 	if r.Body == "" && r.ExitCode == nil {
-		return header
+		return header + "\n\n" + commandLine
 	}
 
 	var sb strings.Builder
 	sb.WriteString(header)
+	sb.WriteString("\n\n")
+	sb.WriteString(commandLine)
 
 	if r.Body != "" {
 		sb.WriteString("\n\n")
@@ -195,6 +203,23 @@ func renderRoutingFooter(aliases []string, colors func(string) string) string {
 		}
 	}
 	return strings.Join(parts, "    ")
+}
+
+func renderCommandLine(prefix string, cmd string, width int) string {
+	if width <= 0 {
+		return prefix + cmd
+	}
+
+	displayWidth := ansi.StringWidth(prefix)
+	contentWidth := max(width-displayWidth, 1)
+	wrapped := ansi.Wrap(cmd, contentWidth, "")
+	parts := strings.Split(wrapped, "\n")
+
+	indent := strings.Repeat(" ", displayWidth)
+	for i := 1; i < len(parts); i++ {
+		parts[i] = indent + parts[i]
+	}
+	return prefix + strings.Join(parts, "\n")
 }
 
 // wrapLine wraps line to width. If prefix is non-empty, continuation lines
