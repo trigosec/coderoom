@@ -25,6 +25,7 @@ func TestClientReasoningMessages(t *testing.T) {
 
 	done := make(chan struct{})
 	var reasoningCount int
+	lastReasoningMode := make(map[agent.StreamID]agent.Mode)
 	go func() {
 		defer close(done)
 		for {
@@ -41,7 +42,7 @@ func TestClientReasoningMessages(t *testing.T) {
 					}
 					reasoningCount++
 				}
-				// ModeFlush marks reasoning segment boundary — expected, no action needed
+				lastReasoningMode[msg.StreamID] = msg.Mode
 			case agent.Output:
 				if msg.Mode == agent.ModeFlush {
 					return
@@ -60,5 +61,10 @@ func TestClientReasoningMessages(t *testing.T) {
 
 	if reasoningCount == 0 {
 		t.Error("expected at least one Reasoning+ModeStream before turn-end")
+	}
+	for id, mode := range lastReasoningMode {
+		if mode != agent.ModeFlush {
+			t.Errorf("reasoning stream %s never flushed", id)
+		}
 	}
 }

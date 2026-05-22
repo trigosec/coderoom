@@ -32,31 +32,41 @@ func TestMessageFromEnvelope_flushContentIsZero(t *testing.T) {
 			`{"method":"item/completed","params":{"turnId":"t1","threadId":"th1","completedAtMs":0,"item":{"type":"commandExecution","id":"cmd1","command":"ls","cwd":"/","status":"completed","commandActions":[]}}}`,
 			agent.Command{},
 		},
+		{
+			"item/completed reasoning",
+			`{"method":"item/completed","params":{"turnId":"t1","threadId":"th1","completedAtMs":0,"item":{"type":"reasoning","id":"r1","summary":[],"content":[]}}}`,
+			agent.Reasoning{},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var env rpcEnvelope
-			if err := json.Unmarshal([]byte(tc.line), &env); err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
-			msgs, err := messageFromEnvelope(env)
-			if err != nil {
-				t.Fatalf("messageFromEnvelope: %v", err)
-			}
-			var sawFlush bool
-			for _, msg := range msgs {
-				if msg.Mode != agent.ModeFlush {
-					continue
-				}
-				sawFlush = true
-				if msg.Content != tc.wantFlush {
-					t.Errorf("ModeFlush content = %T(%+v), want zero-value %T", msg.Content, msg.Content, tc.wantFlush)
-				}
-			}
-			if !sawFlush {
-				t.Errorf("no ModeFlush produced; expected flush of type %T", tc.wantFlush)
-			}
+			assertEnvelopeHasZeroFlush(t, tc.line, tc.wantFlush)
 		})
+	}
+}
+
+func assertEnvelopeHasZeroFlush(t *testing.T, line string, wantFlush agent.MessageContent) {
+	t.Helper()
+	var env rpcEnvelope
+	if err := json.Unmarshal([]byte(line), &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	msgs, err := messageFromEnvelope(env)
+	if err != nil {
+		t.Fatalf("messageFromEnvelope: %v", err)
+	}
+	var sawFlush bool
+	for _, msg := range msgs {
+		if msg.Mode != agent.ModeFlush {
+			continue
+		}
+		sawFlush = true
+		if msg.Content != wantFlush {
+			t.Errorf("ModeFlush content = %T(%+v), want zero-value %T", msg.Content, msg.Content, wantFlush)
+		}
+	}
+	if !sawFlush {
+		t.Errorf("no ModeFlush produced; expected flush of type %T", wantFlush)
 	}
 }

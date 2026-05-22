@@ -133,14 +133,19 @@ func messageFromItemCompleted(raw json.RawMessage) ([]agent.Message, error) {
 	if err := json.Unmarshal(p.Item, &item); err != nil {
 		return nil, fmt.Errorf("parse item/completed item: %w", err)
 	}
-	if item.Type != "commandExecution" {
-		return nil, nil
+	switch item.Type {
+	case "commandExecution":
+		streamID := commandStreamID(item.ID)
+		completed := agent.CommandWithOverrideOutput(item.AggregatedOutput)
+		completed.ExitCode = item.ExitCode
+		return []agent.Message{
+			{StreamID: streamID, Mode: agent.ModeStream, Content: completed},
+			{StreamID: streamID, Mode: agent.ModeFlush, Content: agent.Command{}},
+		}, nil
+	case "reasoning":
+		return []agent.Message{
+			{StreamID: reasoningStreamID(item.ID), Mode: agent.ModeFlush, Content: agent.Reasoning{}},
+		}, nil
 	}
-	streamID := commandStreamID(item.ID)
-	completed := agent.CommandWithOverrideOutput(item.AggregatedOutput)
-	completed.ExitCode = item.ExitCode
-	return []agent.Message{
-		{StreamID: streamID, Mode: agent.ModeStream, Content: completed},
-		{StreamID: streamID, Mode: agent.ModeFlush, Content: agent.Command{}},
-	}, nil
+	return nil, nil
 }
