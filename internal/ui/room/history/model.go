@@ -1,6 +1,8 @@
 package history
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/trigosec/coderoom/internal/agent"
 )
@@ -16,12 +18,22 @@ type Model struct {
 	viewport        viewport.Model
 	records         []Record
 	renderedRecords []string
+	contentLines    int
 	streaming       map[agent.StreamID]streamSlot // streamID → open record slot
 	departed        map[string]bool
 	debugRowNums    bool
 	ready           bool
 	colorByAlias    func(string) string
 	departedColor   string
+}
+
+// ScrollStats summarizes the history viewport scroll position using the same
+// wrapped content the viewport renders.
+type ScrollStats struct {
+	Top          int
+	ViewportRows int
+	ContentRows  int
+	AtBottom     bool
 }
 
 // New returns an uninitialised Model; call SetSize before first use.
@@ -36,6 +48,50 @@ func New(colorByAlias func(string) string, departedColor string) Model {
 		colorByAlias:    colorByAlias,
 		departedColor:   departedColor,
 	}
+}
+
+// ScrollStats reports the current scroll position and content height.
+func (m Model) ScrollStats() ScrollStats {
+	viewportRows := m.viewport.Height
+	contentRows := m.contentLines
+	top := m.viewport.YOffset
+
+	if viewportRows < 0 {
+		viewportRows = 0
+	}
+	if contentRows < 0 {
+		contentRows = 0
+	}
+	if top < 0 {
+		top = 0
+	}
+	maxTop := 0
+	if viewportRows > 0 && contentRows > viewportRows {
+		maxTop = contentRows - viewportRows
+	}
+	if top > maxTop {
+		top = maxTop
+	}
+
+	atBottom := true
+	if viewportRows > 0 && contentRows > 0 {
+		atBottom = top+viewportRows >= contentRows
+	}
+	return ScrollStats{
+		Top:          top,
+		ViewportRows: viewportRows,
+		ContentRows:  contentRows,
+		AtBottom:     atBottom,
+	}
+}
+
+func countContentLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	// Normalise to a content string without a trailing newline.
+	s = strings.TrimSuffix(s, "\n")
+	return strings.Count(s, "\n") + 1
 }
 
 // resolveColor returns the display colour for alias, accounting for departed state.

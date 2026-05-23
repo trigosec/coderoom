@@ -236,7 +236,9 @@ func (m Model) syncViewport() Model {
 	if !m.ready {
 		return m
 	}
-	m.viewport.SetContent(joinRenderedForViewport(m.records, m.renderedRecords))
+	content := joinRenderedForViewport(m.records, m.renderedRecords)
+	m.contentLines = countContentLines(content)
+	m.viewport.SetContent(content)
 	return m
 }
 

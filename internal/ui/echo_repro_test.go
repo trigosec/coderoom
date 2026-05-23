@@ -12,7 +12,8 @@ import (
 func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 	// Reproduce the interactive path (KeyRunes + Enter) rather than calling
 	// handleEnter directly.
-	m := makeReadyModelWithHeight(t, 40)
+	// Reserve one row for the UI header.
+	m := makeReadyModelWithHeight(t, 41)
 
 	sendLine := func(line string) {
 		// Many terminals deliver "normal typing" as KeyRunes with a single rune,
@@ -61,7 +62,8 @@ func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 func TestWhoEcho_twiceVisibleInSmallTerminal(t *testing.T) {
 	// Regression guard for the "missing first line" symptom in small terminals:
 	// `/who` twice should fit without scrolling and show both echos/results.
-	m := makeReadyModelWithHeight(t, 10)
+	// Reserve one row for the UI header.
+	m := makeReadyModelWithHeight(t, 11)
 
 	sendLine := func(line string) {
 		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(line)})

@@ -1,11 +1,16 @@
 package room
 
 import (
+	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/trigosec/coderoom/internal/ui/room/history"
 )
 
 // View renders the room as:
 //
+//	header
 //	history viewport
 //	separator line
 //	composer input
@@ -15,9 +20,11 @@ func (m Model) View() string {
 	if !m.history.Ready() {
 		return ""
 	}
+	header := renderHeader(m.history.Width(), m.history.ScrollStats())
 	sep := labeledSeparator(m.history.Width(), m.separatorLabel(), m.composeIndicators())
 
 	var sb strings.Builder
+	sb.WriteString(header + "\n")
 	for line := range strings.SplitSeq(m.history.View(), "\n") {
 		sb.WriteString(line + "\n")
 	}
@@ -33,6 +40,86 @@ func (m Model) View() string {
 	}
 	sb.WriteString(m.bottomSeparator() + "\n")
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func renderHeader(width int, stats history.ScrollStats) string {
+	if width <= 0 {
+		return ""
+	}
+
+	title := "coderoom"
+	status := renderHeaderRight(stats)
+	return headerLine(width, title, status)
+}
+
+func renderHeaderRight(stats history.ScrollStats) string {
+	total := stats.ContentRows
+	top := stats.Top
+	h := stats.ViewportRows
+	if h <= 0 {
+		h = 1
+	}
+
+	start := 0
+	end := 0
+	if total > 0 {
+		start = top + 1
+		end = min(top+stats.ViewportRows, total)
+	}
+
+	screensAbove := ceilDiv(top, h)
+	remainingBelow := max(0, total-(top+stats.ViewportRows))
+	screensBelow := ceilDiv(remainingBelow, h)
+
+	if stats.AtBottom || screensBelow == 0 {
+		return fmt.Sprintf("%d-%d/%d  (PgUp: %d)▲  LIVE", start, end, total, screensAbove)
+	}
+	return fmt.Sprintf("%d-%d/%d  (PgUp: %d)▲  (PgDn: %d)▼", start, end, total, screensAbove, screensBelow)
+}
+
+func ceilDiv(a, b int) int {
+	if b <= 0 || a <= 0 {
+		return 0
+	}
+	return (a + b - 1) / b
+}
+
+func truncateToWidth(s string, maxW int) string {
+	if maxW <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= maxW {
+		return s
+	}
+	var out strings.Builder
+	curW := 0
+	for _, r := range s {
+		rw := ansi.StringWidth(string(r))
+		if curW+rw > maxW {
+			break
+		}
+		out.WriteRune(r)
+		curW += rw
+	}
+	return out.String()
+}
+
+func headerLine(width int, title, status string) string {
+	if width <= 0 {
+		return ""
+	}
+	left := title + " "
+	right := " " + status
+
+	leftW := ansi.StringWidth(left)
+	rightW := ansi.StringWidth(right)
+
+	// If we can't fit both sides plus at least one dash, fall back to truncation.
+	if leftW+rightW+1 > width {
+		return truncateToWidth(left+status, width)
+	}
+	dashes := width - leftW - rightW
+	return left + strings.Repeat("─", dashes) + right
 }
 
 func (m Model) separatorLabel() string {

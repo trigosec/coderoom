@@ -179,12 +179,13 @@ func (m Model) HandleResize(innerW, totalH int) Model {
 	m.lastSize = tea.WindowSizeMsg{Width: innerW, Height: totalH}
 	m.input.compose = m.input.compose.SetWidth(innerW).SetMaxHeightFromTotal(totalH)
 	// Layout:
+	//   header (1 line)
 	//   history (variable height)
 	//   top separator (1 line)
 	//   input (either composer or approval view; composer height is dynamic)
 	//   bottom separator (1 line)
 	inputH := m.input.height(totalH)
-	h := max(totalH-(2+inputH), 1)
+	h := max(totalH-(3+inputH), 1)
 	m.history = m.history.SetSize(innerW, h)
 	m.history = m.history.RebuildColors()
 	return m

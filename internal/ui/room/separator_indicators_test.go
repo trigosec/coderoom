@@ -73,6 +73,10 @@ func separatorLines(m Model) (top, bottom string) {
 	view := ansi.Strip(m.View())
 	var seps []string
 	for line := range strings.SplitSeq(view, "\n") {
+		// The room now includes a 1-line header rendered with dashes; exclude it.
+		if strings.HasPrefix(line, "coderoom ") {
+			continue
+		}
 		if strings.Contains(line, "─") {
 			seps = append(seps, line)
 		}
