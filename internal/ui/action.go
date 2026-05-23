@@ -44,6 +44,18 @@ type DebugView struct{}
 // DebugRows toggles viewport row-number overlay.
 type DebugRows struct{}
 
+// UnknownCommandError is returned when the user enters an unrecognized slash command.
+type UnknownCommandError struct {
+	Cmd string
+}
+
+func (e UnknownCommandError) Error() string {
+	if e.Cmd == "" {
+		return "unknown command"
+	}
+	return fmt.Sprintf("unknown command: %s", e.Cmd)
+}
+
 func (Invite) isAction()    {}
 func (Remove) isAction()    {}
 func (Cancel) isAction()    {}
@@ -96,7 +108,7 @@ func parseSlash(line string) (Action, error) {
 	if a, ok := parseSlashNoArgs(cmd); ok {
 		return a, nil
 	}
-	return nil, fmt.Errorf("unknown command: %s", cmd)
+	return nil, UnknownCommandError{Cmd: cmd}
 }
 
 func parseSlashNoArgs(cmd string) (Action, bool) {

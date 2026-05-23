@@ -55,6 +55,7 @@ func run() int {
 	if strings.TrimSpace(os.Getenv("CODEROOM_DEBUG")) == "1" {
 		opts = append(opts, ui.WithDebug(true))
 	}
+	opts = append(opts, ui.WithStartupHelpTip(true))
 
 	if _, err := tea.NewProgram(
 		ui.New(sess, cwd, opts...),

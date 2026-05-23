@@ -18,6 +18,12 @@ func WithDebug(enabled bool) Option {
 	return func(m *Model) { m.debug = enabled }
 }
 
+// WithStartupHelpTip controls whether a one-time "type /help" tip is appended
+// to the transcript on first layout when the room is otherwise empty.
+func WithStartupHelpTip(enabled bool) Option {
+	return func(m *Model) { m.showStartupHelpTip = enabled }
+}
+
 // sessionEventMsg wraps a session.Event as a Bubble Tea message.
 type sessionEventMsg session.Event
 
@@ -52,6 +58,10 @@ type Model struct {
 	palette  colorPalette
 	cwd      string
 	lastSize tea.WindowSizeMsg
+
+	// showStartupHelpTip is a one-shot flag. When true, the tip will be shown on
+	// the next resize/layout if the room transcript is empty, and then set to false.
+	showStartupHelpTip bool
 }
 
 // New creates a Model backed by the given session.

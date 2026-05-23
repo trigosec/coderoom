@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -59,6 +60,10 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
 	roomH := max(msg.Height-(m.toolbox.Height()+marginV), 1)
 	m.room = m.room.HandleResize(inner, roomH)
 	m.room = m.room.SetDebug(m.debug)
+	if m.showStartupHelpTip && m.room.Ready() && len(m.room.HistoryRecords()) == 0 {
+		m.room = m.room.AppendSystem("tip: type /help for commands and shortcuts")
+		m.showStartupHelpTip = false
+	}
 	return m
 }
 
@@ -73,6 +78,11 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 	}
 	m.room = m.room.AppendUserInput(raw, routing)
 	if err != nil {
+		var unknown UnknownCommandError
+		if errors.As(err, &unknown) {
+			m.room = m.room.AppendSystem("error: " + err.Error() + " (type /help)")
+			return m, nil
+		}
 		m.room = m.room.AppendSystem("error: " + err.Error())
 		return m, nil
 	}
@@ -277,21 +287,50 @@ func (m Model) showWho() Model {
 }
 
 func (m Model) showHelp() Model {
-	var b strings.Builder
-	b.WriteString("[help]\n")
-	b.WriteString("  /invite <alias>   start an agent\n")
-	b.WriteString("  /remove <alias>   remove an agent\n")
-	b.WriteString("  /cancel <alias>   interrupt an agent's current turn\n")
-	b.WriteString("  /who              list agents\n")
+	const tmpl = `[help]
+
+Commands:
+  /invite <alias>      start an agent
+  /remove <alias>      remove an agent
+  /cancel <alias>      interrupt an agent's current turn
+  /who                 list agents
+%s  /help                show this message
+  /quit                exit
+
+Sending messages:
+  @<alias> <text>      send to one agent
+  <text>               broadcast to all agents
+
+General keys:
+  Ctrl+O               toggle focus (compose ⇄ history)
+  PgUp / PgDn          scroll transcript (works in any focus)
+
+Compose focus (separator label: compose):
+  Enter                submit
+  Ctrl+G               open $EDITOR for multi-line compose
+
+History focus (separator label: history):
+  ↑ / ↓                scroll 1 line
+  Home / End           jump to top / jump to bottom
+  Esc                  return to compose focus
+  Ctrl+G               open transcript in $EDITOR (read-only)
+
+Approval prompt (separator label: approval):
+  ↑/↓ or j/k           change selection
+  Enter                confirm selection
+  Esc                  dismiss prompt
+  Ctrl+C               cancel prompt
+
+UI hints:
+  The separator label shows the current focus: compose/history/approval`
+
+	debugBlock := ""
 	if m.debug {
-		b.WriteString("  /debugview        print viewport debug\n")
-		b.WriteString("  /debugrows        toggle row number overlay\n")
+		debugBlock = "" +
+			"  /debugview           print viewport debug\n" +
+			"  /debugrows           toggle row number overlay\n"
 	}
-	b.WriteString("  /help             show this message\n")
-	b.WriteString("  @<alias> <text>   send to one agent\n")
-	b.WriteString("  <text>            broadcast to all agents\n")
-	b.WriteString("  /quit             exit")
-	m.room = m.room.AppendSystem(b.String())
+	m.room = m.room.AppendSystem(fmt.Sprintf(tmpl, debugBlock))
 	return m
 }
 
