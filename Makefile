@@ -29,9 +29,13 @@ check-all: lint test-race test-integration
 .PHONY: check
 check: lint test-race
 
-.PHONY: upgrade-codex
-upgrade-codex:
+.PHONY: codex-update
+codex-update:
 	./scripts/upgrade-codex.sh
+
+.PHONY: codex-schema-rewrite
+codex-schema-rewrite:
+	go test -tags integration ./internal/agent/codex/... -run TestSchemaSnapshot -update-schemas
 
 .PHONY: install-hooks
 install-hooks:

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/ui/inlinefmt"
 )
 
@@ -21,17 +22,20 @@ const (
 	RecordKindLog                           // agent diagnostic line (stderr)
 	RecordKindReasoning                     // streaming internal reasoning trace from an agent
 	RecordKindCommand                       // shell command execution item from an agent
+	RecordKindFileChange                    // file patch/diff item from an agent
 )
 
 // Record is a single displayable entry in the conversation history.
 type Record struct {
-	Kind     RecordKind
-	Alias    string   // agent alias; empty for user input and system records
-	Body     string   // accumulated content; grows during streaming
-	Routing  []string // aliases shown in the footer (broadcast / direct send)
-	Cmd      string   // shell command string; set on RecordKindCommand
-	Cwd      string   // working directory for Cmd; set on RecordKindCommand
-	ExitCode *int     // process exit code; nil until RecordKindCommand is sealed
+	Kind        RecordKind
+	Alias       string   // agent alias; empty for user input and system records
+	Body        string   // accumulated content; grows during streaming
+	Routing     []string // aliases shown in the footer (broadcast / direct send)
+	Cmd         string   // shell command string; set on RecordKindCommand
+	Cwd         string   // working directory for Cmd; set on RecordKindCommand
+	ExitCode    *int     // process exit code; nil until RecordKindCommand is sealed
+	PatchStatus agent.ToolStatus
+	FileChanges []agent.FileChange
 }
 
 var (
@@ -41,12 +45,13 @@ var (
 )
 
 const (
-	promptPrefix    = "❯ "
-	logPrefix       = "▸ "
-	agentBullet     = "● "
-	reasoningBullet = "◈ "
-	commandBullet   = "$ "
-	routingArrow    = "→ "
+	promptPrefix     = "❯ "
+	logPrefix        = "▸ "
+	agentBullet      = "● "
+	reasoningBullet  = "◈ "
+	commandBullet    = "$ "
+	fileChangeBullet = "✎ "
+	routingArrow     = "→ "
 )
 
 func renderRecord(r Record, width int, colors func(string) string) string {
@@ -63,6 +68,8 @@ func renderRecord(r Record, width int, colors func(string) string) string {
 		return renderReasoning(r, width, colors)
 	case RecordKindCommand:
 		return renderCommand(r, width, colors)
+	case RecordKindFileChange:
+		return renderFileChange(r, width, colors)
 	}
 	return r.Body
 }
@@ -70,6 +77,9 @@ func renderRecord(r Record, width int, colors func(string) string) string {
 func renderRecordForTranscript(r Record, colors func(string) string) string {
 	if r.Kind == RecordKindCommand {
 		return renderCommandTranscript(r, colors)
+	}
+	if r.Kind == RecordKindFileChange {
+		return renderFileChangeTranscript(r, colors)
 	}
 	// Use width=0 to disable wrapping in transcript exports.
 	return renderRecord(r, 0, colors)
@@ -158,7 +168,7 @@ func renderCommand(r Record, width int, colors func(string) string) string {
 	if cmd == "" {
 		cmd = "…"
 	}
-	header := renderCommandHeader(r.Alias, color)
+	header := renderParticipantHeader(r.Alias, color)
 
 	commandPrompt := renderCommandPrompt(color)
 	commandLine, cmdTruncated := renderCommandSummaryLine(agentBodyIndent+commandPrompt, cmd, width)
@@ -195,7 +205,142 @@ func renderCommand(r Record, width int, colors func(string) string) string {
 	return sb.String()
 }
 
-func renderCommandHeader(alias string, color string) string {
+const fileChangePreviewLines = 8
+
+func renderFileChange(r Record, width int, colors func(string) string) string {
+	color := colors(r.Alias)
+	header := renderParticipantHeader(r.Alias, color)
+
+	var sb strings.Builder
+	sb.WriteString(header)
+
+	if isPendingFileChange(r) {
+		sb.WriteString("\n\n")
+		sb.WriteString(agentBodyIndent + fileChangeBullet + "…")
+		return sb.String()
+	}
+
+	appendFileChangeList(&sb, r)
+	appendFileChangeBodyPreview(&sb, r, width)
+	appendFileChangePatchStatus(&sb, r)
+
+	return sb.String()
+}
+
+func isPendingFileChange(r Record) bool {
+	return len(r.FileChanges) == 0 && r.Body == "" && r.PatchStatus == ""
+}
+
+func appendFileChangeList(sb *strings.Builder, r Record) {
+	if len(r.FileChanges) == 0 {
+		return
+	}
+	sb.WriteString("\n\n")
+	sb.WriteString(agentBodyIndent)
+	sb.WriteString(fileChangeBullet)
+	sb.WriteString("files:")
+	for _, ch := range r.FileChanges {
+		sb.WriteString("\n")
+		sb.WriteString(agentBodyIndent)
+		sb.WriteString("- ")
+		if ch.ChangeKind != "" {
+			sb.WriteString(ch.ChangeKind)
+			sb.WriteString(" ")
+		}
+		sb.WriteString(ch.Path)
+	}
+}
+
+func appendFileChangeBodyPreview(sb *strings.Builder, r Record, width int) {
+	if r.Body == "" {
+		return
+	}
+	sb.WriteString("\n\n")
+	lines := strings.Split(strings.TrimRight(r.Body, "\n"), "\n")
+	previewCount := min(len(lines), fileChangePreviewLines)
+	maxCols := fileChangePreviewMaxCols(width)
+	for i := 0; i < previewCount; i++ {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(agentBodyIndent)
+		sb.WriteString(truncateColumns(lines[i], maxCols))
+	}
+	appendFileChangeBodyMoreHint(sb, len(lines)-previewCount)
+}
+
+func fileChangePreviewMaxCols(width int) int {
+	maxCols := commandSummaryMaxCols
+	if width <= 0 {
+		return maxCols
+	}
+	contentWidth := max(width-ansi.StringWidth(agentBodyIndent), 1)
+	return min(maxCols, contentWidth)
+}
+
+func appendFileChangeBodyMoreHint(sb *strings.Builder, remainingLines int) {
+	if remainingLines <= 0 {
+		return
+	}
+	sb.WriteString("\n")
+	sb.WriteString(logStyle.Render(fmt.Sprintf(
+		"%s(+%d more; Ctrl+O history, Ctrl+G open transcript)",
+		agentBodyIndent,
+		remainingLines,
+	)))
+}
+
+func appendFileChangePatchStatus(sb *strings.Builder, r Record) {
+	if r.PatchStatus == "" {
+		return
+	}
+	sb.WriteString("\n")
+	sb.WriteString(logStyle.Render(fmt.Sprintf("%s%s", agentBodyIndent, r.PatchStatus)))
+}
+
+func renderFileChangeTranscript(r Record, colors func(string) string) string {
+	color := colors(r.Alias)
+	header := renderParticipantHeader(r.Alias, color)
+	var sb strings.Builder
+	sb.WriteString(header)
+
+	if len(r.FileChanges) > 0 {
+		sb.WriteString("\n\n")
+		sb.WriteString(agentBodyIndent)
+		sb.WriteString(fileChangeBullet)
+		sb.WriteString("files:")
+		for _, ch := range r.FileChanges {
+			sb.WriteString("\n")
+			sb.WriteString(agentBodyIndent)
+			sb.WriteString("- ")
+			if ch.ChangeKind != "" {
+				sb.WriteString(ch.ChangeKind)
+				sb.WriteString(" ")
+			}
+			sb.WriteString(ch.Path)
+		}
+	}
+
+	if r.Body != "" {
+		sb.WriteString("\n\n")
+		lines := strings.Split(strings.TrimRight(r.Body, "\n"), "\n")
+		for i, line := range lines {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(agentBodyIndent + line)
+		}
+	}
+
+	if r.PatchStatus != "" {
+		sb.WriteString("\n")
+		sb.WriteString(logStyle.Render(fmt.Sprintf("%s%s", agentBodyIndent, r.PatchStatus)))
+	}
+
+	return sb.String()
+}
+
+func renderParticipantHeader(alias string, color string) string {
 	if color == "" {
 		return agentBullet + alias + ":"
 	}
@@ -228,7 +373,7 @@ func renderCommandTranscript(r Record, colors func(string) string) string {
 	if cmd == "" {
 		cmd = "…"
 	}
-	header := renderCommandHeader(r.Alias, color)
+	header := renderParticipantHeader(r.Alias, color)
 	commandPrompt := renderCommandPrompt(color)
 	commandLine := renderCommandLine(agentBodyIndent+commandPrompt, cmd, 0)
 

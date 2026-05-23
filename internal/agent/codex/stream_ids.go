@@ -15,6 +15,10 @@ func commandStreamID(itemID string) agent.StreamID {
 	return agent.StreamID("codex:command:" + itemID)
 }
 
+func fileChangeStreamID(itemID string) agent.StreamID {
+	return agent.StreamID("codex:fileChange:" + itemID)
+}
+
 // Fixed stream IDs for synthetic and log streams.
 const (
 	logStreamID         = agent.StreamID("codex:log")

@@ -108,6 +108,11 @@ type itemLifecycleParams struct {
 	Item   json.RawMessage `json:"item"`
 }
 
+type itemKind struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
 // commandExecutionItem is the subset of CommandExecutionThreadItem fields used
 // by coderoom. Adapter-irrelevant fields (processId, source, commandActions)
 // are omitted.
@@ -118,6 +123,30 @@ type commandExecutionItem struct {
 	Cwd              string `json:"cwd"`
 	AggregatedOutput string `json:"aggregatedOutput"`
 	ExitCode         *int   `json:"exitCode"`
+}
+
+type fileChangeItem struct {
+	Type    string             `json:"type"`
+	ID      string             `json:"id"`
+	Status  string             `json:"status"`
+	Changes []fileUpdateChange `json:"changes"`
+}
+
+type fileChangePatchUpdatedParams struct {
+	ItemID  string             `json:"itemId"`
+	TurnID  string             `json:"turnId"`
+	Changes []fileUpdateChange `json:"changes"`
+}
+
+type fileUpdateChange struct {
+	Path string               `json:"path"`
+	Diff string               `json:"diff"`
+	Kind fileUpdateChangeKind `json:"kind"`
+}
+
+type fileUpdateChangeKind struct {
+	Type     string  `json:"type"`
+	MovePath *string `json:"move_path"`
 }
 
 type commandDecisionResult struct {

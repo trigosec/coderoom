@@ -6,25 +6,20 @@ import (
 	"encoding/json"
 	"flag"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
 var updateSchemas = flag.Bool("update-schemas", false, "update Codex JSON schema snapshots in testdata/schemas/")
 
-// TestSchemaSnapshot regenerates Codex JSON schemas and compares them against
-// the snapshots in testdata/schemas/. Only the schemas in testdata are checked —
+// TestSchemaSnapshot compares the mounted Codex JSON schemas against the
+// snapshots in testdata/schemas/. Only the schemas in testdata are checked —
 // they represent our contract surface. A diff means the Codex protocol changed;
 // update testdata/schemas/ to accept the new contract.
 func TestSchemaSnapshot(t *testing.T) {
-	tmp := t.TempDir()
-	cmd := exec.Command("npx", codexPackage(), "app-server", "generate-json-schema", "--out", tmp)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("generate-json-schema: %v", err)
-	}
+	srcDir := schemaSourceDir()
 
 	entries, err := os.ReadDir(filepath.Join("testdata", "schemas"))
 	if err != nil {
@@ -40,21 +35,26 @@ func TestSchemaSnapshot(t *testing.T) {
 			t.Errorf("read testdata %s: %v", name, err)
 			continue
 		}
-		gotPath := filepath.Join(tmp, "v2", name)
+		gotPath := filepath.Join(srcDir, name)
 		got, err := os.ReadFile(gotPath)
 		if err != nil {
-			t.Errorf("schema %s missing from generated output: %v", name, err)
+			t.Errorf("schema %s missing from mounted schemas: %v", name, err)
 			continue
 		}
 		got = canonicalJSON(t, got)
-		want = canonicalJSON(t, want)
-		if !jsonDeepEqual(got, want) {
-			if *updateSchemas {
-				if err := os.WriteFile(filepath.Join("testdata", "schemas", name), got, 0o644); err != nil {
-					t.Fatalf("update snapshot %s: %v", name, err)
-				}
-				continue
+		wantCanonical := canonicalJSON(t, want)
+
+		if *updateSchemas {
+			// In update mode, always rewrite the snapshot into canonical form so
+			// formatting/key-ordering remains stable even when the upstream output
+			// is semantically unchanged.
+			if err := os.WriteFile(filepath.Join("testdata", "schemas", name), got, 0o644); err != nil {
+				t.Fatalf("update snapshot %s: %v", name, err)
 			}
+			continue
+		}
+
+		if !jsonDeepEqual(got, wantCanonical) {
 			t.Errorf("schema %s changed; update testdata/schemas/ to accept the new contract", name)
 		}
 	}
@@ -84,9 +84,34 @@ func canonicalJSON(t *testing.T, b []byte) []byte {
 	return append(out, '\n')
 }
 
-func codexPackage() string {
-	if v := os.Getenv("CODEX_VERSION_OVERRIDE"); v != "" {
-		return "@openai/codex@" + v
+func schemaSourceDir() string {
+	// This repo mounts the up-to-date Codex schema snapshots at
+	// `.mount/codex-json-schema`. Keep this overrideable for contributors with
+	// a different mount location.
+	if v := os.Getenv("CODEX_JSON_SCHEMA_DIR"); v != "" {
+		if filepath.Base(v) == "v2" {
+			return v
+		}
+		return filepath.Join(v, "v2")
 	}
-	return "@openai/codex"
+
+	// Resolve relative to this file's location so the test works regardless of
+	// the process working directory.
+	_, here, _, ok := runtime.Caller(0)
+	if !ok {
+		return filepath.Join(".mount", "codex-json-schema", "v2")
+	}
+	dir := filepath.Dir(here)
+	for {
+		cand := filepath.Join(dir, ".mount", "codex-json-schema", "v2")
+		if _, err := os.Stat(cand); err == nil {
+			return cand
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return filepath.Join(".mount", "codex-json-schema", "v2")
 }

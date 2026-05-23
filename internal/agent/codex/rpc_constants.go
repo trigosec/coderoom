@@ -19,6 +19,7 @@ const (
 	methodItemCompleted = "item/completed"
 
 	methodCommandExecutionOutputDelta = "item/commandExecution/outputDelta"
+	methodFileChangePatchUpdated      = "item/fileChange/patchUpdated"
 
 	methodCommandExecutionRequestApproval = "item/commandExecution/requestApproval"
 	methodFileChangeRequestApproval       = "item/fileChange/requestApproval"

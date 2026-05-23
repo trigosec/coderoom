@@ -55,34 +55,99 @@ func (m Message) Accumulate(next Message) (Message, error) {
 	}
 	switch c := m.Content.(type) {
 	case Output:
-		if nc, ok := next.Content.(Output); ok {
-			return Message{StreamID: m.StreamID, Mode: next.Mode, Content: Output{Text: c.Text + nc.Text}}, nil
-		}
+		return accumulateOutput(m, c, next)
 	case Reasoning:
-		if nc, ok := next.Content.(Reasoning); ok {
-			return Message{StreamID: m.StreamID, Mode: next.Mode, Content: Reasoning{Text: c.Text + nc.Text}}, nil
-		}
+		return accumulateReasoning(m, c, next)
 	case Command:
-		if nc, ok := next.Content.(Command); ok {
-			exitCode := nc.ExitCode
-			if exitCode == nil {
-				exitCode = c.ExitCode
-			}
-			output := c.Output
-			if nc.overrideOutput != nil {
-				output = *nc.overrideOutput
-			} else {
-				output += nc.Output
-			}
-			return Message{StreamID: m.StreamID, Mode: next.Mode, Content: Command{
-				Command:  c.Command,
-				Cwd:      c.Cwd,
-				Output:   output,
-				ExitCode: exitCode,
-			}}, nil
-		}
+		return accumulateCommand(m, c, next)
+	case FileChangeSet:
+		return accumulateFileChangeSet(m, c, next)
 	}
 	return Message{}, fmt.Errorf("incompatible content types: %T and %T", m.Content, next.Content)
+}
+
+func accumulateOutput(current Message, content Output, next Message) (Message, error) {
+	nextContent, ok := next.Content.(Output)
+	if !ok {
+		return Message{}, fmt.Errorf("incompatible content types: %T and %T", current.Content, next.Content)
+	}
+	return Message{
+		StreamID: current.StreamID,
+		Mode:     next.Mode,
+		Content:  Output{Text: content.Text + nextContent.Text},
+	}, nil
+}
+
+func accumulateReasoning(current Message, content Reasoning, next Message) (Message, error) {
+	nextContent, ok := next.Content.(Reasoning)
+	if !ok {
+		return Message{}, fmt.Errorf("incompatible content types: %T and %T", current.Content, next.Content)
+	}
+	return Message{
+		StreamID: current.StreamID,
+		Mode:     next.Mode,
+		Content:  Reasoning{Text: content.Text + nextContent.Text},
+	}, nil
+}
+
+func accumulateCommand(current Message, content Command, next Message) (Message, error) {
+	nextContent, ok := next.Content.(Command)
+	if !ok {
+		return Message{}, fmt.Errorf("incompatible content types: %T and %T", current.Content, next.Content)
+	}
+	return Message{
+		StreamID: current.StreamID,
+		Mode:     next.Mode,
+		Content: Command{
+			Command:  content.Command,
+			Cwd:      content.Cwd,
+			Output:   mergeCommandOutput(content, nextContent),
+			ExitCode: mergeExitCode(content.ExitCode, nextContent.ExitCode),
+		},
+	}, nil
+}
+
+func mergeExitCode(existing *int, incoming *int) *int {
+	if incoming != nil {
+		return incoming
+	}
+	return existing
+}
+
+func mergeCommandOutput(existing Command, incoming Command) string {
+	if incoming.overrideOutput != nil {
+		return *incoming.overrideOutput
+	}
+	return existing.Output + incoming.Output
+}
+
+func accumulateFileChangeSet(current Message, content FileChangeSet, next Message) (Message, error) {
+	nextContent, ok := next.Content.(FileChangeSet)
+	if !ok {
+		return Message{}, fmt.Errorf("incompatible content types: %T and %T", current.Content, next.Content)
+	}
+	return Message{
+		StreamID: current.StreamID,
+		Mode:     next.Mode,
+		Content: FileChangeSet{
+			Status:  mergeToolStatus(content.Status, nextContent.Status),
+			Changes: appendFileChanges(content.Changes, nextContent.Changes),
+		},
+	}, nil
+}
+
+func mergeToolStatus(existing ToolStatus, incoming ToolStatus) ToolStatus {
+	if incoming != "" {
+		return incoming
+	}
+	return existing
+}
+
+func appendFileChanges(existing []FileChange, incoming []FileChange) []FileChange {
+	if len(incoming) == 0 {
+		return existing
+	}
+	return append(existing, incoming...)
 }
 
 // Content types. Value receivers are deliberate: all payload fields are
@@ -97,6 +162,18 @@ type Reasoning struct{ Text string }
 
 // Log carries a diagnostic or process-level log line.
 type Log struct{ Text string }
+
+// ToolStatus is a lifecycle marker for tool-like output items (commands, file
+// changes) as reported by an adapter.
+type ToolStatus string
+
+// ToolStatus values reported by adapters.
+const (
+	ToolStatusInProgress ToolStatus = "inProgress"
+	ToolStatusCompleted  ToolStatus = "completed"
+	ToolStatusFailed     ToolStatus = "failed"
+	ToolStatusDeclined   ToolStatus = "declined"
+)
 
 // Command carries a shell command execution item from the agent.
 // On ModeStream: Output holds a stdout+stderr delta fragment; Command and Cwd
@@ -124,10 +201,26 @@ func CommandWithOverrideOutput(output string) Command {
 	return Command{Output: output, overrideOutput: &output}
 }
 
-func (Output) content()    {}
-func (Reasoning) content() {}
-func (Log) content()       {}
-func (Command) content()   {}
+// FileChange describes a single file-level change with an optional diff.
+type FileChange struct {
+	Path       string
+	Diff       string
+	ChangeKind string // "add" | "delete" | "update"
+}
+
+// FileChangeSet carries a patch/diff item from the agent.
+// On ModeStream: Changes holds an incremental patch set; Status is populated
+// only when known (typically item/completed).
+type FileChangeSet struct {
+	Status  ToolStatus
+	Changes []FileChange
+}
+
+func (Output) content()        {}
+func (Reasoning) content()     {}
+func (Log) content()           {}
+func (Command) content()       {}
+func (FileChangeSet) content() {}
 
 // Agent manages the lifecycle of and communication with an AI agent process.
 type Agent interface {

@@ -153,6 +153,31 @@ func TestRead_itemStarted_commandExecution(t *testing.T) {
 	}
 }
 
+func TestRead_itemStarted_fileChange(t *testing.T) {
+	item := `{"type":"fileChange","id":"fc1","status":"inProgress","changes":[{"path":"a.txt","diff":"+hi\n","kind":{"type":"add"}}]}`
+	params := `{"turnId":"t1","threadId":"th1","startedAtMs":0,"item":` + item + `}`
+	stdout := bytes.NewBufferString(`{"method":"item/started","params":` + params + `}` + "\n")
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fc, ok := msg.Content.(agent.FileChangeSet)
+	if !ok {
+		t.Fatalf("expected FileChangeSet content, got %T", msg.Content)
+	}
+	if msg.Mode != agent.ModeStream {
+		t.Errorf("expected ModeStream, got mode=%v", msg.Mode)
+	}
+	if fc.Status != agent.ToolStatusInProgress {
+		t.Errorf("expected status %q, got %q", agent.ToolStatusInProgress, fc.Status)
+	}
+	if len(fc.Changes) != 1 || fc.Changes[0].Path != "a.txt" || fc.Changes[0].ChangeKind != "add" {
+		t.Errorf("unexpected file change payload: %+v", fc)
+	}
+}
+
 func TestRead_itemStarted_nonCommand_skipped(t *testing.T) {
 	// item/started for a non-commandExecution type must be silently skipped.
 	nonCmd := `{"type":"agentMessage","id":"a1","text":"hi"}`
@@ -193,6 +218,27 @@ func TestRead_commandExecutionOutputDelta(t *testing.T) {
 	}
 }
 
+func TestRead_fileChangePatchUpdated(t *testing.T) {
+	params := `{"itemId":"fc1","turnId":"t1","threadId":"th1","changes":[{"path":"b.txt","diff":"@@\n","kind":{"type":"update","move_path":null}}]}`
+	stdout := bytes.NewBufferString(`{"method":"item/fileChange/patchUpdated","params":` + params + `}` + "\n")
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fc, ok := msg.Content.(agent.FileChangeSet)
+	if !ok {
+		t.Fatalf("expected FileChangeSet content, got %T", msg.Content)
+	}
+	if msg.Mode != agent.ModeStream {
+		t.Errorf("expected ModeStream, got mode=%v", msg.Mode)
+	}
+	if len(fc.Changes) != 1 || fc.Changes[0].Path != "b.txt" || fc.Changes[0].ChangeKind != "update" {
+		t.Errorf("unexpected file change payload: %+v", fc)
+	}
+}
+
 func TestRead_itemCompleted_commandExecution(t *testing.T) {
 	item := `{"type":"commandExecution","id":"cmd1","command":"ls","cwd":"/tmp","status":"completed","commandActions":[],"exitCode":0}`
 	params := `{"turnId":"t1","threadId":"th1","completedAtMs":0,"item":` + item + `}`
@@ -202,6 +248,42 @@ func TestRead_itemCompleted_commandExecution(t *testing.T) {
 	// item/completed emits two messages: ModeStream with ExitCode, then zero-value ModeFlush.
 	assertCommandExitCodeStream(t, c, 0)
 	assertCommandZeroFlush(t, c)
+}
+
+func TestRead_itemCompleted_fileChange(t *testing.T) {
+	item := `{"type":"fileChange","id":"fc1","status":"completed","changes":[{"path":"c.txt","diff":"-old\n+new\n","kind":{"type":"update","move_path":null}}]}`
+	params := `{"turnId":"t1","threadId":"th1","completedAtMs":0,"item":` + item + `}`
+	stdout := bytes.NewBufferString(`{"method":"item/completed","params":` + params + `}` + "\n")
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("Read (file change stream): %v", err)
+	}
+	fc, ok := msg.Content.(agent.FileChangeSet)
+	if !ok {
+		t.Fatalf("expected FileChangeSet content, got %T", msg.Content)
+	}
+	if msg.Mode != agent.ModeStream {
+		t.Errorf("expected ModeStream, got %v", msg.Mode)
+	}
+	if fc.Status != agent.ToolStatusCompleted {
+		t.Errorf("expected status %q, got %q", agent.ToolStatusCompleted, fc.Status)
+	}
+	if len(fc.Changes) != 1 || fc.Changes[0].Path != "c.txt" {
+		t.Errorf("unexpected changes: %+v", fc.Changes)
+	}
+
+	msg, err = c.Read()
+	if err != nil {
+		t.Fatalf("Read (file change flush): %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Errorf("expected ModeFlush, got %v", msg.Mode)
+	}
+	if _, ok := msg.Content.(agent.FileChangeSet); !ok {
+		t.Fatalf("expected FileChangeSet flush content, got %T", msg.Content)
+	}
 }
 
 func assertCommandExitCodeStream(t *testing.T, c *Client, wantExit int) {

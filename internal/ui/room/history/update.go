@@ -85,6 +85,11 @@ func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
 			return m.sealCommandStream(msg.StreamID)
 		}
 		return m.appendOrExtend(alias, msg)
+	case agent.FileChangeSet:
+		if msg.Mode == agent.ModeFlush {
+			return m.sealFileChangeStream(msg.StreamID)
+		}
+		return m.appendOrExtend(alias, msg)
 	}
 	return m
 }
@@ -94,6 +99,9 @@ func (m Model) appendOrExtend(alias string, msg agent.Message) Model {
 	if slot, ok := m.streaming[msg.StreamID]; ok {
 		if accumulated, err := slot.msg.Accumulate(msg); err == nil {
 			m.records[slot.recordIdx].Body = bodyFrom(accumulated)
+			if c, ok := accumulated.Content.(agent.FileChangeSet); ok {
+				m.applyFileChangeFields(slot.recordIdx, c)
+			}
 			m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
 			m.streaming[msg.StreamID] = streamSlot{slot.recordIdx, accumulated}
 		} else {
@@ -117,6 +125,10 @@ func (m Model) openRecord(alias string, msg agent.Message) Model {
 	if c, ok := msg.Content.(agent.Command); ok {
 		r.Cmd = c.Command
 		r.Cwd = c.Cwd
+	}
+	if c, ok := msg.Content.(agent.FileChangeSet); ok {
+		r.PatchStatus = c.Status
+		r.FileChanges = c.Changes
 	}
 	m.records = append(m.records, r)
 	m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
@@ -142,6 +154,24 @@ func (m Model) sealCommandStream(streamID agent.StreamID) Model {
 	return m
 }
 
+func (m Model) sealFileChangeStream(streamID agent.StreamID) Model {
+	slot, ok := m.streaming[streamID]
+	if !ok {
+		return m
+	}
+	wasAtBottom := m.viewport.AtBottom()
+	if c, ok := slot.msg.Content.(agent.FileChangeSet); ok {
+		m.applyFileChangeFields(slot.recordIdx, c)
+	}
+	m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
+	delete(m.streaming, streamID)
+	m = m.syncViewport()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
 func bodyFrom(msg agent.Message) string {
 	switch c := msg.Content.(type) {
 	case agent.Output:
@@ -150,8 +180,40 @@ func bodyFrom(msg agent.Message) string {
 		return c.Text
 	case agent.Command:
 		return c.Output
+	case agent.FileChangeSet:
+		return formatFileChangeBody(c.Changes)
 	}
 	return ""
+}
+
+func (m Model) applyFileChangeFields(recordIdx int, c agent.FileChangeSet) {
+	m.records[recordIdx].PatchStatus = c.Status
+	m.records[recordIdx].FileChanges = c.Changes
+}
+
+func formatFileChangeBody(changes []agent.FileChange) string {
+	if len(changes) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, ch := range changes {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("=== ")
+		sb.WriteString(ch.Path)
+		if ch.ChangeKind != "" {
+			sb.WriteString(" (")
+			sb.WriteString(ch.ChangeKind)
+			sb.WriteString(")")
+		}
+		sb.WriteString("\n")
+		sb.WriteString(ch.Diff)
+		if !strings.HasSuffix(ch.Diff, "\n") {
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
 }
 
 func recordKindFor(msg agent.Message) RecordKind {
@@ -160,6 +222,8 @@ func recordKindFor(msg agent.Message) RecordKind {
 		return RecordKindReasoning
 	case agent.Command:
 		return RecordKindCommand
+	case agent.FileChangeSet:
+		return RecordKindFileChange
 	}
 	return RecordKindAgentOutput
 }

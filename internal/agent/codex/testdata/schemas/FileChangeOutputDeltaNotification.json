@@ -1,10 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Deprecated legacy notification for `apply_patch` textual output.\n\nThe server no longer emits this notification.",
   "properties": {
-    "contentIndex": {
-      "format": "int64",
-      "type": "integer"
-    },
     "delta": {
       "type": "string"
     },
@@ -19,12 +16,11 @@
     }
   },
   "required": [
-    "contentIndex",
     "delta",
     "itemId",
     "threadId",
     "turnId"
   ],
-  "title": "ReasoningTextDeltaNotification",
+  "title": "FileChangeOutputDeltaNotification",
   "type": "object"
 }

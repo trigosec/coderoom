@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/trigosec/coderoom/internal/agent"
@@ -37,6 +38,12 @@ func TestMessageFromEnvelope_flushContentIsZero(t *testing.T) {
 			`{"method":"item/completed","params":{"turnId":"t1","threadId":"th1","completedAtMs":0,"item":{"type":"reasoning","id":"r1","summary":[],"content":[]}}}`,
 			agent.Reasoning{},
 		},
+		{
+			// item/completed emits ModeStream{Status+Changes} then ModeFlush{}; only the flush is checked.
+			"item/completed fileChange",
+			`{"method":"item/completed","params":{"turnId":"t1","threadId":"th1","completedAtMs":0,"item":{"type":"fileChange","id":"fc1","status":"completed","changes":[]}}}`,
+			agent.FileChangeSet{},
+		},
 	}
 
 	for _, tc := range cases {
@@ -62,7 +69,7 @@ func assertEnvelopeHasZeroFlush(t *testing.T, line string, wantFlush agent.Messa
 			continue
 		}
 		sawFlush = true
-		if msg.Content != wantFlush {
+		if !reflect.DeepEqual(msg.Content, wantFlush) {
 			t.Errorf("ModeFlush content = %T(%+v), want zero-value %T", msg.Content, msg.Content, wantFlush)
 		}
 	}

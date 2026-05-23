@@ -38,6 +38,10 @@ Goal: work comfortably with a single agent in the shared room.
   in-room message, or queue a single prompt. Confirm whether the protocol
   allows buffering a turn without changing semantics.
 
+### Codex protocol
+
+[X] Add support for `fileChange` (patch updates)
+
 ### Project hygiene (V1 launch)
 
 - README:
