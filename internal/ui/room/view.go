@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/ui/room/history"
 )
@@ -25,7 +26,7 @@ func (m Model) View() string {
 
 	var sb strings.Builder
 	sb.WriteString(header + "\n")
-	for line := range strings.SplitSeq(m.history.View(), "\n") {
+	for line := range strings.SplitSeq(m.renderHistoryView(), "\n") {
 		sb.WriteString(line + "\n")
 	}
 	sb.WriteString(sep + "\n")
@@ -40,6 +41,41 @@ func (m Model) View() string {
 	}
 	sb.WriteString(m.bottomSeparator() + "\n")
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func (m Model) renderHistoryView() string {
+	raw := m.history.View()
+	if m.focus != focusHistory {
+		return raw
+	}
+	width := m.history.Width()
+	if width <= 0 {
+		return raw
+	}
+
+	// Add a clear focus cue in the history viewport without shifting/truncating
+	// content: highlight the first visible row.
+	//
+	// Note: history lines often include their own ANSI resets (e.g. colored
+	// bullets, faint system lines). If we wrap the raw ANSI line with reverse
+	// video, those embedded resets can cancel the highlight early (leaving the
+	// padding unhighlighted). To keep the highlight stable to the right edge, we
+	// strip ANSI and let lipgloss own the full-width reverse-video rendering for
+	// that one indicator line.
+	highlight := lipgloss.NewStyle().Reverse(true).Width(width)
+
+	var out strings.Builder
+	i := 0
+	for line := range strings.SplitSeq(raw, "\n") {
+		if i == 0 {
+			out.WriteString(highlight.Render(ansi.Strip(line)))
+		} else {
+			out.WriteString(line)
+		}
+		out.WriteByte('\n')
+		i++
+	}
+	return strings.TrimSuffix(out.String(), "\n")
 }
 
 func renderHeader(width int, stats history.ScrollStats) string {

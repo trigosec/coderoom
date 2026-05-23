@@ -28,8 +28,8 @@ Goal: work comfortably with a single agent in the shared room.
   [X] Commands currently show `$` but skip the `<glyph> <participant>:` line.
   [X] Add the same participant prefix line used by other content, so command
       lines start at the same column where participant content starts.
-[ ] Scrolling feedback:
-  [ ] Make it obvious where you are in the scrollback.
+[X] Scrolling feedback:
+  [X] Make it obvious where you are in the scrollback.
   [X] Add header on top of history, indicating how many “page-ups/page-downs” remain.
 
 ### UI: Prompts while busy

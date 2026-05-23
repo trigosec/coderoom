@@ -322,7 +322,8 @@ Approval prompt (separator label: approval):
   Ctrl+C               cancel prompt
 
 UI hints:
-  The separator label shows the current focus: compose/history/approval`
+  The separator label shows the current focus: compose/history/approval
+  When history is focused, the first visible history row is highlighted`
 
 	debugBlock := ""
 	if m.debug {
