@@ -31,10 +31,6 @@ All styles are applied relative to the participant's assigned color. Delimiters
 are either stripped (for markdown-style emphasis) or kept and styled (for
 quotation marks).
 
-**Phase 1 validation rule:** keep delimiters visible while this feature is being
-rolled out so formatting decisions can be audited visually. Once the styling is
-proven stable, we may revisit stripping delimiters for emphasis/code.
-
 When patterns overlap (e.g. `**"quoted"**`), Phase 1 does not attempt nested
 styling. The renderer should apply **only the first matching span** according to
 the “Rendering order” priority, and treat any delimiters inside that span as
@@ -45,7 +41,11 @@ Algorithm (Phase 1):
 - Scan left-to-right to find the next opening delimiter position.
 - At that position, try delimiter types in “Rendering order” priority.
 - The first delimiter type that has a matching closer in the remaining text
-  wins; render that whole span as a single styled unit (no nested spans inside).
+  wins; render that span as a single styled unit (no nested spans inside).
+  - For **bold** and **code** spans, the delimiters are omitted from the
+    rendered output; only the inner text is styled.
+  - For **italic** and **quote** spans, the delimiters remain visible and are
+    styled along with the inner text.
 - If no matching closer exists for any delimiter type at that position, emit the
   opening characters as plain text and continue scanning after them.
 
@@ -53,19 +53,21 @@ Algorithm (Phase 1):
 
 - Pattern: `**text**`
 - Style: bold + participant color
-- Delimiters: kept and styled (Phase 1)
+- Delimiters: stripped
 
 ### Italic
 
 - Pattern: `*text*`
 - Style: italic + participant color
-- Delimiters: kept and styled (Phase 1)
+- Delimiters: kept and styled
 
 ### Code span
 
-- Pattern: `` `text` ``
+- Pattern: `` `text` `` or ``` ```text``` ```
 - Style: participant color
-- Delimiters: kept and styled (Phase 1)
+- Delimiters: stripped
+- Note: when both could match at the same position, ``` ```...``` ``` takes
+  priority over `` `...` ``.
 
 ### Typographic double quotes
 
@@ -143,7 +145,7 @@ the closing quote satisfies the boundary rule.
 Spans are scanned left to right in one pass. The following priority order
 resolves ambiguous openers:
 
-1. Code span (`` ` ``)
+1. Code span (``` ``` or `` ` ``)
 2. Bold (`**`)
 3. Italic (`*`)
 4. ASCII double quote (`"`)
@@ -168,7 +170,7 @@ Example:
 - Delta 1: `Here is **bold`
   - Renders with no emphasis applied (opening delimiter is treated as plain text).
 - Delta 2: `Here is **bold** now`
-  - Re-renders and applies bold styling to `bold`.
+  - Re-renders and applies bold styling to `bold` (delimiters omitted).
 
 ## Implementation notes
 

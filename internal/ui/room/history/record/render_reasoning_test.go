@@ -42,11 +42,11 @@ func TestRenderReasoning_bodyUsesSystemStyleExceptEmphasis(t *testing.T) {
 			},
 		})
 
-		if got, want := ansi.Strip(out), "◈ alice (thinking)\n\n  plain **bold** plain"; got != want {
+		if got, want := ansi.Strip(out), "◈ alice (thinking)\n\n  plain bold plain"; got != want {
 			t.Fatalf("unexpected stripped output:\nwant: %q\n got: %q", want, got)
 		}
 
-		if !strings.Contains(out, span.Bold(true).Render("**bold**")) {
+		if !strings.Contains(out, span.Bold(true).Render("bold")) {
 			t.Fatalf("expected participant color to apply to bold span; got %q", out)
 		}
 		if strings.Contains(out, span.Render("plain")) {

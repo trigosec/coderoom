@@ -1,7 +1,8 @@
 // Package inlinefmt implements lightweight, inline styling for agent output.
 //
-// Phase 1 intentionally keeps formatting delimiters visible and applies
-// participant-colored styling to the entire span including delimiters.
+// Phase 1 keeps most formatting delimiters visible and applies
+// participant-colored styling to the entire span. For bold and code spans, the
+// delimiters are omitted from the rendered output.
 package inlinefmt
 
 import (
@@ -32,6 +33,7 @@ type candidate struct {
 // 1) code, 2) bold, 3) italic, 4) ASCII double quote, 5) ASCII single quote,
 // 6) paired quote delimiters.
 var candidates = []candidate{
+	{typ: spanCode, open: "```", close: "```"},
 	{typ: spanCode, open: "`", close: "`"},
 	{typ: spanBold, open: "**", close: "**"},
 	{typ: spanItalic, open: "*", close: "*"},
@@ -144,20 +146,31 @@ func tryMatchAt(s string, i int, base lipgloss.Style) (string, int, bool) {
 			continue
 		}
 		span := s[i:end]
-		return renderSpan(span, c.typ, base), end - i, true
+		return renderSpan(span, c, base), end - i, true
 	}
 	return "", 0, false
 }
 
-func renderSpan(span string, typ spanType, base lipgloss.Style) string {
-	switch typ {
+func renderSpan(span string, c candidate, base lipgloss.Style) string {
+	switch c.typ {
+	case spanCode:
+		return base.Render(stripDelimiters(span, c))
 	case spanBold:
-		return base.Bold(true).Render(span)
+		return base.Bold(true).Render(stripDelimiters(span, c))
 	case spanItalic:
 		return base.Italic(true).Render(span)
 	default:
 		return base.Render(span)
 	}
+}
+
+func stripDelimiters(span string, c candidate) string {
+	openLen := len(c.open)
+	closeLen := len(c.close)
+	if openLen+closeLen > len(span) {
+		return span
+	}
+	return span[openLen : len(span)-closeLen]
 }
 
 func consumeUnclosableAt(s string, i int) int {

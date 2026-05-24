@@ -17,14 +17,15 @@ func withANSIProfile(t *testing.T, fn func()) {
 	fn()
 }
 
-func TestFormat_keepsDelimitersVisible(t *testing.T) {
+func TestFormat_omitsBoldAndCodeDelimiters(t *testing.T) {
 	withANSIProfile(t, func() {
 		in := `Here is **bold** and *italic* and ` + "`code`."
 		out := Format(in, lipgloss.NewStyle().Foreground(lipgloss.Color("2")))
-		if got := ansi.Strip(out); got != in {
-			t.Fatalf("expected stripped output to equal input\nin:  %q\ngot: %q", in, got)
+		want := "Here is bold and *italic* and code."
+		if got := ansi.Strip(out); got != want {
+			t.Fatalf("expected stripped output to equal desired output\nwant: %q\ngot:  %q", want, got)
 		}
-		if out == in {
+		if out == want {
 			t.Fatal("expected ANSI styling to be applied, got identical output")
 		}
 	})
@@ -55,6 +56,35 @@ func TestFormat_unmatchedMultiCharOpenerDoesNotTriggerInnerMatch(t *testing.T) {
 	})
 }
 
+func TestFormat_tripleBackticksAreTreatedAsCode(t *testing.T) {
+	withANSIProfile(t, func() {
+		in := "```text```"
+		out := Format(in, lipgloss.NewStyle().Foreground(lipgloss.Color("2")))
+		if got := ansi.Strip(out); got != "text" {
+			t.Fatalf("expected stripped output to omit triple backtick delimiters\ngot: %q", got)
+		}
+		if out == "text" {
+			t.Fatal("expected ANSI styling to be applied, got identical output")
+		}
+	})
+}
+
+func TestFormat_tripleBackticksTakePriorityOverSingleBackticks(t *testing.T) {
+	// If single-backtick spans were tried before triple-backtick spans at the
+	// same opener position, input like ```text``` could be misparsed (e.g. by
+	// consuming only part of the delimiter run and leaving stray backticks).
+	withANSIProfile(t, func() {
+		in := "```text``` then"
+		out := Format(in, lipgloss.NewStyle().Foreground(lipgloss.Color("2")))
+		if got := ansi.Strip(out); got != "text then" {
+			t.Fatalf("expected stripped output to parse as a single triple-backtick code span\nwant: %q\ngot:  %q", "text then", got)
+		}
+		if strings.Contains(ansi.Strip(out), "`") {
+			t.Fatalf("expected no backticks to remain after rendering triple-backtick span\ngot: %q", ansi.Strip(out))
+		}
+	})
+}
+
 func TestFormat_asciiSingleQuoteBoundaryRule(t *testing.T) {
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 
@@ -79,21 +109,24 @@ func TestFormat_asciiSingleQuoteBoundaryRule(t *testing.T) {
 func TestFormat_quotesAndAdjacentSpans(t *testing.T) {
 	withANSIProfile(t, func() {
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-		cases := []string{
-			`He said "hello".`,
-			"She said “hello”.",
-			"She said ‘hello’.",
-			"She said «hello».",
-			"She said ‹hello›.",
-			"`code` **bold**",
+		cases := []struct {
+			in   string
+			want string
+		}{
+			{in: `He said "hello".`, want: `He said "hello".`},
+			{in: "She said “hello”.", want: "She said “hello”."},
+			{in: "She said ‘hello’.", want: "She said ‘hello’."},
+			{in: "She said «hello».", want: "She said «hello»."},
+			{in: "She said ‹hello›.", want: "She said ‹hello›."},
+			{in: "`code` **bold**", want: "code bold"},
 		}
-		for _, in := range cases {
-			out := Format(in, style)
-			if got := ansi.Strip(out); got != in {
-				t.Fatalf("expected stripped output to equal input\nin:  %q\ngot: %q", in, got)
+		for _, tc := range cases {
+			out := Format(tc.in, style)
+			if got := ansi.Strip(out); got != tc.want {
+				t.Fatalf("expected stripped output to equal desired output\nin:   %q\nwant: %q\ngot:  %q", tc.in, tc.want, got)
 			}
-			if out == in {
-				t.Fatalf("expected styling to be applied for %q", in)
+			if out == tc.want {
+				t.Fatalf("expected styling to be applied for %q", tc.in)
 			}
 		}
 	})
@@ -115,8 +148,8 @@ func TestFormat_boldNotTwoItalics(t *testing.T) {
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 		in := "**text**"
 		out := Format(in, style)
-		if got := ansi.Strip(out); got != in {
-			t.Fatalf("expected stripped output to equal input\ngot: %q", got)
+		if got := ansi.Strip(out); got != "text" {
+			t.Fatalf("expected stripped output to omit bold delimiters\ngot: %q", got)
 		}
 		if !strings.Contains(out, "\x1b[1m") && !strings.Contains(out, "\x1b[1;") {
 			t.Fatalf("expected bold SGR in output, got: %q", out)
@@ -137,8 +170,8 @@ func TestFormatWithStyles_plainTextUsesBaseStyle(t *testing.T) {
 			base,
 			span,
 		)
-		if got := ansi.Strip(out); got != in {
-			t.Fatalf("expected stripped output to equal input\ngot: %q", got)
+		if got := ansi.Strip(out); got != "plain bold plain" {
+			t.Fatalf("expected stripped output to omit bold delimiters\ngot: %q", got)
 		}
 
 		// Verify that non-span segments are rendered with the base style, and
@@ -147,7 +180,7 @@ func TestFormatWithStyles_plainTextUsesBaseStyle(t *testing.T) {
 		if !strings.Contains(out, base.Render("plain ")) {
 			t.Fatalf("expected base style to apply to leading plain segment, got: %q", out)
 		}
-		if !strings.Contains(out, span.Bold(true).Render("**bold**")) {
+		if !strings.Contains(out, span.Bold(true).Render("bold")) {
 			t.Fatalf("expected span style to apply to bold span, got: %q", out)
 		}
 		if !strings.Contains(out, base.Render(" plain")) {
