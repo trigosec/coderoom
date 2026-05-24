@@ -393,17 +393,18 @@ const fileChangePreviewLines = 8
 func renderFileChange(r Record, width int, colors func(string) string) string {
 	color := colors(r.Alias)
 	header := renderParticipantHeader(r.Alias, color)
+	fileChangePrompt := renderFileChangePrompt(color)
 
 	var sb strings.Builder
 	sb.WriteString(header)
 
 	if isPendingFileChange(r) {
 		sb.WriteString("\n\n")
-		sb.WriteString(agentBodyIndent + fileChangeBullet + "…")
+		sb.WriteString(agentBodyIndent + fileChangePrompt + "…")
 		return sb.String()
 	}
 
-	appendFileChangeList(&sb, r)
+	appendFileChangeList(&sb, r, fileChangePrompt)
 	appendFileChangeBodyPreview(&sb, r, width)
 	appendFileChangePatchStatus(&sb, r)
 
@@ -415,14 +416,15 @@ func isPendingFileChange(r Record) bool {
 	return len(changes) == 0 && body == "" && status == ""
 }
 
-func appendFileChangeList(sb *strings.Builder, r Record) {
+func appendFileChangeList(sb *strings.Builder, r Record, fileChangePrompt string) {
 	_, changes, _ := fileChangeFieldsFromRecord(r)
+	changes = uniqueFileChanges(changes)
 	if len(changes) == 0 {
 		return
 	}
 	sb.WriteString("\n\n")
 	sb.WriteString(agentBodyIndent)
-	sb.WriteString(fileChangeBullet)
+	sb.WriteString(fileChangePrompt)
 	sb.WriteString("files:")
 	for _, ch := range changes {
 		sb.WriteString("\n")
@@ -488,14 +490,16 @@ func appendFileChangePatchStatus(sb *strings.Builder, r Record) {
 func renderFileChangeTranscript(r Record, colors func(string) string) string {
 	color := colors(r.Alias)
 	header := renderParticipantHeader(r.Alias, color)
+	fileChangePrompt := renderFileChangePrompt(color)
 	var sb strings.Builder
 	sb.WriteString(header)
 
 	status, changes, body := fileChangeFieldsFromRecord(r)
+	changes = uniqueFileChanges(changes)
 	if len(changes) > 0 {
 		sb.WriteString("\n\n")
 		sb.WriteString(agentBodyIndent)
-		sb.WriteString(fileChangeBullet)
+		sb.WriteString(fileChangePrompt)
 		sb.WriteString("files:")
 		for _, ch := range changes {
 			sb.WriteString("\n")
@@ -540,6 +544,35 @@ func renderCommandPrompt(color string) string {
 		return commandBullet
 	}
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(commandBullet)
+}
+
+func renderFileChangePrompt(color string) string {
+	if color == "" {
+		return fileChangeBullet
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(fileChangeBullet)
+}
+
+type fileChangeKey struct {
+	kind string
+	path string
+}
+
+func uniqueFileChanges(changes []agent.FileChange) []agent.FileChange {
+	if len(changes) <= 1 {
+		return changes
+	}
+	seen := make(map[fileChangeKey]struct{}, len(changes))
+	out := make([]agent.FileChange, 0, len(changes))
+	for _, ch := range changes {
+		key := fileChangeKey{kind: ch.ChangeKind, path: ch.Path}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ch)
+	}
+	return out
 }
 
 func renderPendingCommand(header string, commandLine string, showHint bool) string {
