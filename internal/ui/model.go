@@ -5,6 +5,7 @@ package ui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/session"
+	"github.com/trigosec/coderoom/internal/ui/palette"
 	"github.com/trigosec/coderoom/internal/ui/room"
 	"github.com/trigosec/coderoom/internal/ui/toolbox"
 )
@@ -55,7 +56,7 @@ type Model struct {
 	room     room.Model
 	toolbox  toolbox.Model
 	debug    bool
-	palette  colorPalette
+	palette  palette.ColorPalette
 	cwd      string
 	lastSize tea.WindowSizeMsg
 
@@ -81,7 +82,7 @@ func New(sess *session.Session, cwd string, opts ...Option) Model {
 	m := Model{
 		sess:    sess,
 		queue:   q,
-		room:    room.New(colorByAlias, ColorDeparted),
+		room:    room.New(colorByAlias, palette.ColorDeparted),
 		toolbox: toolbox.New(),
 		cwd:     cwd,
 	}

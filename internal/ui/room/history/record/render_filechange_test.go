@@ -134,6 +134,49 @@ func TestRenderFileChangePencilPromptIsColorized(t *testing.T) {
 	})
 }
 
+func TestRenderFileChangeDiffIsColorized(t *testing.T) {
+	withANSIProfile(t, func() {
+		colors := func(string) string { return "" }
+		fc := agent.Message{
+			StreamID: "s1",
+			Mode:     agent.ModeStream,
+			Content: agent.FileChangeSet{
+				Changes: []agent.FileChange{
+					{
+						Path:       "a.txt",
+						ChangeKind: "update",
+						Diff: "diff --git a/a.txt b/a.txt\n" +
+							"index 0000000..1111111 100644\n" +
+							"--- a/a.txt\n" +
+							"+++ b/a.txt\n" +
+							"@@ -1 +1 @@\n" +
+							"-old\n" +
+							"+new\n",
+					},
+				},
+			},
+		}
+		r := Record{Kind: KindFileChange, Alias: "agent", Msg: &fc}
+		got := r.Render(RenderContext{Key: RenderKey{Mode: RenderTranscript, Width: 0}, ColorForAlias: colors})
+
+		wantLine := func(prefix string) {
+			t.Helper()
+			if !strings.Contains(ansi.Strip(got), prefix) {
+				t.Fatalf("expected stripped output to contain %q, got:\n%s", prefix, ansi.Strip(got))
+			}
+			re := regexp.MustCompile(`(?m)^\s*\x1b\[[0-9;]*m.*` + regexp.QuoteMeta(prefix))
+			if !re.MatchString(got) {
+				t.Fatalf("expected line %q to be colorized, got:\n%s", prefix, got)
+			}
+		}
+
+		wantLine("diff --git a/a.txt b/a.txt")
+		wantLine("@@ -1 +1 @@")
+		wantLine("-old")
+		wantLine("+new")
+	})
+}
+
 func renderFileChangeStripped(t *testing.T, r Record, colors func(string) string) string {
 	t.Helper()
 	return ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}, ColorForAlias: colors}))
