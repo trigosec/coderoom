@@ -108,6 +108,7 @@ func (r Record) Accumulate(next agent.Message) (Record, error) {
 	accumulatedCopy := accumulated
 	r.Msg = &accumulatedCopy
 	r.Text = bodyFrom(accumulated)
+	r.renderCache.valid = false
 	return r, nil
 }
 
