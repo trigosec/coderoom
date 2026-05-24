@@ -24,7 +24,7 @@ type Agent interface {
 
 Errors — both IO errors and turn failures — are returned as the `error` return value of `Read()`. There is one place to check for errors.
 
-`Message` and all content types (`Output`, `Reasoning`, `Command`, `FileChange`, `Log`, etc.) are defined in `internal/agent`. See [`pkg-agent-messages.md`](pkg-agent-messages.md) for the full message model, streaming lifecycle, and accumulation semantics.
+`Message` and all content types (`Output`, `Reasoning`, `Command`, `FileChangeSet`, `Log`, etc.) are defined in `internal/agent`. See [`pkg-agent-messages.md`](pkg-agent-messages.md) for the full message model, streaming lifecycle, and accumulation semantics.
 
 ### SendAndWait
 
@@ -71,7 +71,7 @@ The Codex-specific mapping is:
 | `item/reasoning/delta` | `{ID: "codex:reasoning:<itemId>", Mode: ModeStream, Content: Reasoning{Text: "..."}}` |
 | `item/commandExecution/outputDelta` | `{ID: "codex:command:<itemId>", Mode: ModeStream, Content: Command{Output: "..."}}` |
 | `item/completed` (commandExecution) | `{..., Mode: ModeStream, Content: Command{ExitCode: &n}}` then `{..., Mode: ModeFlush, Content: Empty{}}` |
-| `item/completed` (fileChange) | `{ID: "codex:filechange:<itemId>", Mode: ModeStream, Content: FileChange{...}}` then ModeFlush |
+| `item/completed` (fileChange) | `{ID: "codex:filechange:<itemId>", Mode: ModeStream, Content: FileChangeSet{...}}` then ModeFlush |
 | `turn/completed` | `{ID: "codex:turn:<turnId>", Mode: ModeFlush, Content: Empty{}}` |
 | `turn/failed` | error returned from `Read()` |
 | stderr line | `{ID: "codex:log:<…>", Mode: ModeSingle, Content: Log{Text: "..."}}` |

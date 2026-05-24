@@ -121,7 +121,7 @@ type Event struct {
 }
 ```
 
-`KindAgentMessage` carries the full `agent.Message` value without translation. Observers type-switch on `event.Msg.Content` to handle specific content types (`Output`, `Reasoning`, `Command`, `FileChange`, etc.). See [`pkg-agent-messages.md`](pkg-agent-messages.md) for the message model.
+`KindAgentMessage` carries the full `agent.Message` value without translation. Observers type-switch on `event.Msg.Content` to handle specific content types (`Output`, `Reasoning`, `Command`, `FileChangeSet`, etc.). See [`pkg-agent-messages.md`](pkg-agent-messages.md) for the message model.
 
 `KindAgentLog` is kept as a dedicated kind with `Text` set directly. This lets observers handle diagnostic lines without inspecting message content.
 

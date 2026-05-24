@@ -164,7 +164,7 @@ func (Reasoning) content() {}
 func (Log) content()       {}
 ```
 
-**Value receivers are deliberate.** All payload fields (`string`, `[]byte`, `[]FileChangeItem`) are reference types in Go — copying a struct header is always cheap regardless of content size. Value receivers avoid nil pointer concerns and keep type switch cases free of `*`. If pointer receivers are ever introduced, all dispatch sites must be updated: `case Command` and `case *Command` are distinct and a mismatch fails silently.
+**Value receivers are deliberate.** All payload fields (`string`, `[]byte`, `[]FileChange`) are reference types in Go — copying a struct header is always cheap regardless of content size. Value receivers avoid nil pointer concerns and keep type switch cases free of `*`. If pointer receivers are ever introduced, all dispatch sites must be updated: `case Command` and `case *Command` are distinct and a mismatch fails silently.
 
 `messageFromEnvelope` in the Codex adapter constructs `StreamID` values and returns `Message` for all Codex notifications.
 
@@ -179,6 +179,7 @@ const (
     ToolStatusInProgress ToolStatus = "inProgress"
     ToolStatusCompleted  ToolStatus = "completed"
     ToolStatusFailed     ToolStatus = "failed"
+    ToolStatusDeclined   ToolStatus = "declined"
 )
 
 type Command struct {
@@ -190,18 +191,18 @@ type Command struct {
 
 func (Command) content() {}
 
-type FileChangeItem struct {
+type FileChange struct {
     Path       string
     Diff       string
     ChangeKind string // "add" | "delete" | "update"
 }
 
-type FileChange struct {
-    Status  ToolStatus       // meaningful on the final ModeStream (from item/completed)
-    Changes []FileChangeItem // partial patch set per ModeStream; complete on the final one
+type FileChangeSet struct {
+    Status  ToolStatus   // "inProgress" on item/started; final status on item/completed
+    Changes []FileChange // partial patch set per ModeStream; complete on the final one
 }
 
-func (FileChange) content() {}
+func (FileChangeSet) content() {}
 
 type MCPToolCall struct {
     Server    string
