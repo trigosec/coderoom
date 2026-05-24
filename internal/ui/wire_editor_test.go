@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/ui/editor"
-	"github.com/trigosec/coderoom/internal/ui/room/history"
+	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 func TestCtrlG_withoutEditorAddsSystemRecordAndPreservesBuffer(t *testing.T) {
@@ -21,7 +21,7 @@ func TestCtrlG_withoutEditorAddsSystemRecordAndPreservesBuffer(t *testing.T) {
 	if got := m2.room.ComposeValue(); got != "draft" {
 		t.Fatalf("expected input preserved when editor is unset, got %q", got)
 	}
-	if !hasRecord(m2, history.RecordKindSystem, "no editor configured") {
+	if !hasRecord(m2, record.KindSystem, "no editor configured") {
 		t.Fatalf("expected system record about editor configuration; records: %v", m2.room.HistoryRecords())
 	}
 }

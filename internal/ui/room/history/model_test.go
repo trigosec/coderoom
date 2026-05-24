@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 func TestResolveColor_activeReturnsFromLookup(t *testing.T) {
@@ -38,9 +39,9 @@ func TestResolveColor_departedTakesPrecedenceOverActive(t *testing.T) {
 }
 
 func TestJoinRenderedForViewport_insertsBlankLineBetweenNonSystemRecords(t *testing.T) {
-	out := joinRenderedForViewport([]Record{
-		{Kind: RecordKindUserInput},
-		{Kind: RecordKindAgentOutput},
+	out := joinRenderedForViewport([]rec.Record{
+		{Kind: rec.KindUserInput},
+		{Kind: rec.KindAgentOutput},
 	}, []string{"a", "b"})
 	if strings.Count(out, "\n") != 2 {
 		t.Fatalf("expected 2 newlines between non-system records, got %d (%q)", strings.Count(out, "\n"), out)
@@ -51,11 +52,11 @@ func TestJoinRenderedForViewport_insertsBlankLineBetweenNonSystemRecords(t *test
 }
 
 func TestJoinRenderedForViewport_systemRecordsStayCompact(t *testing.T) {
-	out := joinRenderedForViewport([]Record{
-		{Kind: RecordKindUserInput},
-		{Kind: RecordKindSystem},
-		{Kind: RecordKindSystem},
-		{Kind: RecordKindAgentOutput},
+	out := joinRenderedForViewport([]rec.Record{
+		{Kind: rec.KindUserInput},
+		{Kind: rec.KindSystem},
+		{Kind: rec.KindSystem},
+		{Kind: rec.KindAgentOutput},
 	}, []string{"u", "s1", "s2", "a"})
 	if ansi.Strip(out) != "u\ns1\ns2\n\na" {
 		t.Fatalf("unexpected joined output: %q", ansi.Strip(out))

@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/trigosec/coderoom/internal/ui/room/history"
+	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
@@ -40,7 +40,7 @@ func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 
 	userInputs := 0
 	for _, r := range m.room.HistoryRecords() {
-		if r.Kind == history.RecordKindUserInput && strings.TrimSpace(r.Text) == "/who" {
+		if r.Kind == record.KindUserInput && strings.TrimSpace(r.Text) == "/who" {
 			userInputs++
 		}
 	}

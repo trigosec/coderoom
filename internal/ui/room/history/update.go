@@ -1,12 +1,12 @@
 package history
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/agent"
+	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 // SetSize initialises or resizes the viewport.
@@ -29,17 +29,16 @@ func (m Model) SetHeight(h int) Model {
 
 // RebuildColors re-renders every record using the current color resolution.
 func (m Model) RebuildColors() Model {
-	for i, r := range m.records {
-		m.renderedRecords[i] = renderRecord(r, m.viewport.Width, m.resolveColor)
-	}
+	m.colorVersion++
 	return m.syncViewport()
 }
 
 // AppendRecord adds r to the record list, scrolling to bottom if already there.
-func (m Model) AppendRecord(r Record) Model {
+func (m Model) AppendRecord(r rec.Record) Model {
 	wasAtBottom := m.viewport.AtBottom()
-	m.records = append(m.records, r)
-	m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
+	ctx := m.viewportRenderContext()
+	_, cached := r.RenderCached(ctx)
+	m.records = append(m.records, cached)
 	m = m.syncViewport()
 	if wasAtBottom {
 		m.viewport.GotoBottom()
@@ -49,17 +48,17 @@ func (m Model) AppendRecord(r Record) Model {
 
 // AppendSystemRecord appends a system-notice record with the given body.
 func (m Model) AppendSystemRecord(body string) Model {
-	return m.AppendRecord(Record{Kind: RecordKindSystem, Text: body})
+	return m.AppendRecord(rec.Record{Kind: rec.KindSystem, Text: body})
 }
 
 // AppendUserInputRecord appends a user-input record with optional routing footer.
 func (m Model) AppendUserInputRecord(body string, routing []string) Model {
-	return m.AppendRecord(Record{Kind: RecordKindUserInput, Text: body, Routing: routing})
+	return m.AppendRecord(rec.Record{Kind: rec.KindUserInput, Text: body, Routing: routing})
 }
 
 // AppendLogRecord appends a diagnostic log line from alias.
 func (m Model) AppendLogRecord(alias, body string) Model {
-	return m.AppendRecord(Record{Kind: RecordKindLog, Alias: alias, Text: body})
+	return m.AppendRecord(rec.Record{Kind: rec.KindLog, Alias: alias, Text: body})
 }
 
 // HandleAgentMessage appends or extends a streaming record based on msg.
@@ -97,9 +96,9 @@ func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
 func (m Model) appendOrExtend(alias string, msg agent.Message) Model {
 	wasAtBottom := m.viewport.AtBottom()
 	if slot, ok := m.streaming[msg.StreamID]; ok {
-		if updated, err := m.records[slot.recordIdx].accumulate(msg); err == nil {
-			m.records[slot.recordIdx] = updated
-			m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
+		if updated, err := m.records[slot.recordIdx].Accumulate(msg); err == nil {
+			_, cached := updated.RenderCached(m.viewportRenderContext())
+			m.records[slot.recordIdx] = cached
 		} else {
 			// Content-type mismatch on a live stream: preserve the existing record
 			// and open a fresh one rather than wiping the accumulated body.
@@ -117,9 +116,9 @@ func (m Model) appendOrExtend(alias string, msg agent.Message) Model {
 
 func (m Model) openRecord(alias string, msg agent.Message) Model {
 	idx := len(m.records)
-	r := newAgentRecord(alias, msg)
-	m.records = append(m.records, r)
-	m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
+	r := rec.NewAgent(alias, msg)
+	_, cached := r.RenderCached(m.viewportRenderContext())
+	m.records = append(m.records, cached)
 	m.streaming[msg.StreamID] = streamSlot{recordIdx: idx}
 	return m
 }
@@ -130,7 +129,8 @@ func (m Model) sealCommandStream(streamID agent.StreamID) Model {
 		return m
 	}
 	wasAtBottom := m.viewport.AtBottom()
-	m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
+	_, cached := m.records[slot.recordIdx].RenderCached(m.viewportRenderContext())
+	m.records[slot.recordIdx] = cached
 	delete(m.streaming, streamID)
 	m = m.syncViewport()
 	if wasAtBottom {
@@ -145,7 +145,8 @@ func (m Model) sealFileChangeStream(streamID agent.StreamID) Model {
 		return m
 	}
 	wasAtBottom := m.viewport.AtBottom()
-	m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
+	_, cached := m.records[slot.recordIdx].RenderCached(m.viewportRenderContext())
+	m.records[slot.recordIdx] = cached
 	delete(m.streaming, streamID)
 	m = m.syncViewport()
 	if wasAtBottom {
@@ -154,55 +155,10 @@ func (m Model) sealFileChangeStream(streamID agent.StreamID) Model {
 	return m
 }
 
-func bodyFrom(msg agent.Message) string {
-	switch c := msg.Content.(type) {
-	case agent.Output:
-		return c.Text
-	case agent.Reasoning:
-		return c.Text
-	case agent.Command:
-		return c.Output
-	case agent.FileChangeSet:
-		return FormatFileChangeBody(c.Changes)
-	}
-	return ""
-}
-
-// FormatFileChangeBody renders a stable plain-text representation of a file
-// change set for history records and transcript exports.
-func FormatFileChangeBody(changes []agent.FileChange) string {
-	if len(changes) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	for i, ch := range changes {
-		if i > 0 {
-			sb.WriteString("\n")
-		}
-		sb.WriteString("=== ")
-		sb.WriteString(ch.Path)
-		if ch.ChangeKind != "" {
-			sb.WriteString(" (")
-			sb.WriteString(ch.ChangeKind)
-			sb.WriteString(")")
-		}
-		sb.WriteString("\n")
-		sb.WriteString(ch.Diff)
-		if !strings.HasSuffix(ch.Diff, "\n") {
-			sb.WriteString("\n")
-		}
-	}
-	return sb.String()
-}
-
 // MarkDeparted records alias as departed and re-renders its affected records.
 func (m Model) MarkDeparted(alias string) Model {
 	m.departed[alias] = true
-	for i, r := range m.records {
-		if r.Alias == alias || slices.Contains(r.Routing, alias) {
-			m.renderedRecords[i] = renderRecord(r, m.viewport.Width, m.resolveColor)
-		}
-	}
+	m.colorVersion++
 	return m.syncViewport()
 }
 
@@ -269,13 +225,20 @@ func (m Model) syncViewport() Model {
 	if !m.ready {
 		return m
 	}
-	content := joinRenderedForViewport(m.records, m.renderedRecords)
+	ctx := m.viewportRenderContext()
+	rendered := make([]string, 0, len(m.records))
+	for i := range m.records {
+		out, cached := m.records[i].RenderCached(ctx)
+		m.records[i] = cached
+		rendered = append(rendered, out)
+	}
+	content := joinRenderedForViewport(m.records, rendered)
 	m.contentLines = countContentLines(content)
 	m.viewport.SetContent(content)
 	return m
 }
 
-func joinRenderedForViewport(records []Record, rendered []string) string {
+func joinRenderedForViewport(records []rec.Record, rendered []string) string {
 	if len(rendered) == 0 {
 		return ""
 	}
@@ -286,15 +249,15 @@ func joinRenderedForViewport(records []Record, rendered []string) string {
 	//
 	// NOTE: blank lines increase rendered height and can trigger scrolling earlier.
 	var b strings.Builder
-	for i, rec := range rendered {
+	for i, renderedRec := range rendered {
 		if i > 0 {
 			sep := "\n\n"
-			if i < len(records) && records[i].Kind == RecordKindSystem {
+			if i < len(records) && records[i].Kind == rec.KindSystem {
 				sep = "\n"
 			}
 			b.WriteString(sep)
 		}
-		b.WriteString(rec)
+		b.WriteString(renderedRec)
 	}
 	return b.String()
 }

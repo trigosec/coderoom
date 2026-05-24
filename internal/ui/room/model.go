@@ -11,6 +11,7 @@ import (
 	"github.com/trigosec/coderoom/internal/ui/room/approval"
 	"github.com/trigosec/coderoom/internal/ui/room/compose"
 	"github.com/trigosec/coderoom/internal/ui/room/history"
+	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 type roomFocus int
@@ -93,7 +94,7 @@ func (m Model) Width() int { return m.history.Width() }
 func (m Model) HistoryView() string { return m.history.View() }
 
 // HistoryRecords returns the room's current record slice.
-func (m Model) HistoryRecords() []history.Record { return m.history.Records() }
+func (m Model) HistoryRecords() []rec.Record { return m.history.Records() }
 
 // HistoryRenderedContent returns the raw rendered record content joined by newlines.
 func (m Model) HistoryRenderedContent() string { return m.history.RenderedContent() }

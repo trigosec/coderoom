@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/trigosec/coderoom/internal/agent"
+	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 // streamSlot tracks an open streaming record by its StreamID.
@@ -14,16 +15,16 @@ type streamSlot struct {
 
 // Model holds the conversation record list and its viewport.
 type Model struct {
-	viewport        viewport.Model
-	records         []Record
-	renderedRecords []string
-	contentLines    int
-	streaming       map[agent.StreamID]streamSlot // streamID → open record slot
-	departed        map[string]bool
-	debugRowNums    bool
-	ready           bool
-	colorByAlias    func(string) string
-	departedColor   string
+	viewport      viewport.Model
+	records       []rec.Record
+	contentLines  int
+	streaming     map[agent.StreamID]streamSlot // streamID → open record slot
+	departed      map[string]bool
+	debugRowNums  bool
+	ready         bool
+	colorByAlias  func(string) string
+	departedColor string
+	colorVersion  uint64
 }
 
 // ScrollStats summarizes the history viewport scroll position using the same
@@ -40,12 +41,11 @@ type ScrollStats struct {
 // departedColor is applied to records belonging to agents that have left.
 func New(colorByAlias func(string) string, departedColor string) Model {
 	return Model{
-		records:         []Record{},
-		renderedRecords: []string{},
-		streaming:       make(map[agent.StreamID]streamSlot),
-		departed:        make(map[string]bool),
-		colorByAlias:    colorByAlias,
-		departedColor:   departedColor,
+		records:       []rec.Record{},
+		streaming:     make(map[agent.StreamID]streamSlot),
+		departed:      make(map[string]bool),
+		colorByAlias:  colorByAlias,
+		departedColor: departedColor,
 	}
 }
 
@@ -104,11 +104,22 @@ func (m Model) resolveColor(alias string) string {
 	return ""
 }
 
+func (m Model) viewportRenderContext() rec.RenderContext {
+	return rec.RenderContext{
+		Key: rec.RenderKey{
+			Mode:         rec.RenderViewport,
+			Width:        m.viewport.Width,
+			ColorVersion: m.colorVersion,
+		},
+		ColorForAlias: m.resolveColor,
+	}
+}
+
 // Ready reports whether SetSize has been called at least once.
 func (m Model) Ready() bool { return m.ready }
 
 // Records returns the current record slice.
-func (m Model) Records() []Record { return m.records }
+func (m Model) Records() []rec.Record { return m.records }
 
 // IsStreaming reports whether alias currently has any open stream.
 func (m Model) IsStreaming(alias string) bool {

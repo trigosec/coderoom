@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/session"
-	"github.com/trigosec/coderoom/internal/ui/room/history"
+	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 // makeReadyModel returns a Model that has processed one WindowSizeMsg so the
@@ -38,7 +38,7 @@ func pushEvent(m Model, e session.Event) Model {
 }
 
 // hasRecord reports whether any record of the given kind contains text in its body.
-func hasRecord(m Model, kind history.RecordKind, text string) bool {
+func hasRecord(m Model, kind record.Kind, text string) bool {
 	for _, r := range m.room.HistoryRecords() {
 		if r.Kind != kind {
 			continue
@@ -53,7 +53,7 @@ func hasRecord(m Model, kind history.RecordKind, text string) bool {
 			case agent.Command:
 				body = c.Output
 			case agent.FileChangeSet:
-				body = history.FormatFileChangeBody(c.Changes)
+				body = record.FormatFileChangeBody(c.Changes)
 			case agent.Log:
 				body = c.Text
 			}

@@ -1,4 +1,4 @@
-package history
+package record
 
 import (
 	"strings"
@@ -41,8 +41,8 @@ func TestRenderFileChange(t *testing.T) {
 	colors := func(string) string { return "" }
 
 	t.Run("pending shows placeholder", func(t *testing.T) {
-		r := Record{Kind: RecordKindFileChange, Alias: "agent"}
-		got := ansi.Strip(renderFileChange(r, 80, colors))
+		r := Record{Kind: KindFileChange, Alias: "agent"}
+		got := ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}, ColorForAlias: colors}))
 		if !strings.Contains(got, "● agent:") {
 			t.Fatalf("expected participant header, got %q", got)
 		}
@@ -63,12 +63,8 @@ func TestRenderFileChange(t *testing.T) {
 				Status: agent.ToolStatusCompleted,
 			},
 		}
-		r := Record{
-			Kind:  RecordKindFileChange,
-			Alias: "agent",
-			Msg:   &fc,
-		}
-		got := ansi.Strip(renderFileChange(r, 80, colors))
+		r := Record{Kind: KindFileChange, Alias: "agent", Msg: &fc}
+		got := ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}, ColorForAlias: colors}))
 
 		for _, needle := range []string{
 			"● agent:",

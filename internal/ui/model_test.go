@@ -7,7 +7,7 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
-	"github.com/trigosec/coderoom/internal/ui/room/history"
+	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 // --- channelObserver ---
@@ -30,7 +30,7 @@ func TestChannelObserver_forwardsToQueue(t *testing.T) {
 func TestHandleEvent_agentStarted(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
-	if !hasRecord(m, history.RecordKindSystem, "[ada joined]") {
+	if !hasRecord(m, record.KindSystem, "[ada joined]") {
 		t.Errorf("expected [ada joined] system record; records: %v", m.room.HistoryRecords())
 	}
 }
@@ -38,7 +38,7 @@ func TestHandleEvent_agentStarted(t *testing.T) {
 func TestHandleEvent_agentStarting(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarting, Alias: "ada"})
-	if !hasRecord(m, history.RecordKindSystem, "[ada starting]") {
+	if !hasRecord(m, record.KindSystem, "[ada starting]") {
 		t.Errorf("expected [ada starting] system record; records: %v", m.room.HistoryRecords())
 	}
 }
@@ -47,7 +47,7 @@ func TestHandleEvent_agentStopped(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
-	if !hasRecord(m, history.RecordKindSystem, "[ada left]") {
+	if !hasRecord(m, record.KindSystem, "[ada left]") {
 		t.Errorf("expected [ada left] system record; records: %v", m.room.HistoryRecords())
 	}
 }
@@ -56,7 +56,7 @@ func TestHandleEvent_agentCrashed(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
 	m = pushEvent(m, session.Event{Kind: session.KindAgentCrashed, Alias: "ada"})
-	if !hasRecord(m, history.RecordKindSystem, "[ada crashed]") {
+	if !hasRecord(m, record.KindSystem, "[ada crashed]") {
 		t.Errorf("expected [ada crashed] system record; records: %v", m.room.HistoryRecords())
 	}
 }
@@ -64,7 +64,7 @@ func TestHandleEvent_agentCrashed(t *testing.T) {
 func TestHandleEvent_agentLog(t *testing.T) {
 	m := makeReadyModel(t)
 	m = pushEvent(m, session.Event{Kind: session.KindAgentLog, Alias: "ada", Text: "npm warn something"})
-	if !hasRecord(m, history.RecordKindLog, "npm warn something") {
+	if !hasRecord(m, record.KindLog, "npm warn something") {
 		t.Errorf("expected log record with text; records: %v", m.room.HistoryRecords())
 	}
 }
@@ -81,7 +81,7 @@ func TestHandleEvent_systemRecords(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := makeReadyModel(t)
 			m = pushEvent(m, tt.event)
-			if !hasRecord(m, history.RecordKindSystem, tt.want) {
+			if !hasRecord(m, record.KindSystem, tt.want) {
 				t.Errorf("expected system record %q; records: %v", tt.want, m.room.HistoryRecords())
 			}
 		})
@@ -118,7 +118,7 @@ func TestHandleDelta_firstDeltaCreatesRecord(t *testing.T) {
 		t.Fatal("expected ada to be streaming")
 	}
 	rec := recs[idx]
-	if rec.Kind != history.RecordKindAgentOutput {
+	if rec.Kind != record.KindAgentOutput {
 		t.Errorf("expected agent output record, got kind %d", rec.Kind)
 	}
 	if rec.Alias != "ada" {
@@ -242,7 +242,7 @@ func TestRoutingFor(t *testing.T) {
 func TestBroadcastAll_noAgentsShowsHint(t *testing.T) {
 	m := makeReadyModel(t)
 	m = m.broadcastAll("hello")
-	if !hasRecord(m, history.RecordKindSystem, "no agents") {
+	if !hasRecord(m, record.KindSystem, "no agents") {
 		t.Errorf("expected no-agents hint in system records; records: %v", m.room.HistoryRecords())
 	}
 }
@@ -252,7 +252,7 @@ func TestBroadcastAll_noAgentsShowsHint(t *testing.T) {
 func TestShowWho_noAgents(t *testing.T) {
 	m := makeReadyModel(t)
 	m = m.showWho()
-	if !hasRecord(m, history.RecordKindSystem, "[no agents]") {
+	if !hasRecord(m, record.KindSystem, "[no agents]") {
 		t.Errorf("expected [no agents] system record; records: %v", m.room.HistoryRecords())
 	}
 }
@@ -261,7 +261,7 @@ func TestShowHelp_coversAllCommands(t *testing.T) {
 	m := makeReadyModel(t)
 	m = m.showHelp()
 	for _, cmd := range []string{"/invite", "/remove", "/cancel", "/who", "/help", "@<alias>", "/quit"} {
-		if !hasRecord(m, history.RecordKindSystem, cmd) {
+		if !hasRecord(m, record.KindSystem, cmd) {
 			t.Errorf("help output missing %q; records: %v", cmd, m.room.HistoryRecords())
 		}
 	}
@@ -305,7 +305,7 @@ func TestHandleReasoningDelta_firstDeltaCreatesRecord(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record, got %d", len(recs))
 	}
-	if recs[0].Kind != history.RecordKindReasoning {
+	if recs[0].Kind != record.KindReasoning {
 		t.Errorf("expected reasoning record, got kind %d", recs[0].Kind)
 	}
 	if recs[0].Msg == nil {
@@ -359,10 +359,10 @@ func TestHandleReasoningDelta_independentOfOutputStreaming(t *testing.T) {
 	if len(recs) != 2 {
 		t.Fatalf("expected 2 records (reasoning + output), got %d", len(recs))
 	}
-	if recs[0].Kind != history.RecordKindReasoning {
+	if recs[0].Kind != record.KindReasoning {
 		t.Errorf("expected first record to be reasoning, got kind %d", recs[0].Kind)
 	}
-	if recs[1].Kind != history.RecordKindAgentOutput {
+	if recs[1].Kind != record.KindAgentOutput {
 		t.Errorf("expected second record to be agent output, got kind %d", recs[1].Kind)
 	}
 }

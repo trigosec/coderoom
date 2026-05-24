@@ -1,5 +1,4 @@
-// Package history implements the conversation record list and its viewport.
-package history
+package record
 
 import (
 	"fmt"
@@ -11,27 +10,62 @@ import (
 	"github.com/trigosec/coderoom/internal/ui/inlinefmt"
 )
 
-// RecordKind identifies the source and display style of a record.
-type RecordKind int
+// Kind identifies the source and display style of a record.
+type Kind int
 
 // Record kind constants ordered from most to least common.
 const (
-	RecordKindUserInput   RecordKind = iota // text the user typed
-	RecordKindAgentOutput                   // streaming response from an agent
-	RecordKindSystem                        // lifecycle and routing notices
-	RecordKindLog                           // agent diagnostic line (stderr)
-	RecordKindReasoning                     // streaming internal reasoning trace from an agent
-	RecordKindCommand                       // shell command execution item from an agent
-	RecordKindFileChange                    // file patch/diff item from an agent
+	KindUserInput   Kind = iota // text the user typed
+	KindAgentOutput             // streaming response from an agent
+	KindSystem                  // lifecycle and routing notices
+	KindLog                     // agent diagnostic line (stderr)
+	KindReasoning               // streaming internal reasoning trace from an agent
+	KindCommand                 // shell command execution item from an agent
+	KindFileChange              // file patch/diff item from an agent
 )
 
 // Record is a single displayable entry in the conversation history.
+//
+// Text is used both for non-agent records (user/system/log) and as a cached body
+// for agent-backed records (Msg != nil).
 type Record struct {
-	Kind    RecordKind
+	Kind    Kind
 	Alias   string   // agent alias; empty for user input and system records
 	Routing []string // aliases shown in the footer (broadcast / direct send)
-	Text    string   // body for non-agent records (user/system/log)
+	Text    string   // body text or cached body derived from Msg
 	Msg     *agent.Message
+
+	renderCache struct {
+		key      RenderKey
+		rendered string
+		valid    bool
+	}
+}
+
+// RenderMode controls how Record.Render formats output.
+type RenderMode int
+
+const (
+	// RenderViewport wraps and truncates based on viewport width.
+	RenderViewport RenderMode = iota
+	// RenderTranscript disables wrapping and emits full content.
+	RenderTranscript
+)
+
+// RenderContext carries caller-provided rendering policy and dependencies.
+type RenderContext struct {
+	Key RenderKey
+	// ColorForAlias returns a lipgloss color string for an active alias, or "".
+	ColorForAlias func(alias string) string
+}
+
+// RenderKey is the comparable subset of RenderContext that affects output.
+// Callers should bump ColorVersion whenever color resolution may change (theme
+// changes, agent departed) to invalidate per-record cached rendering.
+type RenderKey struct {
+	Mode         RenderMode
+	Width        int
+	ColorVersion uint64
 }
 
 var (
@@ -50,35 +84,98 @@ const (
 	routingArrow     = "→ "
 )
 
-func renderRecord(r Record, width int, colors func(string) string) string {
+// NewAgent constructs a record backed by an agent.Message. It caches the record
+// body in Text for efficient re-rendering.
+func NewAgent(alias string, msg agent.Message) Record {
+	msgCopy := msg
+	return Record{
+		Kind:  kindFor(msg),
+		Alias: alias,
+		Msg:   &msgCopy,
+		Text:  bodyFrom(msg),
+	}
+}
+
+// Accumulate merges next into r.Msg and returns the updated record.
+func (r Record) Accumulate(next agent.Message) (Record, error) {
+	if r.Msg == nil {
+		return Record{}, fmt.Errorf("record has no message")
+	}
+	accumulated, err := r.Msg.Accumulate(next)
+	if err != nil {
+		return Record{}, fmt.Errorf("accumulate message: %w", err)
+	}
+	accumulatedCopy := accumulated
+	r.Msg = &accumulatedCopy
+	r.Text = bodyFrom(accumulated)
+	return r, nil
+}
+
+// Render returns the record rendered for the given context.
+func (r Record) Render(ctx RenderContext) string {
+	width := ctx.Key.Width
+	if ctx.Key.Mode == RenderTranscript {
+		width = 0
+	}
+	colors := ctx.ColorForAlias
+	if colors == nil {
+		colors = func(string) string { return "" }
+	}
+
+	switch ctx.Key.Mode {
+	case RenderTranscript:
+		return renderTranscript(r, colors)
+	default:
+		return renderViewport(r, width, colors)
+	}
+}
+
+// RenderCached returns the rendered string and an updated Record containing a
+// cached render result. Callers should store the returned Record if they want
+// caching to persist across renders.
+func (r Record) RenderCached(ctx RenderContext) (string, Record) {
+	key := ctx.Key
+	if key.Mode == RenderTranscript {
+		key.Width = 0
+	}
+	if r.renderCache.valid && r.renderCache.key == key {
+		return r.renderCache.rendered, r
+	}
+	rendered := r.Render(ctx)
+	r.renderCache.key = key
+	r.renderCache.rendered = rendered
+	r.renderCache.valid = true
+	return rendered, r
+}
+
+func renderViewport(r Record, width int, colors func(string) string) string {
 	switch r.Kind {
-	case RecordKindUserInput:
+	case KindUserInput:
 		return renderUserInput(r, width, colors)
-	case RecordKindAgentOutput:
+	case KindAgentOutput:
 		return renderAgentOutput(r, width, colors)
-	case RecordKindSystem:
+	case KindSystem:
 		return systemStyle.Render(ansi.Wrap(r.Text, width, ""))
-	case RecordKindLog:
+	case KindLog:
 		return logStyle.Render(renderLogBody(r.Text, width))
-	case RecordKindReasoning:
+	case KindReasoning:
 		return renderReasoning(r, width, colors)
-	case RecordKindCommand:
+	case KindCommand:
 		return renderCommand(r, width, colors)
-	case RecordKindFileChange:
+	case KindFileChange:
 		return renderFileChange(r, width, colors)
 	}
 	return r.Text
 }
 
-func renderRecordForTranscript(r Record, colors func(string) string) string {
-	if r.Kind == RecordKindCommand {
+func renderTranscript(r Record, colors func(string) string) string {
+	if r.Kind == KindCommand {
 		return renderCommandTranscript(r, colors)
 	}
-	if r.Kind == RecordKindFileChange {
+	if r.Kind == KindFileChange {
 		return renderFileChangeTranscript(r, colors)
 	}
-	// Use width=0 to disable wrapping in transcript exports.
-	return renderRecord(r, 0, colors)
+	return renderViewport(r, 0, colors)
 }
 
 func renderLogBody(body string, width int) string {
@@ -88,8 +185,8 @@ func renderLogBody(body string, width int) string {
 	parts := strings.Split(body, "\n")
 	out := make([]string, 0, len(parts))
 	for i, line := range parts {
-		// If body ends with a trailing newline, strings.Split includes a final
-		// empty element; skip it to avoid rendering an orphaned "▸ " line.
+		// strings.Split("x\n", "\n") includes a final empty element; skip it so we
+		// don't render a dangling prefixed line for trailing newlines.
 		if i == len(parts)-1 && line == "" {
 			continue
 		}
@@ -101,7 +198,6 @@ func renderLogBody(body string, width int) string {
 func renderUserInput(r Record, width int, colors func(string) string) string {
 	plain := promptPrefix + r.Text
 	wrapped := wrapLine(plain, width, promptPrefix)
-	// Style the prompt prefix on the first line.
 	if strings.HasPrefix(wrapped, promptPrefix) {
 		wrapped = promptStyle.Render(promptPrefix) + wrapped[len(promptPrefix):]
 	}
@@ -150,14 +246,102 @@ func renderReasoning(r Record, width int, colors func(string) string) string {
 	}
 	bodyText := body
 	if color != "" {
-		// Keep the base text aligned with system messages, and use the
-		// participant color only for inline emphasis spans (e.g. **bold**).
+		// Keep base text aligned with system messages; use participant color only
+		// for inline emphasis.
 		bodyText = inlinefmt.FormatWithStyles(bodyText, systemStyle, lipgloss.NewStyle().Foreground(lipgloss.Color(color)))
 	} else {
 		bodyText = systemStyle.Render(bodyText)
 	}
 	wrapped := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
 	return header + "\n\n" + wrapped
+}
+
+// FormatFileChangeBody renders a stable plain-text representation of a file
+// change set for history records and transcript exports.
+func FormatFileChangeBody(changes []agent.FileChange) string {
+	if len(changes) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, ch := range changes {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("=== ")
+		sb.WriteString(ch.Path)
+		if ch.ChangeKind != "" {
+			sb.WriteString(" (")
+			sb.WriteString(ch.ChangeKind)
+			sb.WriteString(")")
+		}
+		sb.WriteString("\n")
+		sb.WriteString(ch.Diff)
+		if !strings.HasSuffix(ch.Diff, "\n") {
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
+}
+
+func bodyFrom(msg agent.Message) string {
+	switch c := msg.Content.(type) {
+	case agent.Output:
+		return c.Text
+	case agent.Reasoning:
+		return c.Text
+	case agent.Command:
+		return c.Output
+	case agent.FileChangeSet:
+		return FormatFileChangeBody(c.Changes)
+	}
+	return ""
+}
+
+func kindFor(msg agent.Message) Kind {
+	switch msg.Content.(type) {
+	case agent.Reasoning:
+		return KindReasoning
+	case agent.Command:
+		return KindCommand
+	case agent.FileChangeSet:
+		return KindFileChange
+	}
+	return KindAgentOutput
+}
+
+func bodyFromRecord(r Record) string {
+	if r.Msg == nil {
+		return ""
+	}
+	if r.Text != "" {
+		return r.Text
+	}
+	return bodyFrom(*r.Msg)
+}
+
+func commandFieldsFromRecord(r Record) (cmd string, output string, exitCode *int) {
+	if r.Msg == nil {
+		return "", "", nil
+	}
+	c, ok := r.Msg.Content.(agent.Command)
+	if !ok {
+		return "", "", nil
+	}
+	return c.Command, c.Output, c.ExitCode
+}
+
+func fileChangeFieldsFromRecord(r Record) (status agent.ToolStatus, changes []agent.FileChange, body string) {
+	if r.Msg == nil {
+		return "", nil, ""
+	}
+	c, ok := r.Msg.Content.(agent.FileChangeSet)
+	if !ok {
+		return "", nil, ""
+	}
+	if r.Text != "" {
+		return c.Status, c.Changes, r.Text
+	}
+	return c.Status, c.Changes, FormatFileChangeBody(c.Changes)
 }
 
 func renderCommand(r Record, width int, colors func(string) string) string {
@@ -403,77 +587,6 @@ func renderCommandTranscript(r Record, colors func(string) string) string {
 	return sb.String()
 }
 
-func recordKindFor(msg agent.Message) RecordKind {
-	switch msg.Content.(type) {
-	case agent.Reasoning:
-		return RecordKindReasoning
-	case agent.Command:
-		return RecordKindCommand
-	case agent.FileChangeSet:
-		return RecordKindFileChange
-	}
-	return RecordKindAgentOutput
-}
-
-func bodyFromRecord(r Record) string {
-	if r.Msg == nil {
-		return ""
-	}
-	if r.Text != "" {
-		return r.Text
-	}
-	return bodyFrom(*r.Msg)
-}
-
-func newAgentRecord(alias string, msg agent.Message) Record {
-	msgCopy := msg
-	return Record{
-		Kind:  recordKindFor(msg),
-		Alias: alias,
-		Msg:   &msgCopy,
-		Text:  bodyFrom(msg),
-	}
-}
-
-func (r Record) accumulate(next agent.Message) (Record, error) {
-	if r.Msg == nil {
-		return Record{}, fmt.Errorf("record has no message")
-	}
-	accumulated, err := r.Msg.Accumulate(next)
-	if err != nil {
-		return Record{}, fmt.Errorf("accumulate message: %w", err)
-	}
-	accumulatedCopy := accumulated
-	r.Msg = &accumulatedCopy
-	r.Text = bodyFrom(accumulated)
-	return r, nil
-}
-
-func commandFieldsFromRecord(r Record) (cmd string, output string, exitCode *int) {
-	if r.Msg == nil {
-		return "", "", nil
-	}
-	c, ok := r.Msg.Content.(agent.Command)
-	if !ok {
-		return "", "", nil
-	}
-	return c.Command, c.Output, c.ExitCode
-}
-
-func fileChangeFieldsFromRecord(r Record) (status agent.ToolStatus, changes []agent.FileChange, body string) {
-	if r.Msg == nil {
-		return "", nil, ""
-	}
-	c, ok := r.Msg.Content.(agent.FileChangeSet)
-	if !ok {
-		return "", nil, ""
-	}
-	if r.Text != "" {
-		return c.Status, c.Changes, r.Text
-	}
-	return c.Status, c.Changes, FormatFileChangeBody(c.Changes)
-}
-
 const commandSummaryMaxCols = 120
 const commandOutputPreviewLines = 3
 
@@ -498,8 +611,6 @@ type commandDetailsHintParams struct {
 }
 
 func commandDetailsHint(p commandDetailsHintParams) string {
-	// Ctrl+O toggles focus (input <-> history). Ctrl+G in history opens a full
-	// transcript view in the user's editor.
 	if p.moreLines > 0 {
 		return fmt.Sprintf("%s(+%d more; Ctrl+O history, Ctrl+G open transcript)", agentBodyIndent, p.moreLines)
 	}
@@ -586,9 +697,6 @@ func renderCommandLine(prefix string, cmd string, width int) string {
 	return prefix + strings.Join(parts, "\n")
 }
 
-// wrapLine wraps line to width. If prefix is non-empty, continuation lines
-// are indented to align with the first content column after the prefix.
-// Requires that line starts with prefix when prefix is non-empty.
 func wrapLine(line string, width int, prefix string) string {
 	if width <= 0 {
 		return line
@@ -596,6 +704,9 @@ func wrapLine(line string, width int, prefix string) string {
 	if prefix == "" {
 		return ansi.Wrap(line, width, "")
 	}
+	// Contract: callers must include the prefix at the start of the line when
+	// prefix is non-empty, otherwise the wrapped output cannot preserve prefix
+	// alignment.
 	if !strings.HasPrefix(line, prefix) {
 		return ansi.Wrap(line, width, "")
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 // View renders the viewport with an optional row-number overlay. The output is
@@ -35,22 +36,33 @@ func (m Model) View() string {
 // RenderedContent returns the raw rendered records joined by newlines; useful
 // for checking all history content regardless of scroll position.
 func (m Model) RenderedContent() string {
-	return strings.Join(m.renderedRecords, "\n")
+	ctx := m.viewportRenderContext()
+	parts := make([]string, 0, len(m.records))
+	for i := range m.records {
+		out, cached := m.records[i].RenderCached(ctx)
+		m.records[i] = cached
+		parts = append(parts, out)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // PlainText returns the ANSI-stripped, double-newline-joined rendered records
 // for transcript export.
 func (m Model) PlainText() string {
 	parts := make([]string, 0, len(m.records))
+	ctx := rec.RenderContext{
+		Key:           rec.RenderKey{Mode: rec.RenderTranscript, ColorVersion: m.colorVersion},
+		ColorForAlias: m.resolveColor,
+	}
 	for _, r := range m.records {
-		parts = append(parts, renderRecordForTranscript(r, m.resolveColor))
+		parts = append(parts, r.Render(ctx))
 	}
 	return strings.Join(parts, "\n\n")
 }
 
 // DebugLabel returns a compact summary string for the separator label.
 func (m Model) DebugLabel() string {
-	content := strings.Join(m.renderedRecords, "\n")
+	content := m.RenderedContent()
 	contentLines := 0
 	first := ""
 	if content != "" {
@@ -101,7 +113,7 @@ func (m Model) DebugSummary() string {
 		lines = lines[:8]
 	}
 	parts := []string{
-		fmt.Sprintf("  y=%d h=%d rec=%d ln=%d", m.viewport.YOffset, m.viewport.Height, len(m.records), len(m.renderedRecords)),
+		fmt.Sprintf("  y=%d h=%d rec=%d", m.viewport.YOffset, m.viewport.Height, len(m.records)),
 		"  viewTop:",
 	}
 	for _, line := range lines {
