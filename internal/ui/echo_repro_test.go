@@ -40,7 +40,7 @@ func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 
 	userInputs := 0
 	for _, r := range m.room.HistoryRecords() {
-		if r.Kind == history.RecordKindUserInput && strings.TrimSpace(r.Body) == "/who" {
+		if r.Kind == history.RecordKindUserInput && strings.TrimSpace(r.Text) == "/who" {
 			userInputs++
 		}
 	}

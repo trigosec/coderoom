@@ -49,17 +49,17 @@ func (m Model) AppendRecord(r Record) Model {
 
 // AppendSystemRecord appends a system-notice record with the given body.
 func (m Model) AppendSystemRecord(body string) Model {
-	return m.AppendRecord(Record{Kind: RecordKindSystem, Body: body})
+	return m.AppendRecord(Record{Kind: RecordKindSystem, Text: body})
 }
 
 // AppendUserInputRecord appends a user-input record with optional routing footer.
 func (m Model) AppendUserInputRecord(body string, routing []string) Model {
-	return m.AppendRecord(Record{Kind: RecordKindUserInput, Body: body, Routing: routing})
+	return m.AppendRecord(Record{Kind: RecordKindUserInput, Text: body, Routing: routing})
 }
 
 // AppendLogRecord appends a diagnostic log line from alias.
 func (m Model) AppendLogRecord(alias, body string) Model {
-	return m.AppendRecord(Record{Kind: RecordKindLog, Alias: alias, Body: body})
+	return m.AppendRecord(Record{Kind: RecordKindLog, Alias: alias, Text: body})
 }
 
 // HandleAgentMessage appends or extends a streaming record based on msg.
@@ -97,13 +97,9 @@ func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
 func (m Model) appendOrExtend(alias string, msg agent.Message) Model {
 	wasAtBottom := m.viewport.AtBottom()
 	if slot, ok := m.streaming[msg.StreamID]; ok {
-		if accumulated, err := slot.msg.Accumulate(msg); err == nil {
-			m.records[slot.recordIdx].Body = bodyFrom(accumulated)
-			if c, ok := accumulated.Content.(agent.FileChangeSet); ok {
-				m.applyFileChangeFields(slot.recordIdx, c)
-			}
+		if updated, err := m.records[slot.recordIdx].accumulate(msg); err == nil {
+			m.records[slot.recordIdx] = updated
 			m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
-			m.streaming[msg.StreamID] = streamSlot{slot.recordIdx, accumulated}
 		} else {
 			// Content-type mismatch on a live stream: preserve the existing record
 			// and open a fresh one rather than wiping the accumulated body.
@@ -121,18 +117,10 @@ func (m Model) appendOrExtend(alias string, msg agent.Message) Model {
 
 func (m Model) openRecord(alias string, msg agent.Message) Model {
 	idx := len(m.records)
-	r := Record{Kind: recordKindFor(msg), Alias: alias, Body: bodyFrom(msg)}
-	if c, ok := msg.Content.(agent.Command); ok {
-		r.Cmd = c.Command
-		r.Cwd = c.Cwd
-	}
-	if c, ok := msg.Content.(agent.FileChangeSet); ok {
-		r.PatchStatus = c.Status
-		r.FileChanges = c.Changes
-	}
+	r := newAgentRecord(alias, msg)
 	m.records = append(m.records, r)
 	m.renderedRecords = append(m.renderedRecords, renderRecord(r, m.viewport.Width, m.resolveColor))
-	m.streaming[msg.StreamID] = streamSlot{idx, msg}
+	m.streaming[msg.StreamID] = streamSlot{recordIdx: idx}
 	return m
 }
 
@@ -142,9 +130,6 @@ func (m Model) sealCommandStream(streamID agent.StreamID) Model {
 		return m
 	}
 	wasAtBottom := m.viewport.AtBottom()
-	if c, ok := slot.msg.Content.(agent.Command); ok {
-		m.records[slot.recordIdx].ExitCode = c.ExitCode
-	}
 	m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
 	delete(m.streaming, streamID)
 	m = m.syncViewport()
@@ -160,9 +145,6 @@ func (m Model) sealFileChangeStream(streamID agent.StreamID) Model {
 		return m
 	}
 	wasAtBottom := m.viewport.AtBottom()
-	if c, ok := slot.msg.Content.(agent.FileChangeSet); ok {
-		m.applyFileChangeFields(slot.recordIdx, c)
-	}
 	m.renderedRecords[slot.recordIdx] = renderRecord(m.records[slot.recordIdx], m.viewport.Width, m.resolveColor)
 	delete(m.streaming, streamID)
 	m = m.syncViewport()
@@ -181,17 +163,14 @@ func bodyFrom(msg agent.Message) string {
 	case agent.Command:
 		return c.Output
 	case agent.FileChangeSet:
-		return formatFileChangeBody(c.Changes)
+		return FormatFileChangeBody(c.Changes)
 	}
 	return ""
 }
 
-func (m Model) applyFileChangeFields(recordIdx int, c agent.FileChangeSet) {
-	m.records[recordIdx].PatchStatus = c.Status
-	m.records[recordIdx].FileChanges = c.Changes
-}
-
-func formatFileChangeBody(changes []agent.FileChange) string {
+// FormatFileChangeBody renders a stable plain-text representation of a file
+// change set for history records and transcript exports.
+func FormatFileChangeBody(changes []agent.FileChange) string {
 	if len(changes) == 0 {
 		return ""
 	}
@@ -214,18 +193,6 @@ func formatFileChangeBody(changes []agent.FileChange) string {
 		}
 	}
 	return sb.String()
-}
-
-func recordKindFor(msg agent.Message) RecordKind {
-	switch msg.Content.(type) {
-	case agent.Reasoning:
-		return RecordKindReasoning
-	case agent.Command:
-		return RecordKindCommand
-	case agent.FileChangeSet:
-		return RecordKindFileChange
-	}
-	return RecordKindAgentOutput
 }
 
 // MarkDeparted records alias as departed and re-renders its affected records.
@@ -256,10 +223,12 @@ func (m Model) clearStreamsForAlias(alias string) Model {
 // IsReasoningStreaming reports whether alias has an open reasoning stream.
 func (m Model) IsReasoningStreaming(alias string) bool {
 	for _, slot := range m.streaming {
-		if _, ok := slot.msg.Content.(agent.Reasoning); ok {
-			if m.records[slot.recordIdx].Alias == alias {
-				return true
-			}
+		r := m.records[slot.recordIdx]
+		if r.Alias != alias || r.Msg == nil {
+			continue
+		}
+		if _, ok := r.Msg.Content.(agent.Reasoning); ok {
+			return true
 		}
 	}
 	return false

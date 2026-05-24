@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/history"
 )
@@ -39,7 +40,25 @@ func pushEvent(m Model, e session.Event) Model {
 // hasRecord reports whether any record of the given kind contains text in its body.
 func hasRecord(m Model, kind history.RecordKind, text string) bool {
 	for _, r := range m.room.HistoryRecords() {
-		if r.Kind == kind && strings.Contains(r.Body, text) {
+		if r.Kind != kind {
+			continue
+		}
+		body := r.Text
+		if r.Msg != nil {
+			switch c := r.Msg.Content.(type) {
+			case agent.Output:
+				body = c.Text
+			case agent.Reasoning:
+				body = c.Text
+			case agent.Command:
+				body = c.Output
+			case agent.FileChangeSet:
+				body = history.FormatFileChangeBody(c.Changes)
+			case agent.Log:
+				body = c.Text
+			}
+		}
+		if strings.Contains(body, text) {
 			return true
 		}
 	}

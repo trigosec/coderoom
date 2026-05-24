@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trigosec/coderoom/internal/agent"
 )
 
 func TestRenderReasoning_bodyUsesSystemStyleExceptEmphasis(t *testing.T) {
@@ -14,7 +15,11 @@ func TestRenderReasoning_bodyUsesSystemStyleExceptEmphasis(t *testing.T) {
 		out := renderReasoning(Record{
 			Kind:  RecordKindReasoning,
 			Alias: "alice",
-			Body:  "plain **bold** plain",
+			Msg: &agent.Message{
+				StreamID: "s1",
+				Mode:     agent.ModeStream,
+				Content:  agent.Reasoning{Text: "plain **bold** plain"},
+			},
 		}, 200, func(alias string) string {
 			if alias != "alice" {
 				return ""

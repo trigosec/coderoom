@@ -32,14 +32,21 @@ func TestHandleAgentMessage_commandStream_opensRecordWithCmdAndCwd(t *testing.T)
 	if r.Kind != RecordKindCommand {
 		t.Errorf("expected RecordKindCommand, got %v", r.Kind)
 	}
-	if r.Cmd != "ls -la" {
-		t.Errorf("expected Cmd=%q, got %q", "ls -la", r.Cmd)
+	if r.Msg == nil {
+		t.Fatal("expected record to carry Msg, got nil")
 	}
-	if r.Cwd != "/tmp" {
-		t.Errorf("expected Cwd=%q, got %q", "/tmp", r.Cwd)
+	cmd, ok := r.Msg.Content.(agent.Command)
+	if !ok {
+		t.Fatalf("expected Command content, got %T", r.Msg.Content)
 	}
-	if r.ExitCode != nil {
-		t.Errorf("expected nil ExitCode before seal, got %v", *r.ExitCode)
+	if cmd.Command != "ls -la" {
+		t.Errorf("expected Command=%q, got %q", "ls -la", cmd.Command)
+	}
+	if cmd.Cwd != "/tmp" {
+		t.Errorf("expected Cwd=%q, got %q", "/tmp", cmd.Cwd)
+	}
+	if cmd.ExitCode != nil {
+		t.Errorf("expected nil ExitCode before seal, got %v", *cmd.ExitCode)
 	}
 }
 
@@ -57,8 +64,15 @@ func TestHandleAgentMessage_commandStream_accumulatesOutput(t *testing.T) {
 	})
 
 	r := m.records[0]
-	if r.Body != "hi\n" {
-		t.Errorf("expected body=%q, got %q", "hi\n", r.Body)
+	if r.Msg == nil {
+		t.Fatal("expected record to carry Msg, got nil")
+	}
+	cmd, ok := r.Msg.Content.(agent.Command)
+	if !ok {
+		t.Fatalf("expected Command content, got %T", r.Msg.Content)
+	}
+	if cmd.Output != "hi\n" {
+		t.Errorf("expected output=%q, got %q", "hi\n", cmd.Output)
 	}
 	if len(m.streaming) != 1 {
 		t.Errorf("expected 1 open stream after delta, got %d", len(m.streaming))
@@ -88,13 +102,28 @@ func TestHandleAgentMessage_commandFlush_sealsExitCodeAndClearsStream(t *testing
 		t.Errorf("expected 0 open streams after flush, got %d", len(m.streaming))
 	}
 	r := m.records[0]
-	if r.ExitCode == nil || *r.ExitCode != 0 {
-		t.Errorf("expected ExitCode=0 after flush, got %v", r.ExitCode)
+	if r.Msg == nil {
+		t.Fatal("expected record to carry Msg, got nil")
+	}
+	cmd, ok := r.Msg.Content.(agent.Command)
+	if !ok {
+		t.Fatalf("expected Command content, got %T", r.Msg.Content)
+	}
+	if cmd.ExitCode == nil || *cmd.ExitCode != 0 {
+		t.Errorf("expected ExitCode=0 after flush, got %v", cmd.ExitCode)
 	}
 }
 
 func TestRenderCommand_headerOnly(t *testing.T) {
-	r := Record{Kind: RecordKindCommand, Alias: "bot", Cmd: "ls", Cwd: "/tmp"}
+	r := Record{
+		Kind:  RecordKindCommand,
+		Alias: "bot",
+		Msg: &agent.Message{
+			StreamID: "s1",
+			Mode:     agent.ModeStream,
+			Content:  agent.Command{Command: "ls", Cwd: "/tmp"},
+		},
+	}
 	out := ansi.Strip(renderCommand(r, 80, func(string) string { return "" }))
 	if !strings.HasPrefix(out, "● bot:\n\n  $ ls") {
 		t.Errorf("expected header starting with participant prefix and command line, got %q", out)
@@ -103,11 +132,13 @@ func TestRenderCommand_headerOnly(t *testing.T) {
 
 func TestRenderCommand_withOutputAndExitCode(t *testing.T) {
 	r := Record{
-		Kind: RecordKindCommand, Alias: "bot",
-		Cmd:      "echo hi",
-		Cwd:      "/",
-		Body:     "hi\n",
-		ExitCode: ptr(0),
+		Kind:  RecordKindCommand,
+		Alias: "bot",
+		Msg: &agent.Message{
+			StreamID: "s1",
+			Mode:     agent.ModeStream,
+			Content:  agent.Command{Command: "echo hi", Cwd: "/", Output: "hi\n", ExitCode: ptr(0)},
+		},
 	}
 	out := ansi.Strip(renderCommand(r, 80, func(string) string { return "" }))
 	if !strings.Contains(out, "echo hi") {
@@ -126,12 +157,9 @@ func TestRenderCommand_withOutputAndExitCode(t *testing.T) {
 
 func TestRenderCommand_outputPreview_showsTopThreeLinesAndHint(t *testing.T) {
 	r := Record{
-		Kind:     RecordKindCommand,
-		Alias:    "bot",
-		Cmd:      "echo stuff",
-		Cwd:      "/",
-		Body:     "a\nb\nc\nd\n",
-		ExitCode: ptr(0),
+		Kind:  RecordKindCommand,
+		Alias: "bot",
+		Msg:   &agent.Message{StreamID: "s1", Mode: agent.ModeStream, Content: agent.Command{Command: "echo stuff", Cwd: "/", Output: "a\nb\nc\nd\n", ExitCode: ptr(0)}},
 	}
 	out := ansi.Strip(renderCommand(r, 80, func(string) string { return "" }))
 	if !strings.Contains(out, "\n\n  a\n  b\n  c") {
@@ -146,7 +174,15 @@ func TestRenderCommand_outputPreview_showsTopThreeLinesAndHint(t *testing.T) {
 }
 
 func TestRenderCommand_longCmd_truncatesToSingleLine(t *testing.T) {
-	r := Record{Kind: RecordKindCommand, Alias: "bot", Cmd: "abcdefghij", Cwd: "/tmp"}
+	r := Record{
+		Kind:  RecordKindCommand,
+		Alias: "bot",
+		Msg: &agent.Message{
+			StreamID: "s1",
+			Mode:     agent.ModeStream,
+			Content:  agent.Command{Command: "abcdefghij", Cwd: "/tmp"},
+		},
+	}
 	out := ansi.Strip(renderCommand(r, 10, func(string) string { return "" }))
 	lines := strings.Split(out, "\n")
 	if len(lines) < 3 {
@@ -182,12 +218,9 @@ func TestRenderCommandLine_longCmdWrapsWithoutRepeatingDollarPrefix(t *testing.T
 
 func TestRenderCommandTranscript_indentsAllOutputLines(t *testing.T) {
 	r := Record{
-		Kind:     RecordKindCommand,
-		Alias:    "bot",
-		Cmd:      "echo hi",
-		Cwd:      "/",
-		Body:     "line1\nline2\nline3\n",
-		ExitCode: ptr(0),
+		Kind:  RecordKindCommand,
+		Alias: "bot",
+		Msg:   &agent.Message{StreamID: "s1", Mode: agent.ModeStream, Content: agent.Command{Command: "echo hi", Cwd: "/", Output: "line1\nline2\nline3\n", ExitCode: ptr(0)}},
 	}
 	out := ansi.Strip(renderCommandTranscript(r, func(string) string { return "" }))
 	if !strings.Contains(out, "\n\n  line1\n  line2\n  line3") {

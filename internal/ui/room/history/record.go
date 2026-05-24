@@ -27,15 +27,11 @@ const (
 
 // Record is a single displayable entry in the conversation history.
 type Record struct {
-	Kind        RecordKind
-	Alias       string   // agent alias; empty for user input and system records
-	Body        string   // accumulated content; grows during streaming
-	Routing     []string // aliases shown in the footer (broadcast / direct send)
-	Cmd         string   // shell command string; set on RecordKindCommand
-	Cwd         string   // working directory for Cmd; set on RecordKindCommand
-	ExitCode    *int     // process exit code; nil until RecordKindCommand is sealed
-	PatchStatus agent.ToolStatus
-	FileChanges []agent.FileChange
+	Kind    RecordKind
+	Alias   string   // agent alias; empty for user input and system records
+	Routing []string // aliases shown in the footer (broadcast / direct send)
+	Text    string   // body for non-agent records (user/system/log)
+	Msg     *agent.Message
 }
 
 var (
@@ -61,9 +57,9 @@ func renderRecord(r Record, width int, colors func(string) string) string {
 	case RecordKindAgentOutput:
 		return renderAgentOutput(r, width, colors)
 	case RecordKindSystem:
-		return systemStyle.Render(ansi.Wrap(r.Body, width, ""))
+		return systemStyle.Render(ansi.Wrap(r.Text, width, ""))
 	case RecordKindLog:
-		return logStyle.Render(renderLogBody(r.Body, width))
+		return logStyle.Render(renderLogBody(r.Text, width))
 	case RecordKindReasoning:
 		return renderReasoning(r, width, colors)
 	case RecordKindCommand:
@@ -71,7 +67,7 @@ func renderRecord(r Record, width int, colors func(string) string) string {
 	case RecordKindFileChange:
 		return renderFileChange(r, width, colors)
 	}
-	return r.Body
+	return r.Text
 }
 
 func renderRecordForTranscript(r Record, colors func(string) string) string {
@@ -103,7 +99,7 @@ func renderLogBody(body string, width int) string {
 }
 
 func renderUserInput(r Record, width int, colors func(string) string) string {
-	plain := promptPrefix + r.Body
+	plain := promptPrefix + r.Text
 	wrapped := wrapLine(plain, width, promptPrefix)
 	// Style the prompt prefix on the first line.
 	if strings.HasPrefix(wrapped, promptPrefix) {
@@ -127,15 +123,16 @@ func renderAgentOutput(r Record, width int, colors func(string) string) string {
 	} else {
 		header = agentBullet + r.Alias + ":"
 	}
-	if r.Body == "" {
+	body := bodyFromRecord(r)
+	if body == "" {
 		return header
 	}
-	bodyText := r.Body
+	bodyText := body
 	if color != "" {
 		bodyText = inlinefmt.Format(bodyText, spanStyle)
 	}
-	body := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
-	return header + "\n\n" + body
+	wrapped := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
+	return header + "\n\n" + wrapped
 }
 
 func renderReasoning(r Record, width int, colors func(string) string) string {
@@ -147,10 +144,11 @@ func renderReasoning(r Record, width int, colors func(string) string) string {
 		headerStyle = lipgloss.NewStyle().Faint(true)
 	}
 	header := headerStyle.Render(reasoningBullet + r.Alias + " (thinking)")
-	if r.Body == "" {
+	body := bodyFromRecord(r)
+	if body == "" {
 		return header
 	}
-	bodyText := r.Body
+	bodyText := body
 	if color != "" {
 		// Keep the base text aligned with system messages, and use the
 		// participant color only for inline emphasis spans (e.g. **bold**).
@@ -158,13 +156,13 @@ func renderReasoning(r Record, width int, colors func(string) string) string {
 	} else {
 		bodyText = systemStyle.Render(bodyText)
 	}
-	body := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
-	return header + "\n\n" + body
+	wrapped := wrapLine(agentBodyIndent+bodyText, width, agentBodyIndent)
+	return header + "\n\n" + wrapped
 }
 
 func renderCommand(r Record, width int, colors func(string) string) string {
 	color := colors(r.Alias)
-	cmd := r.Cmd
+	cmd, output, exitCode := commandFieldsFromRecord(r)
 	if cmd == "" {
 		cmd = "…"
 	}
@@ -174,7 +172,7 @@ func renderCommand(r Record, width int, colors func(string) string) string {
 	commandLine, cmdTruncated := renderCommandSummaryLine(agentBodyIndent+commandPrompt, cmd, width)
 	cmdHasNewline := strings.Contains(cmd, "\n")
 
-	if r.Body == "" && r.ExitCode == nil {
+	if output == "" && exitCode == nil {
 		return renderPendingCommand(header, commandLine, cmdHasNewline || cmdTruncated)
 	}
 
@@ -183,7 +181,7 @@ func renderCommand(r Record, width int, colors func(string) string) string {
 	sb.WriteString("\n\n")
 	sb.WriteString(commandLine)
 
-	preview, remaining := renderCommandOutputPreview(r.Body, width)
+	preview, remaining := renderCommandOutputPreview(output, width)
 	if preview != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(preview)
@@ -197,9 +195,9 @@ func renderCommand(r Record, width int, colors func(string) string) string {
 		})))
 	}
 
-	if r.ExitCode != nil {
+	if exitCode != nil {
 		sb.WriteString("\n")
-		sb.WriteString(logStyle.Render(fmt.Sprintf("%sexit %d", agentBodyIndent, *r.ExitCode)))
+		sb.WriteString(logStyle.Render(fmt.Sprintf("%sexit %d", agentBodyIndent, *exitCode)))
 	}
 
 	return sb.String()
@@ -228,18 +226,20 @@ func renderFileChange(r Record, width int, colors func(string) string) string {
 }
 
 func isPendingFileChange(r Record) bool {
-	return len(r.FileChanges) == 0 && r.Body == "" && r.PatchStatus == ""
+	status, changes, body := fileChangeFieldsFromRecord(r)
+	return len(changes) == 0 && body == "" && status == ""
 }
 
 func appendFileChangeList(sb *strings.Builder, r Record) {
-	if len(r.FileChanges) == 0 {
+	_, changes, _ := fileChangeFieldsFromRecord(r)
+	if len(changes) == 0 {
 		return
 	}
 	sb.WriteString("\n\n")
 	sb.WriteString(agentBodyIndent)
 	sb.WriteString(fileChangeBullet)
 	sb.WriteString("files:")
-	for _, ch := range r.FileChanges {
+	for _, ch := range changes {
 		sb.WriteString("\n")
 		sb.WriteString(agentBodyIndent)
 		sb.WriteString("- ")
@@ -252,11 +252,12 @@ func appendFileChangeList(sb *strings.Builder, r Record) {
 }
 
 func appendFileChangeBodyPreview(sb *strings.Builder, r Record, width int) {
-	if r.Body == "" {
+	_, _, body := fileChangeFieldsFromRecord(r)
+	if body == "" {
 		return
 	}
 	sb.WriteString("\n\n")
-	lines := strings.Split(strings.TrimRight(r.Body, "\n"), "\n")
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	previewCount := min(len(lines), fileChangePreviewLines)
 	maxCols := fileChangePreviewMaxCols(width)
 	for i := 0; i < previewCount; i++ {
@@ -291,11 +292,12 @@ func appendFileChangeBodyMoreHint(sb *strings.Builder, remainingLines int) {
 }
 
 func appendFileChangePatchStatus(sb *strings.Builder, r Record) {
-	if r.PatchStatus == "" {
+	status, _, _ := fileChangeFieldsFromRecord(r)
+	if status == "" {
 		return
 	}
 	sb.WriteString("\n")
-	sb.WriteString(logStyle.Render(fmt.Sprintf("%s%s", agentBodyIndent, r.PatchStatus)))
+	sb.WriteString(logStyle.Render(fmt.Sprintf("%s%s", agentBodyIndent, status)))
 }
 
 func renderFileChangeTranscript(r Record, colors func(string) string) string {
@@ -304,12 +306,13 @@ func renderFileChangeTranscript(r Record, colors func(string) string) string {
 	var sb strings.Builder
 	sb.WriteString(header)
 
-	if len(r.FileChanges) > 0 {
+	status, changes, body := fileChangeFieldsFromRecord(r)
+	if len(changes) > 0 {
 		sb.WriteString("\n\n")
 		sb.WriteString(agentBodyIndent)
 		sb.WriteString(fileChangeBullet)
 		sb.WriteString("files:")
-		for _, ch := range r.FileChanges {
+		for _, ch := range changes {
 			sb.WriteString("\n")
 			sb.WriteString(agentBodyIndent)
 			sb.WriteString("- ")
@@ -321,9 +324,9 @@ func renderFileChangeTranscript(r Record, colors func(string) string) string {
 		}
 	}
 
-	if r.Body != "" {
+	if body != "" {
 		sb.WriteString("\n\n")
-		lines := strings.Split(strings.TrimRight(r.Body, "\n"), "\n")
+		lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 		for i, line := range lines {
 			if i > 0 {
 				sb.WriteString("\n")
@@ -332,9 +335,9 @@ func renderFileChangeTranscript(r Record, colors func(string) string) string {
 		}
 	}
 
-	if r.PatchStatus != "" {
+	if status != "" {
 		sb.WriteString("\n")
-		sb.WriteString(logStyle.Render(fmt.Sprintf("%s%s", agentBodyIndent, r.PatchStatus)))
+		sb.WriteString(logStyle.Render(fmt.Sprintf("%s%s", agentBodyIndent, status)))
 	}
 
 	return sb.String()
@@ -369,7 +372,7 @@ func shouldRenderCommandHint(moreLines int, cmdHasNewline bool, cmdTruncated boo
 
 func renderCommandTranscript(r Record, colors func(string) string) string {
 	color := colors(r.Alias)
-	cmd := r.Cmd
+	cmd, output, exitCode := commandFieldsFromRecord(r)
 	if cmd == "" {
 		cmd = "…"
 	}
@@ -382,9 +385,9 @@ func renderCommandTranscript(r Record, colors func(string) string) string {
 	sb.WriteString("\n\n")
 	sb.WriteString(commandLine)
 
-	if r.Body != "" {
+	if output != "" {
 		sb.WriteString("\n\n")
-		lines := strings.Split(strings.TrimRight(r.Body, "\n"), "\n")
+		lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
 		for i, line := range lines {
 			if i > 0 {
 				sb.WriteString("\n")
@@ -393,11 +396,82 @@ func renderCommandTranscript(r Record, colors func(string) string) string {
 		}
 	}
 
-	if r.ExitCode != nil {
+	if exitCode != nil {
 		sb.WriteString("\n")
-		sb.WriteString(logStyle.Render(fmt.Sprintf("%sexit %d", agentBodyIndent, *r.ExitCode)))
+		sb.WriteString(logStyle.Render(fmt.Sprintf("%sexit %d", agentBodyIndent, *exitCode)))
 	}
 	return sb.String()
+}
+
+func recordKindFor(msg agent.Message) RecordKind {
+	switch msg.Content.(type) {
+	case agent.Reasoning:
+		return RecordKindReasoning
+	case agent.Command:
+		return RecordKindCommand
+	case agent.FileChangeSet:
+		return RecordKindFileChange
+	}
+	return RecordKindAgentOutput
+}
+
+func bodyFromRecord(r Record) string {
+	if r.Msg == nil {
+		return ""
+	}
+	if r.Text != "" {
+		return r.Text
+	}
+	return bodyFrom(*r.Msg)
+}
+
+func newAgentRecord(alias string, msg agent.Message) Record {
+	msgCopy := msg
+	return Record{
+		Kind:  recordKindFor(msg),
+		Alias: alias,
+		Msg:   &msgCopy,
+		Text:  bodyFrom(msg),
+	}
+}
+
+func (r Record) accumulate(next agent.Message) (Record, error) {
+	if r.Msg == nil {
+		return Record{}, fmt.Errorf("record has no message")
+	}
+	accumulated, err := r.Msg.Accumulate(next)
+	if err != nil {
+		return Record{}, fmt.Errorf("accumulate message: %w", err)
+	}
+	accumulatedCopy := accumulated
+	r.Msg = &accumulatedCopy
+	r.Text = bodyFrom(accumulated)
+	return r, nil
+}
+
+func commandFieldsFromRecord(r Record) (cmd string, output string, exitCode *int) {
+	if r.Msg == nil {
+		return "", "", nil
+	}
+	c, ok := r.Msg.Content.(agent.Command)
+	if !ok {
+		return "", "", nil
+	}
+	return c.Command, c.Output, c.ExitCode
+}
+
+func fileChangeFieldsFromRecord(r Record) (status agent.ToolStatus, changes []agent.FileChange, body string) {
+	if r.Msg == nil {
+		return "", nil, ""
+	}
+	c, ok := r.Msg.Content.(agent.FileChangeSet)
+	if !ok {
+		return "", nil, ""
+	}
+	if r.Text != "" {
+		return c.Status, c.Changes, r.Text
+	}
+	return c.Status, c.Changes, FormatFileChangeBody(c.Changes)
 }
 
 const commandSummaryMaxCols = 120

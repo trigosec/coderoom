@@ -10,7 +10,6 @@ import (
 // streamSlot tracks an open streaming record by its StreamID.
 type streamSlot struct {
 	recordIdx int
-	msg       agent.Message // accumulates fragments via Message.Accumulate
 }
 
 // Model holds the conversation record list and its viewport.
@@ -124,10 +123,12 @@ func (m Model) IsStreaming(alias string) bool {
 // StreamingIdx returns the record index for the open output stream of alias.
 func (m Model) StreamingIdx(alias string) (int, bool) {
 	for _, slot := range m.streaming {
-		if _, ok := slot.msg.Content.(agent.Output); ok {
-			if m.records[slot.recordIdx].Alias == alias {
-				return slot.recordIdx, true
-			}
+		r := m.records[slot.recordIdx]
+		if r.Alias != alias || r.Msg == nil {
+			continue
+		}
+		if _, ok := r.Msg.Content.(agent.Output); ok {
+			return slot.recordIdx, true
 		}
 	}
 	return 0, false

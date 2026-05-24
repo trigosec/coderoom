@@ -10,13 +10,13 @@ import (
 
 func TestFormatFileChangeBody(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
-		if got := formatFileChangeBody(nil); got != "" {
+		if got := FormatFileChangeBody(nil); got != "" {
 			t.Fatalf("expected empty string, got %q", got)
 		}
 	})
 
 	t.Run("single appends trailing newline", func(t *testing.T) {
-		got := formatFileChangeBody([]agent.FileChange{
+		got := FormatFileChangeBody([]agent.FileChange{
 			{Path: "a.txt", ChangeKind: "update", Diff: "diff --git a/a.txt b/a.txt\n+hi"},
 		})
 		want := "=== a.txt (update)\ndiff --git a/a.txt b/a.txt\n+hi\n"
@@ -26,7 +26,7 @@ func TestFormatFileChangeBody(t *testing.T) {
 	})
 
 	t.Run("multiple separated by blank line", func(t *testing.T) {
-		got := formatFileChangeBody([]agent.FileChange{
+		got := FormatFileChangeBody([]agent.FileChange{
 			{Path: "a.txt", Diff: "A\n"},
 			{Path: "b.txt", ChangeKind: "add", Diff: "B"},
 		})
@@ -52,17 +52,21 @@ func TestRenderFileChange(t *testing.T) {
 	})
 
 	t.Run("renders file list preview and status", func(t *testing.T) {
+		fc := agent.Message{
+			StreamID: "s1",
+			Mode:     agent.ModeStream,
+			Content: agent.FileChangeSet{
+				Changes: []agent.FileChange{
+					{Path: "a.txt", ChangeKind: "update", Diff: "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\n"},
+					{Path: "b.txt"},
+				},
+				Status: agent.ToolStatusCompleted,
+			},
+		}
 		r := Record{
 			Kind:  RecordKindFileChange,
 			Alias: "agent",
-			FileChanges: []agent.FileChange{
-				{Path: "a.txt", ChangeKind: "update"},
-				{Path: "b.txt"},
-			},
-			Body: strings.Join([]string{
-				"l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9",
-			}, "\n"),
-			PatchStatus: agent.ToolStatusCompleted,
+			Msg:   &fc,
 		}
 		got := ansi.Strip(renderFileChange(r, 80, colors))
 
@@ -71,8 +75,8 @@ func TestRenderFileChange(t *testing.T) {
 			"✎ files:",
 			"  - update a.txt",
 			"  - b.txt",
-			"  l1",
-			"(+1 more; Ctrl+O history, Ctrl+G open transcript)",
+			"  === a.txt (update)",
+			"Ctrl+O history, Ctrl+G open transcript",
 			"  " + string(agent.ToolStatusCompleted),
 		} {
 			if !strings.Contains(got, needle) {

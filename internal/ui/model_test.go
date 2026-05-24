@@ -124,8 +124,15 @@ func TestHandleDelta_firstDeltaCreatesRecord(t *testing.T) {
 	if rec.Alias != "ada" {
 		t.Errorf("expected alias ada, got %q", rec.Alias)
 	}
-	if rec.Body != "hello" {
-		t.Errorf("expected body 'hello', got %q", rec.Body)
+	if rec.Msg == nil {
+		t.Fatal("expected record to carry Msg, got nil")
+	}
+	out, ok := rec.Msg.Content.(agent.Output)
+	if !ok {
+		t.Fatalf("expected Output content, got %T", rec.Msg.Content)
+	}
+	if out.Text != "hello" {
+		t.Errorf("expected body 'hello', got %q", out.Text)
 	}
 }
 
@@ -142,8 +149,15 @@ func TestHandleDelta_subsequentDeltaAppendsInPlace(t *testing.T) {
 		t.Fatalf("expected 1 record (in-place append), got %d", len(recs))
 	}
 	idx, _ := m.room.StreamingIdx("ada")
-	if recs[idx].Body != "hello world" {
-		t.Errorf("expected body 'hello world', got %q", recs[idx].Body)
+	if recs[idx].Msg == nil {
+		t.Fatal("expected record to carry Msg, got nil")
+	}
+	out, ok := recs[idx].Msg.Content.(agent.Output)
+	if !ok {
+		t.Fatalf("expected Output content, got %T", recs[idx].Msg.Content)
+	}
+	if out.Text != "hello world" {
+		t.Errorf("expected body 'hello world', got %q", out.Text)
 	}
 }
 
@@ -164,11 +178,25 @@ func TestHandleDelta_twoAgentsStreamConcurrently(t *testing.T) {
 	}
 	adaIdx, _ := m.room.StreamingIdx("ada")
 	bobIdx, _ := m.room.StreamingIdx("bob")
-	if recs[adaIdx].Body != "a2" {
-		t.Errorf("ada body wrong: %q", recs[adaIdx].Body)
+	if recs[adaIdx].Msg == nil {
+		t.Fatal("expected ada record to carry Msg, got nil")
 	}
-	if recs[bobIdx].Body != "b" {
-		t.Errorf("bob body wrong: %q", recs[bobIdx].Body)
+	adaOut, ok := recs[adaIdx].Msg.Content.(agent.Output)
+	if !ok {
+		t.Fatalf("expected ada Output content, got %T", recs[adaIdx].Msg.Content)
+	}
+	if adaOut.Text != "a2" {
+		t.Errorf("ada body wrong: %q", adaOut.Text)
+	}
+	if recs[bobIdx].Msg == nil {
+		t.Fatal("expected bob record to carry Msg, got nil")
+	}
+	bobOut, ok := recs[bobIdx].Msg.Content.(agent.Output)
+	if !ok {
+		t.Fatalf("expected bob Output content, got %T", recs[bobIdx].Msg.Content)
+	}
+	if bobOut.Text != "b" {
+		t.Errorf("bob body wrong: %q", bobOut.Text)
 	}
 }
 
@@ -280,8 +308,15 @@ func TestHandleReasoningDelta_firstDeltaCreatesRecord(t *testing.T) {
 	if recs[0].Kind != history.RecordKindReasoning {
 		t.Errorf("expected reasoning record, got kind %d", recs[0].Kind)
 	}
-	if recs[0].Body != "let me think" {
-		t.Errorf("expected body 'let me think', got %q", recs[0].Body)
+	if recs[0].Msg == nil {
+		t.Fatal("expected record to carry Msg, got nil")
+	}
+	thought, ok := recs[0].Msg.Content.(agent.Reasoning)
+	if !ok {
+		t.Fatalf("expected Reasoning content, got %T", recs[0].Msg.Content)
+	}
+	if thought.Text != "let me think" {
+		t.Errorf("expected body 'let me think', got %q", thought.Text)
 	}
 	if !m.room.IsReasoningStreaming("ada") {
 		t.Error("expected ada to be reasoning-streaming")
@@ -300,8 +335,15 @@ func TestHandleReasoningDelta_appendsInPlace(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 record (in-place append), got %d", len(recs))
 	}
-	if recs[0].Body != "step 1 step 2" {
-		t.Errorf("expected body 'step 1 step 2', got %q", recs[0].Body)
+	if recs[0].Msg == nil {
+		t.Fatal("expected record to carry Msg, got nil")
+	}
+	thought, ok := recs[0].Msg.Content.(agent.Reasoning)
+	if !ok {
+		t.Fatalf("expected Reasoning content, got %T", recs[0].Msg.Content)
+	}
+	if thought.Text != "step 1 step 2" {
+		t.Errorf("expected body 'step 1 step 2', got %q", thought.Text)
 	}
 }
 
