@@ -68,6 +68,11 @@ type Message struct {
 
 **Turn-end** is signalled by `Output + ModeFlush`. The adapter emits it from `turn/completed` regardless of whether any output was produced in the turn. For reasoning-only turns the flush arrives with no preceding `Output + ModeStream`.
 
+**Notice turn-end** (from `Agent.SendNotice`) is also signalled by `Output + ModeFlush`.
+Adapters may suppress any user-visible acknowledgement text for notices, but they
+must still emit the turn-level flush so downstream consumers (session status,
+barrier-based UI) can treat notices as a complete turn lifecycle.
+
 **Reasoning segment end** is signalled by `Reasoning + ModeFlush`. Multiple reasoning segments can occur within a single turn, each with a distinct `StreamID`.
 
 **The adapter never accumulates.** It emits raw fragments on `ModeStream` and the typed zero-value flush on `ModeFlush`.

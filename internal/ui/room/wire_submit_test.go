@@ -5,7 +5,32 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/trigosec/coderoom/internal/ui/room/staging"
 )
+
+func assertCmdContainsStagedEditMsg(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected StagedEditMsg cmd, got nil")
+	}
+	msg := cmd()
+	switch msg := msg.(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			if c == nil {
+				continue
+			}
+			if _, ok := c().(StagedEditMsg); ok {
+				return
+			}
+		}
+		t.Fatalf("expected StagedEditMsg in batch, got %T (%v)", msg, msg)
+	case StagedEditMsg:
+		return
+	default:
+		t.Fatalf("expected StagedEditMsg, got %T", msg)
+	}
+}
 
 func TestEnter_emitsSubmitMsgAndClearsComposer(t *testing.T) {
 	m := New(nil, "")
@@ -14,7 +39,7 @@ func TestEnter_emitsSubmitMsgAndClearsComposer(t *testing.T) {
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if got := next.ComposeValue(); got != "" {
-		t.Fatalf("expected Enter to clear composer, got %q", got)
+		t.Fatalf("expected Enter to clear composer immediately, got %q", got)
 	}
 	if cmd == nil {
 		t.Fatal("expected a SubmitMsg command from Enter")
@@ -29,14 +54,33 @@ func TestEnter_emitsSubmitMsgAndClearsComposer(t *testing.T) {
 	}
 }
 
+func TestEnter_secondPressDoesNotEmitDuplicateSubmit(t *testing.T) {
+	m := New(nil, "")
+	m = m.HandleResize(80, 20)
+	m = m.SetComposeValue("hello")
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected first Enter to emit SubmitMsg")
+	}
+	next2, cmd2 := next.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd2 != nil {
+		msg := cmd2()
+		t.Fatalf("expected second Enter to emit no command, got %T (%v)", msg, msg)
+	}
+	if got := next2.ComposeValue(); got != "" {
+		t.Fatalf("expected composer to stay cleared after second Enter, got %q", got)
+	}
+}
+
 func TestEnter_whitespaceOnlyDoesNotEmitSubmitMsg(t *testing.T) {
 	m := New(nil, "")
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("   \n\t ")
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if got := next.ComposeValue(); got != "" {
-		t.Fatalf("expected Enter to clear composer even for whitespace-only input, got %q", got)
+	if got := next.ComposeValue(); got == "" {
+		t.Fatalf("expected Enter not to clear composer for whitespace-only input")
 	}
 	if cmd != nil {
 		msg := cmd()
@@ -94,5 +138,53 @@ func TestComposeResize_preservesBottomAnchor(t *testing.T) {
 	m = m.SetComposeValue("a\nb\nc")
 	if !m.AtBottom() {
 		t.Fatal("expected compose resize to keep history anchored to bottom")
+	}
+}
+
+func TestStagedComposer_blocksKeysAndEscEmitsEditMsg(t *testing.T) {
+	m := New(nil, "")
+	m = m.HandleResize(80, 20)
+	m = m.SetComposerStaged("hello", "Message on-hold.")
+
+	// Random typing is ignored.
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if cmd != nil {
+		t.Fatalf("expected no cmd from typing while staged, got non-nil")
+	}
+	if got := next.ComposeValue(); got != "hello" {
+		t.Fatalf("expected staged text unchanged, got %q", got)
+	}
+
+	// Esc exits staged mode and emits StagedEditMsg.
+	next2, cmd2 := next.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if next2.IsComposerStaged() {
+		t.Fatal("expected staged mode cleared after Esc")
+	}
+	assertCmdContainsStagedEditMsg(t, cmd2)
+	if got := next2.ComposeValue(); got != "hello" {
+		t.Fatalf("expected draft to preserve staged text for editing, got %q", got)
+	}
+}
+
+func TestDispatchStagedBatch_restoresComposerFocus(t *testing.T) {
+	m := New(nil, "")
+	m = m.HandleResize(80, 20)
+
+	b := staging.NewBatch(
+		"/send a hi",
+		staging.Action{Kind: staging.ActionSend, Alias: "a", Text: "hi"},
+		[]string{"a"},
+	)
+	m = m.StageBatch(b, nil)
+
+	next, _, _ := m.DispatchStagedBatch()
+	if next.IsComposerStaged() {
+		t.Fatal("expected staged mode cleared after dispatch")
+	}
+
+	// Typing should work again after auto-dispatch clears staging.
+	next2, _ := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if got := next2.ComposeValue(); got != "x" {
+		t.Fatalf("expected composer to accept input after dispatch, got %q", got)
 	}
 }

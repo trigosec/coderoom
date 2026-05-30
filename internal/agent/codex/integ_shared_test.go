@@ -63,6 +63,12 @@ func readResponse(t *testing.T, c *codex.Client, timeout time.Duration) string {
 				case agent.ModeStream:
 					sb.WriteString(out.Text)
 				case agent.ModeFlush:
+					// SendNotice emits a synthetic turn-end flush on a dedicated
+					// stream. Ignore it here so callers waiting for a visible
+					// response do not terminate early with an empty string.
+					if msg.StreamID == agent.StreamID("codex:notice-turn") {
+						continue
+					}
 					return
 				}
 			}

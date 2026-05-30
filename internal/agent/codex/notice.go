@@ -140,14 +140,14 @@ func (c *Client) handleNoticeCompleted(ctx context.Context) noticeOutcome {
 	switch state {
 	case noticeActive:
 		// No deltas at all — treat as acknowledgment.
-		return noticeContinue
+		return c.emitNoticeTurnFlush(ctx)
 
 	case noticeBuffering:
 		var r struct {
 			Acknowledge bool `json:"acknowledge"`
 		}
 		if err := json.Unmarshal([]byte(buf), &r); err == nil && r.Acknowledge {
-			return noticeContinue
+			return c.emitNoticeTurnFlush(ctx)
 		}
 		// Not acknowledged: replay as reasoning then flush both streams.
 		if o := relayDelta(ctx, c, buf); o == noticeExit {
@@ -162,6 +162,17 @@ func (c *Client) handleNoticeCompleted(ctx context.Context) noticeOutcome {
 	default:
 		return noticeUnhandled
 	}
+}
+
+func (c *Client) emitNoticeTurnFlush(ctx context.Context) noticeOutcome {
+	rm := readMessage{
+		msg: agent.Message{
+			StreamID: noticeTurnStreamID,
+			Mode:     agent.ModeFlush,
+			Content:  agent.Output{},
+		},
+	}
+	return outcomeOf(sendBufMessage(ctx, c, rm))
 }
 
 // relayDelta emits a single reasoning-stream delta fragment.
@@ -211,7 +222,7 @@ func (c *Client) handleNoticeFailed(ctx context.Context) noticeOutcome {
 		// emit a turn-level flush so the participant returns to idle.
 		return relayAndTurnFlush(ctx, c)
 	}
-	return noticeContinue
+	return c.emitNoticeTurnFlush(ctx)
 }
 
 // outcomeOf converts the bool returned by sendBufMessage into a noticeOutcome.

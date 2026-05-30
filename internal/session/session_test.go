@@ -21,6 +21,8 @@ type mockAgent struct {
 	startErr     error
 	stopErr      error
 	sendErr      error
+	sendHook     func(string) error
+	noticeHook   func(string) error
 	interruptErr error
 	interrupts   int
 }
@@ -48,12 +50,18 @@ func (m *mockAgent) Send(text string) error {
 	m.mu.Lock()
 	m.sends = append(m.sends, text)
 	m.mu.Unlock()
+	if m.sendHook != nil {
+		return m.sendHook(text)
+	}
 	return m.sendErr
 }
 func (m *mockAgent) SendNotice(text string) error {
 	m.mu.Lock()
 	m.sends = append(m.sends, text)
 	m.mu.Unlock()
+	if m.noticeHook != nil {
+		return m.noticeHook(text)
+	}
 	return m.sendErr
 }
 func (m *mockAgent) Read() (agent.Message, error) {
@@ -72,6 +80,28 @@ type gateAgent struct {
 func (g *gateAgent) Start() error {
 	<-g.startGate
 	return g.mockAgent.Start()
+}
+
+type noticeFlushAgent struct {
+	inner *mockAgent
+}
+
+func newNoticeFlushAgent() *noticeFlushAgent {
+	return &noticeFlushAgent{inner: newMockAgent()}
+}
+
+func (n *noticeFlushAgent) Start() error                 { return n.inner.Start() }
+func (n *noticeFlushAgent) Interrupt() error             { return n.inner.Interrupt() }
+func (n *noticeFlushAgent) Stop() error                  { return n.inner.Stop() }
+func (n *noticeFlushAgent) Send(text string) error       { return n.inner.Send(text) }
+func (n *noticeFlushAgent) Read() (agent.Message, error) { return n.inner.Read() }
+func (n *noticeFlushAgent) SendNotice(text string) error {
+	if err := n.inner.SendNotice(text); err != nil {
+		return err
+	}
+	// Emit a flush to end the notice turn.
+	n.inner.ch <- agent.Message{StreamID: "n1", Mode: agent.ModeFlush, Content: agent.Output{}}
+	return nil
 }
 
 // testObserver collects events and exposes a channel for synchronisation.
@@ -97,16 +127,26 @@ func (o *testObserver) OnEvent(e session.Event) {
 	}
 }
 
+func shouldSkipEvent(want session.Kind, ev session.Event) bool {
+	if want == session.KindAgentStarted && ev.Kind == session.KindAgentStarting {
+		return true
+	}
+	if ev.Kind == session.KindParticipantStatusChanged && want != session.KindParticipantStatusChanged {
+		return true
+	}
+	if want == session.KindAgentCrashed && ev.Kind == session.KindAgentLog {
+		return true
+	}
+	return false
+}
+
 func mustReceive(t *testing.T, ch <-chan session.Event, want session.Kind) session.Event {
 	t.Helper()
 	deadline := time.After(time.Second)
 	for {
 		select {
 		case ev := <-ch:
-			if want == session.KindAgentStarted && ev.Kind == session.KindAgentStarting {
-				continue
-			}
-			if want == session.KindAgentCrashed && ev.Kind == session.KindAgentLog {
+			if shouldSkipEvent(want, ev) {
 				continue
 			}
 			if ev.Kind != want {
@@ -337,7 +377,8 @@ func TestBroadcast_sendError_doesNotMarkWorking(t *testing.T) {
 	invite(t, s, "turing")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 
-	if err := s.Execute(session.BroadcastCommand{Text: "hello"}); err == nil {
+	err := s.Execute(session.BroadcastCommand{Text: "hello"})
+	if err == nil {
 		t.Fatal("expected broadcast error, got nil")
 	}
 	mustReceive(t, obs.ch, session.KindBroadcast)
@@ -356,6 +397,107 @@ func TestBroadcast_sendError_doesNotMarkWorking(t *testing.T) {
 	}
 	if p.Status != participant.StatusWorking {
 		t.Fatalf("expected turing status %q, got %q", participant.StatusWorking, p.Status)
+	}
+
+	if got := session.DeliveredAliases(err); len(got) != 1 || got[0] != "turing" {
+		t.Fatalf("expected delivered aliases [turing], got %v", got)
+	}
+}
+
+func TestBroadcast_sendErrorDoesNotReviveCrashedParticipant(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	s := session.New(session.WithObserver(obs), fixedFactory(ada))
+	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	ada.sendHook = func(string) error {
+		_ = ada.Stop()
+		deadline := time.After(time.Second)
+		for {
+			p, ok := s.Participant("ada")
+			if ok && p.Status == participant.StatusCrashed {
+				return errors.New("send failed during crash")
+			}
+			select {
+			case <-deadline:
+				t.Fatal("timed out waiting for participant crash during send")
+			default:
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	}
+
+	if err := s.Execute(session.BroadcastCommand{Text: "hello"}); err == nil {
+		t.Fatal("expected broadcast error, got nil")
+	}
+
+	p, ok := s.Participant("ada")
+	if !ok {
+		t.Fatal("expected participant ada")
+	}
+	if p.Status != participant.StatusCrashed {
+		t.Fatalf("expected ada to remain crashed after send rollback, got %q", p.Status)
+	}
+}
+
+func TestReadLoop_dropsStreamFragmentsWhileIdle(t *testing.T) {
+	obs := newTestObserver()
+	a := newMockAgent(
+		agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{Text: ""}},
+		agent.Message{StreamID: "out2", Mode: agent.ModeStream, Content: agent.Output{Text: "oops"}},
+	)
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	// Participant should be idle after start; the preloaded flush is still a
+	// message (and yields an idle signal). The subsequent stream fragment should
+	// be dropped with a protocol log.
+	ev := mustReceive(t, obs.ch, session.KindParticipantStatusChanged) // from preloaded flush
+	if ev.StatusTo != participant.StatusIdle {
+		t.Fatalf("expected status to become %q, got %q", participant.StatusIdle, ev.StatusTo)
+	}
+	mustReceive(t, obs.ch, session.KindAgentMessage)  // flush message itself
+	ev = mustReceive(t, obs.ch, session.KindAgentLog) // dropped stream
+	if ev.Text == "" {
+		t.Fatal("expected protocol log text")
+	}
+
+	p, ok := s.Participant("ada")
+	if !ok {
+		t.Fatal("expected participant ada")
+	}
+	if p.Status != participant.StatusIdle {
+		t.Fatalf("expected ada to remain idle, got %q", p.Status)
+	}
+}
+
+func waitForSharedKinds(t *testing.T, ch <-chan session.Event) {
+	t.Helper()
+	seenSend := false
+	seenNotice := false
+	deadline := time.After(time.Second)
+	for !seenSend || !seenNotice {
+		select {
+		case ev := <-ch:
+			switch ev.Kind {
+			case session.KindSharedSend:
+				seenSend = true
+			case session.KindSharedNotice:
+				seenNotice = true
+			case session.KindParticipantStatusChanged, session.KindAgentMessage:
+				// ignore noise in this unit test
+			default:
+				// ignore other noise (e.g. logs)
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for shared send + shared notice; got: send=%v notice=%v", seenSend, seenNotice)
+		}
 	}
 }
 
@@ -402,6 +544,103 @@ func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 	turing.mu.Unlock()
 }
 
+func TestSharedSend_noticeMarksListenerWorkingUntilFlush(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	// Listener emits a flush when it receives a notice, ending its notice turn.
+	turing := newNoticeFlushAgent()
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    ada,
+		"turing": turing,
+	}))
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do it", TextListeners: "notice"}); err != nil {
+		t.Fatalf("SharedSendCommand: %v", err)
+	}
+	waitForSharedKinds(t, obs.ch)
+
+	p, _ := s.Participant("turing")
+	// The session marks listeners working before issuing SendNotice, but a mock
+	// agent can immediately emit a notice flush, racing the read loop and
+	// returning the participant to idle before we observe the intermediate state.
+	if p.Status != participant.StatusWorking && p.Status != participant.StatusIdle {
+		t.Fatalf("expected listener to be working or idle after notice, got %q", p.Status)
+	}
+
+	// Wait until the listener returns to idle. The exact event ordering is not
+	// stable with mocks (preloaded flushes can race with command dispatch), so
+	// poll session state instead of asserting on specific event sequences.
+	deadline := time.After(time.Second)
+	for {
+		p, _ = s.Participant("turing")
+		if p.Status == participant.StatusIdle {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for listener to become idle; got %q", p.Status)
+		default:
+			time.Sleep(1 * time.Millisecond)
+		}
+	}
+}
+
+func TestSharedSend_noticeDoesNotResetWorkingSince(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newMockAgent()
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    ada,
+		"turing": turing,
+	}))
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.BroadcastCommand{Text: "busy"}); err != nil {
+		t.Fatalf("BroadcastCommand: %v", err)
+	}
+	mustReceive(t, obs.ch, session.KindBroadcast)
+
+	before, ok := s.Participant("turing")
+	if !ok {
+		t.Fatal("expected participant turing")
+	}
+	if before.Status != participant.StatusWorking {
+		t.Fatalf("expected turing to be working before notice, got %q", before.Status)
+	}
+
+	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do it", TextListeners: "notice"}); err != nil {
+		t.Fatalf("SharedSendCommand: %v", err)
+	}
+
+	after, ok := s.Participant("turing")
+	if !ok {
+		t.Fatal("expected participant turing")
+	}
+	if after.Status != participant.StatusWorking {
+		t.Fatalf("expected turing to remain working after notice, got %q", after.Status)
+	}
+	if !after.Since.Equal(before.Since) {
+		t.Fatalf("expected turing Since to remain unchanged while already working: before=%v after=%v", before.Since, after.Since)
+	}
+}
+
 func TestSharedSend_sendError_doesNotMarkWorking(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
@@ -425,6 +664,9 @@ func TestSharedSend_sendError_doesNotMarkWorking(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected shared send error, got nil")
 	}
+	if got := session.DeliveredAliases(err); len(got) != 0 {
+		t.Fatalf("expected no delivered aliases on direct-send failure, got %v", got)
+	}
 
 	p, ok := s.Participant("ada")
 	if !ok {
@@ -440,6 +682,83 @@ func TestSharedSend_sendError_doesNotMarkWorking(t *testing.T) {
 	}
 	if p.Status == participant.StatusWorking {
 		t.Fatalf("expected turing not to be marked %q on send error", participant.StatusWorking)
+	}
+}
+
+func TestSharedSend_noticeErrorReportsDeliveredAlias(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newMockAgent()
+	turing.sendErr = errors.New("notice failed")
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    ada,
+		"turing": turing,
+	}))
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
+	if err == nil {
+		t.Fatal("expected shared notice error, got nil")
+	}
+	if got := session.DeliveredAliases(err); len(got) != 1 || got[0] != "ada" {
+		t.Fatalf("expected delivered aliases [ada], got %v", got)
+	}
+}
+
+func TestSharedSend_noticeErrorDoesNotReviveCrashedListener(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newMockAgent()
+	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada":    ada,
+		"turing": turing,
+	}))
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	turing.noticeHook = func(string) error {
+		_ = turing.Stop()
+		deadline := time.After(time.Second)
+		for {
+			p, ok := s.Participant("turing")
+			if ok && p.Status == participant.StatusCrashed {
+				return errors.New("notice failed during crash")
+			}
+			select {
+			case <-deadline:
+				t.Fatal("timed out waiting for listener crash during notice")
+			default:
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	}
+
+	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
+	if err == nil {
+		t.Fatal("expected shared notice error, got nil")
+	}
+
+	p, ok := s.Participant("turing")
+	if !ok {
+		t.Fatal("expected participant turing")
+	}
+	if p.Status != participant.StatusCrashed {
+		t.Fatalf("expected turing to remain crashed after notice rollback, got %q", p.Status)
 	}
 }
 
@@ -485,10 +804,19 @@ func TestPrivateSend_forwardsToAgentOnly(t *testing.T) {
 	turing.mu.Unlock()
 
 	// no shared room event emitted
-	select {
-	case ev := <-obs.ch:
-		t.Errorf("expected no shared room event, got %q", ev.Kind)
-	default:
+	for {
+		select {
+		case ev := <-obs.ch:
+			switch ev.Kind {
+			case session.KindParticipantStatusChanged:
+				continue
+			default:
+				t.Errorf("expected no shared room event, got %q", ev.Kind)
+				return
+			}
+		default:
+			return
+		}
 	}
 }
 
@@ -501,12 +829,21 @@ func TestPrivateSend_notFound(t *testing.T) {
 
 func TestReaderLoop_emitsDelta(t *testing.T) {
 	obs := newTestObserver()
-	a := newMockAgent(agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}})
+	a := newMockAgent()
 	s := session.New(session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	// Simulate starting a turn so the session considers the agent working; the
+	// following stream delta should be accepted.
+	if err := s.Execute(session.BroadcastCommand{Text: "go"}); err != nil {
+		t.Fatalf("BroadcastCommand: %v", err)
+	}
+	mustReceive(t, obs.ch, session.KindBroadcast)
+
+	a.ch <- agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}}
 
 	ev := mustReceive(t, obs.ch, session.KindAgentMessage)
 	if ev.Msg == nil {

@@ -104,6 +104,7 @@ type Kind string
 const (
     KindAgentStarting Kind = "agent.starting"   // agent process is being started
     KindAgentStarted  Kind = "agent.started"    // agent is ready to receive messages
+    KindAgentIdle     Kind = "agent.idle"       // agent is idle (turn ended); emitted whenever Status transitions to idle
     KindAgentStopped  Kind = "agent.stopped"    // agent was cleanly removed
     KindAgentCrashed  Kind = "agent.crashed"    // agent exited unexpectedly
     KindAgentLog      Kind = "agent.log"        // diagnostic line from the agent (e.g. stderr); always forwarded, rendering is the observer's choice
@@ -135,8 +136,14 @@ The relationship between session events and the persistent event log (`internal/
 
 The reader goroutine loops on `agent.Read()`, forwarding each message to observers as a `KindAgentMessage` event (or `KindAgentLog` for `Log` content). The session also inspects messages for participant state management — it does not accumulate or translate content:
 
-- First `Output` or `Reasoning` fragment (`ModeStream`) → `MarkWorking`
-- Turn-level `ModeFlush` (`codex:turn:<turnId>`) → `MarkIdle`
+- Successful `Send` / `SendNotice` calls (including listener notices in `SharedSendCommand`) → `MarkWorking`
+- First `Output` or `Reasoning` fragment (`ModeStream`) → `MarkWorking` (best-effort fallback if a backend doesn't mark working on send)
+- Turn-end `Output + ModeFlush` → `MarkIdle` and emit `KindAgentIdle`
+
+Note: This design treats `Output + ModeFlush` as the canonical "turn ended" signal
+(see [`pkg-agent-messages.md`](pkg-agent-messages.md)). Adapters must ensure that
+`SendNotice` also produces this turn-level flush even when acknowledgement text is
+suppressed.
 
 When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent stop channel) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
 

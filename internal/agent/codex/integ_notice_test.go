@@ -79,6 +79,12 @@ loop:
 				case agent.ModeStream:
 					seenDelta = true
 				case agent.ModeFlush:
+					// SendNotice emits a synthetic turn-end flush on a dedicated stream
+					// so downstream consumers can treat it as a complete lifecycle.
+					// It is not visible output and should not be treated as a leak.
+					if r.msg.StreamID == agent.StreamID("codex:notice-turn") {
+						continue
+					}
 					if !seenDelta {
 						t.Errorf("notice turn leaked: turn-end without preceding output delta")
 					}

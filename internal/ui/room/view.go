@@ -35,8 +35,21 @@ func (m Model) View() string {
 			sb.WriteString(line + "\n")
 		}
 	} else {
-		for line := range strings.SplitSeq(strings.TrimSuffix(m.input.compose.View(), "\n"), "\n") {
+		composeView := strings.TrimSuffix(m.input.compose.View(), "\n")
+		if m.input.kind == inputStaged {
+			faint := lipgloss.NewStyle().Faint(true)
+			var out strings.Builder
+			for line := range strings.SplitSeq(composeView, "\n") {
+				out.WriteString(faint.Render(ansi.Strip(line)))
+				out.WriteByte('\n')
+			}
+			composeView = strings.TrimSuffix(out.String(), "\n")
+		}
+		for line := range strings.SplitSeq(composeView, "\n") {
 			sb.WriteString(line + "\n")
+		}
+		if m.input.kind == inputStaged && m.input.staged.status != "" {
+			sb.WriteString(lipgloss.NewStyle().Faint(true).Render(m.input.staged.status) + "\n")
 		}
 	}
 	sb.WriteString(m.bottomSeparator() + "\n")

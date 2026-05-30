@@ -72,11 +72,22 @@ The Codex-specific mapping is:
 | `item/commandExecution/outputDelta` | `{ID: "codex:command:<itemId>", Mode: ModeStream, Content: Command{Output: "..."}}` |
 | `item/completed` (commandExecution) | `{..., Mode: ModeStream, Content: Command{ExitCode: &n}}` then `{..., Mode: ModeFlush, Content: Empty{}}` |
 | `item/completed` (fileChange) | `{ID: "codex:filechange:<itemId>", Mode: ModeStream, Content: FileChangeSet{...}}` then ModeFlush |
-| `turn/completed` | `{ID: "codex:turn:<turnId>", Mode: ModeFlush, Content: Empty{}}` |
+| `turn/completed` | `{ID: "codex:turn:<turnId>", Mode: ModeFlush, Content: Output{}}` |
 | `turn/failed` | error returned from `Read()` |
 | stderr line | `{ID: "codex:log:<…>", Mode: ModeSingle, Content: Log{Text: "..."}}` |
 
 Stderr is captured via a dedicated pipe and read by a background goroutine started in `Start()`. Lines are queued internally and surfaced through `Read()` alongside stdout-derived messages. This keeps the `Read()` interface as the single point of consumption for all agent output.
+
+### SendNotice semantics
+
+`SendNotice` starts a normal turn (`turn/start`) but provides an output schema that
+encourages a minimal JSON acknowledgement (e.g. `{"acknowledge":true}`) and suppresses
+that acknowledgement from `Read()`.
+
+Even when the notice is fully acknowledged (or produces no deltas), the adapter
+still emits a turn-level `Output + ModeFlush` derived from `turn/completed` (or
+`turn/failed`). This ensures downstream consumers can treat notices as a complete
+turn lifecycle (session participant status, barrier-based UI dispatch).
 
 ### Protocol observer
 

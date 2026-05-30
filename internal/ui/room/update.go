@@ -93,24 +93,55 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlG {
-		return m.startEditorCompose()
+	if m.input.kind == inputStaged {
+		return m.handleStagedComposeKey(msg)
 	}
-	if msg.Type == tea.KeyEnter && !msg.Alt {
-		// Reset immediately to keep the UI responsive. The parent receives the
-		// submitted text via SubmitMsg and decides how to handle it.
-		raw := m.input.compose.Value()
+
+	return m.handleDraftComposeKey(msg)
+}
+
+func (m Model) handleStagedComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		// Return to draft mode with the staged text loaded for editing.
+		m = m.ClearComposerStaged()
+		m.focus = focusInput
+		next, focusCmd := m.composeFocus()
+		return next, tea.Batch(focusCmd, func() tea.Msg { return StagedEditMsg{} })
+	case tea.KeyCtrlX:
+		return m, func() tea.Msg { return StagedInterruptMsg{} }
+	case tea.KeyCtrlC:
+		if m.input.compose.Value() == "" {
+			return m, nil
+		}
 		m.input.compose = m.input.compose.Reset()
+		m = m.ClearComposerStaged()
 		m = m.syncAfterCompose()
+		return m, func() tea.Msg { return StagedClearMsg{} }
+	default:
+		// Ignore all other keys while staged (read-only).
+		return m, nil
+	}
+}
+
+func (m Model) handleDraftComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch {
+	case msg.Type == tea.KeyCtrlG:
+		return m.startEditorCompose()
+	case msg.Type == tea.KeyEnter && !msg.Alt:
+		raw := m.input.compose.Value()
 		if strings.TrimSpace(raw) == "" {
 			return m, nil
 		}
+		m.input.compose = m.input.compose.Reset()
+		m = m.syncAfterCompose()
 		return m, func() tea.Msg { return SubmitMsg{Text: raw} }
+	default:
+		var cmd tea.Cmd
+		m.input.compose, cmd = m.input.compose.Update(msg)
+		m = m.syncAfterCompose()
+		return m, cmd
 	}
-	var cmd tea.Cmd
-	m.input.compose, cmd = m.input.compose.Update(msg)
-	m = m.syncAfterCompose()
-	return m, cmd
 }
 
 func (m Model) handleHistoryKey(msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -234,7 +265,11 @@ func (m Model) syncAfterCompose() Model {
 	if totalH <= 0 {
 		return m
 	}
-	newHistH := max(totalH-(2+m.input.compose.Height()), 1)
+	inputH := m.input.compose.Height()
+	if m.input.kind == inputStaged && m.input.staged.status != "" {
+		inputH++
+	}
+	newHistH := max(totalH-(3+inputH), 1)
 	if newHistH == m.history.Height() {
 		return m
 	}

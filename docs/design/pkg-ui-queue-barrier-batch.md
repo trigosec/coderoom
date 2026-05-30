@@ -1,10 +1,9 @@
-# UI design (open): barrier-batch staging model for multi-participant messaging
+# UI design: barrier-batch staging model for multi-participant messaging
 
-Status: open / experimental
+Status: implemented (initial)
 
 This document proposes an alternative to "send-now vs queued" semantics: a
-barrier-batch staging model. It is intentionally exploratory. We expect to
-prototype and learn before committing to a long-term interaction model.
+barrier-batch staging model.
 
 ## Motivation
 
@@ -120,10 +119,6 @@ Conceptually:
 - idle: the participant has no active turn in progress
 - busy: the participant currently has an active turn
 
-The concrete event(s) that transition a participant between these states must be
-identified before implementation (e.g. turn started / turn completed /
-turn cancelled / participant removed).
-
 ## State machine (staged batch)
 
 This section defines the minimal states for a staged batch and what triggers
@@ -143,60 +138,15 @@ set.
 ### Batch states
 
 ```
-draft ──(user edits text/routing)──────────────> draft
 draft ──(user submits; all participants idle)──> dispatching
 draft ──(user submits; 1+ participants busy)───> awaiting_barrier
 awaiting_barrier ──(all participants idle)────> dispatching
 awaiting_barrier ──(user presses Esc)─────────> draft
 awaiting_barrier ──(user Interrupt+Send)──────> interrupting
-interrupting ──(interrupt acknowledged*)──────> dispatching
-dispatching ──(dispatch started*)──────────────> dispatched
+interrupting ──(blocked participants idle)────> dispatching
+dispatching ──(dispatch started)──────────────> dispatched
 draft/awaiting_barrier ──(user clears)────────> cleared
 ```
-
-`*` The "acknowledged/accepted" signals must come from explicit adapter/session
-events. Avoid inferring them from stdout/stderr output.
-
-`dispatch started` means the UI has issued dispatch requests and committed the
-user-authored message to the transcript/history. There is no notion of "receipt
-acknowledgement" from participants.
-
-### Batch state diagram
-
-```mermaid
-stateDiagram-v2
-  [*] --> draft
-
-  draft --> draft: user edits text/routing
-  draft --> dispatching: user submits (all participants idle)
-  draft --> awaiting_barrier: user submits (1+ participants busy)
-
-  awaiting_barrier --> draft: user presses Esc
-  awaiting_barrier --> dispatching: all participants idle
-  awaiting_barrier --> interrupting: user Interrupt+Send (Ctrl+X)
-  awaiting_barrier --> cleared: user clears
-
-  interrupting --> dispatching: interrupt acknowledged*
-
-  dispatching --> dispatched: dispatch started*
-
-  cleared --> [*]
-  dispatched --> [*]
-```
-
-### Target readiness (per participant)
-
-For the purpose of rendering the barrier:
-
-```
-ready = idle
-blocked = busy
-discarded = removed/crashed
-```
-
-If a participant crashes or is removed while a batch is awaiting the barrier, that
-participant becomes `discarded`. Dispatch proceeds automatically to the remaining
-participants once they are ready (best-effort barrier).
 
 ## Behavioral rules
 
@@ -210,8 +160,6 @@ In staged mode there is exactly one staged batch at a time:
   the staged payload, the user presses `Esc` to return to draft and modifies the
   text before resubmitting.
 
-This keeps "what will be sent next" unambiguous.
-
 ### Target set semantics
 
 The set of participants a staged batch considers (barrier + dispatch) is fixed at
@@ -224,70 +172,25 @@ Interrupt is always explicit.
 
 - `Ctrl+X` (`Interrupt + Send`) requests cancellation of in-flight turns for the
   batch's blocked participants, then proceeds to dispatch the batch to all
-  non-discarded participants in the batch snapshot.
-
-**Interrupt acknowledgement signal (implementation note):**
-The Codex adapter sends `turn/interrupt` to the process. The process eventually
-responds with `turn/completed` (or `turn/failed`), which the client surfaces as a
-`ModeFlush` message through `Read()`. There is no separate "interrupt acknowledged"
-event distinct from normal turn completion — both paths produce the same `ModeFlush`.
-
-At the session layer, no `KindTurnCompleted` event currently exists. To implement
-the `interrupting → dispatching` transition cleanly (without inferring idle state
-from `ModeFlush` in the UI layer), the session layer needs a new event kind
-(e.g. `KindAgentIdle` or `KindTurnCompleted`) that fires whenever a participant's
-turn ends, regardless of cause.
-
-Decision: dispatch should wait for the `ModeFlush` signal (turn end) before
-proceeding, to avoid interleaving two turns. Adding a dedicated session event is a
-prerequisite for clean implementation.
+  non-discarded participants in the batch snapshot once they are idle.
 
 ## Transcript interaction
 
 Input only appears in the history when the staged text is dispatched.
 
-Rationale: the staged composer is the canonical place to view and edit "next
-turn" content; the transcript records only committed/dispatched communication.
-
 "Dispatched" means "dispatch attempt started" — participants do not confirm receipt.
 The staged text is committed to the transcript/history at dispatch start. Avoid
 adding additional history records for per-target delivery churn.
 
-Emit a system record only for disruptive actions (e.g. `[→ ada] interrupt
-requested`).
+Emit a system record only for disruptive actions (e.g. `[→ ada] interrupt requested`).
 
 ## Edge cases
 
 ### Crash during dispatching (partial dispatch)
 
-The state machine covers participants being removed/crashed while a batch is
-awaiting the barrier. A separate edge case exists when a participant crashes
-mid-dispatch (after the batch has been dispatched to some participants but not all).
-
-This is not fatal to the barrier-batch model. The "barrier" guarantee ends at the
-start of dispatching: once a dispatch attempt begins, delivery is best-effort and
-may partially succeed.
+The "barrier" guarantee ends at the start of dispatching: once a dispatch attempt
+begins, delivery is best-effort and may partially succeed.
 
 Recovery is user-driven using normal primitives (e.g. re-send a new batch to the
 missing participants, or Interrupt + Send to re-synchronize).
 
-## Why we're trying this first
-
-Barrier-batch is intentionally conservative:
-
-- It makes multi-participant coordination easier to reason about.
-- It creates a natural "sync point" for roles like reviewer/tester that should
-  respond to the same instruction payload.
-- It provides a clear baseline to evaluate later against more parallel,
-  throughput-oriented models (e.g. async dispatch with snapshots).
-
-## Open questions / experiments
-
-- Does barrier-batch feel too "slow" due to gating on the slowest participant?
-- Should "Send all" default to a subset (e.g. only reviewers) to avoid
-  unnecessary barriers?
-- What is the best UI affordance for changing routing intent mid-draft?
-- How do we represent partial failure (one participant removed) without reintroducing
-  confusing semantics?
-- What is the minimal set of lifecycle events we need to drive `idle/busy`
-  reliably across backends other than Codex (Claude Code, Aider)?

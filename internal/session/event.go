@@ -1,6 +1,11 @@
 package session
 
-import "github.com/trigosec/coderoom/internal/agent"
+import (
+	"time"
+
+	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/participant"
+)
 
 // Kind identifies the type of a session event.
 type Kind string
@@ -14,6 +19,8 @@ const (
 	KindAgentLog      Kind = "agent.log"     // diagnostic line from the agent process (e.g. stderr)
 	KindAgentMessage  Kind = "agent.message" // typed agent output; see Msg field
 
+	KindParticipantStatusChanged Kind = "participant.status"
+
 	KindBroadcast    Kind = "message.broadcast" // message sent to all agents
 	KindSharedSend   Kind = "message.shared"    // instruction to one agent, visible to all
 	KindSharedNotice Kind = "message.notice"    // context notice forwarded to a listener
@@ -25,6 +32,10 @@ type Event struct {
 	Alias string         // participant alias the event relates to
 	Text  string         // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
 	Msg   *agent.Message // for KindAgentMessage; nil for all other kinds
+
+	StatusFrom participant.Status // for KindParticipantStatusChanged
+	StatusTo   participant.Status // for KindParticipantStatusChanged
+	Since      time.Time          // for KindParticipantStatusChanged; equals participant.Since after the transition
 }
 
 // Observer receives session events. Implementations must be fast; a blocking

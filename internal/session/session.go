@@ -160,26 +160,28 @@ func (s *Session) lookupParticipant(alias string) (*participant.Participant, boo
 	return s.registry.Get(alias)
 }
 
-func (s *Session) withParticipant(alias string, fn func(*participant.Participant)) bool {
+func (s *Session) updateParticipant(alias string, fn func(*participant.Participant) *Event) bool {
+	var ev *Event
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	p, ok := s.registry.Get(alias)
+	if ok {
+		ev = fn(p)
+	}
+	s.mu.Unlock()
 	if !ok {
 		return false
 	}
-	fn(p)
+	if ev != nil {
+		s.notify(*ev)
+	}
 	return true
-}
-
-func (s *Session) participants() []*participant.Participant {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.registry.List()
 }
 
 // Participant returns a snapshot of the active participant with the given alias.
 func (s *Session) Participant(alias string) (participant.Participant, bool) {
-	p, ok := s.lookupParticipant(alias)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.registry.Get(alias)
 	if !ok {
 		return participant.Participant{}, false
 	}
@@ -188,7 +190,9 @@ func (s *Session) Participant(alias string) (participant.Participant, bool) {
 
 // Participants returns a snapshot of all currently active participants.
 func (s *Session) Participants() []participant.Participant {
-	ps := s.participants()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps := s.registry.List()
 	out := make([]participant.Participant, len(ps))
 	for i, p := range ps {
 		out[i] = *p
@@ -234,8 +238,16 @@ func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 func (s *Session) handleAgentReadError(stop <-chan struct{}, alias string) {
 	kind := s.kindForReadError(stop)
 	if kind == KindAgentCrashed {
-		s.withParticipant(alias, func(p *participant.Participant) {
+		s.updateParticipant(alias, func(p *participant.Participant) *Event {
+			from := p.Status
 			p.MarkCrashed(s.now())
+			return &Event{
+				Kind:       KindParticipantStatusChanged,
+				Alias:      alias,
+				StatusFrom: from,
+				StatusTo:   p.Status,
+				Since:      p.Since,
+			}
 		})
 	}
 	s.notify(Event{Kind: kind, Alias: alias})
@@ -251,38 +263,125 @@ func (s *Session) kindForReadError(stop <-chan struct{}) Kind {
 }
 
 func (s *Session) markWorking(alias string) {
-	s.withParticipant(alias, func(p *participant.Participant) {
-		if p.Status != participant.StatusWorking {
-			p.MarkWorking(s.now())
+	s.updateParticipant(alias, func(p *participant.Participant) *Event {
+		if p.Status == participant.StatusWorking {
+			return nil
+		}
+		from := p.Status
+		p.MarkWorking(s.now())
+		return &Event{
+			Kind:       KindParticipantStatusChanged,
+			Alias:      alias,
+			StatusFrom: from,
+			StatusTo:   p.Status,
+			Since:      p.Since,
 		}
 	})
 }
 
+func (s *Session) markIdleIfWorking(alias string) {
+	s.updateParticipant(alias, func(p *participant.Participant) *Event {
+		if p.Status != participant.StatusWorking {
+			return nil
+		}
+		from := p.Status
+		p.MarkIdle(s.now())
+		return &Event{
+			Kind:       KindParticipantStatusChanged,
+			Alias:      alias,
+			StatusFrom: from,
+			StatusTo:   p.Status,
+			Since:      p.Since,
+		}
+	})
+}
+
+func (s *Session) participantStatus(alias string) (participant.Status, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.registry.Get(alias)
+	if !ok {
+		return "", false
+	}
+	return p.Status, true
+}
+
 func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
-	switch c := msg.Content.(type) {
-	case agent.Log:
+	if s.shouldDropIdleStreamFragment(alias, msg) {
+		return
+	}
+
+	if c, ok := msg.Content.(agent.Log); ok {
 		if c.Text != "" {
 			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: c.Text})
 		}
 		return
+	}
+
+	s.applyTurnLifecycle(alias, msg)
+	m := msg
+	s.notify(Event{Kind: KindAgentMessage, Alias: alias, Msg: &m})
+}
+
+func (s *Session) applyTurnLifecycle(alias string, msg agent.Message) {
+	switch msg.Content.(type) {
 	case agent.Output:
 		switch msg.Mode {
 		case agent.ModeStream:
 			s.markWorking(alias)
 		case agent.ModeFlush:
-			s.withParticipant(alias, func(p *participant.Participant) {
+			s.updateParticipant(alias, func(p *participant.Participant) *Event {
+				from := p.Status
 				p.MarkIdle(s.now())
+				return &Event{
+					Kind:       KindParticipantStatusChanged,
+					Alias:      alias,
+					StatusFrom: from,
+					StatusTo:   p.Status,
+					Since:      p.Since,
+				}
 			})
 		default:
 		}
 	case agent.Reasoning:
-		switch msg.Mode {
-		case agent.ModeStream:
+		if msg.Mode == agent.ModeStream {
 			s.markWorking(alias)
-		default:
 		}
+	case agent.Command, agent.FileChangeSet:
+		// Tool/item streams are turn-scoped output. Treat their stream fragments
+		// as activity so participant status is conservative even if an adapter
+		// emits only tool deltas (no Output/Reasoning fragments).
+		if msg.Mode == agent.ModeStream {
+			s.markWorking(alias)
+		}
+	default:
 	}
+}
 
-	m := msg
-	s.notify(Event{Kind: KindAgentMessage, Alias: alias, Msg: &m})
+func (s *Session) shouldDropIdleStreamFragment(alias string, msg agent.Message) bool {
+	// Protocol guard:
+	// This codebase treats Output+ModeFlush as "turn completed" (see agent.SendAndWait
+	// docstring). If an adapter emits a streaming fragment while the participant is
+	// idle, it is a turn-lifecycle violation. Drop it to avoid spuriously flipping
+	// the participant back to working and confusing barrier-based UI features.
+	//
+	// Note: we allow agent.Log unconditionally (it is not turn-scoped).
+	if msg.Mode != agent.ModeStream {
+		return false
+	}
+	st, ok := s.participantStatus(alias)
+	if !ok || st != participant.StatusIdle {
+		return false
+	}
+	switch msg.Content.(type) {
+	case agent.Output, agent.Reasoning, agent.Command, agent.FileChangeSet:
+		s.notify(Event{
+			Kind:  KindAgentLog,
+			Alias: alias,
+			Text:  "protocol: received stream fragment while idle; dropping (try cancel to resync if the agent is stuck)",
+		})
+		return true
+	default:
+		return false
+	}
 }

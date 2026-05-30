@@ -32,7 +32,8 @@ func agentDelta(text string) string {
 }
 
 // TestNoticeFilter_compliantAck verifies that a response of {"acknowledge":true}
-// is silently discarded — no messages arrive before the EOF error.
+// is silently discarded, but still produces a turn-level Output+ModeFlush so
+// downstream consumers can treat SendNotice as a complete turn lifecycle.
 func TestNoticeFilter_compliantAck(t *testing.T) {
 	stdout := turnStarted +
 		agentDelta(`{\"acknowledge\":true}`) +
@@ -40,13 +41,20 @@ func TestNoticeFilter_compliantAck(t *testing.T) {
 	c := setupNoticeClient(t, stdout)
 
 	msg, err := c.Read()
-	if err == nil {
-		t.Fatalf("expected no message to be emitted for acknowledged notice; got mode=%v content=%T", msg.Mode, msg.Content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Fatalf("expected ModeFlush, got %v", msg.Mode)
+	}
+	if _, ok := msg.Content.(agent.Output); !ok {
+		t.Fatalf("expected Output content, got %T", msg.Content)
 	}
 }
 
 // TestNoticeFilter_compliantAckWithExtraFields verifies that extra JSON fields
-// alongside "acknowledge":true are intentionally ignored — still discarded.
+// alongside "acknowledge":true are intentionally ignored — still discarded, but
+// still produces a turn-level flush.
 func TestNoticeFilter_compliantAckWithExtraFields(t *testing.T) {
 	stdout := turnStarted +
 		agentDelta(`{\"acknowledge\":true,\"notes\":\"logged\"}`) +
@@ -54,19 +62,32 @@ func TestNoticeFilter_compliantAckWithExtraFields(t *testing.T) {
 	c := setupNoticeClient(t, stdout)
 
 	msg, err := c.Read()
-	if err == nil {
-		t.Fatalf("expected no message for ack with extra fields; got mode=%v content=%T", msg.Mode, msg.Content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Fatalf("expected ModeFlush, got %v", msg.Mode)
+	}
+	if _, ok := msg.Content.(agent.Output); !ok {
+		t.Fatalf("expected Output content, got %T", msg.Content)
 	}
 }
 
-// TestNoticeFilter_emptyResponse treats a response with no deltas as an ack.
+// TestNoticeFilter_emptyResponse treats a response with no deltas as an ack and
+// still emits a turn-level flush.
 func TestNoticeFilter_emptyResponse(t *testing.T) {
 	stdout := turnStarted + turnCompleted
 	c := setupNoticeClient(t, stdout)
 
 	msg, err := c.Read()
-	if err == nil {
-		t.Fatalf("expected no message for empty notice response; got mode=%v content=%T", msg.Mode, msg.Content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Fatalf("expected ModeFlush, got %v", msg.Mode)
+	}
+	if _, ok := msg.Content.(agent.Output); !ok {
+		t.Fatalf("expected Output content, got %T", msg.Content)
 	}
 }
 
@@ -192,7 +213,8 @@ func TestNoticeFilter_nonCompliantMultiDeltaRelay(t *testing.T) {
 }
 
 // TestNoticeFilter_turnFailed_buffering verifies that a failed notice turn
-// while buffering is silently discarded (no messages emitted).
+// while buffering is silently discarded, but still emits a turn-level flush so
+// downstream consumers can treat SendNotice as a complete lifecycle.
 func TestNoticeFilter_turnFailed_buffering(t *testing.T) {
 	stdout := turnStarted +
 		agentDelta(`{\"partial`) +
@@ -200,8 +222,14 @@ func TestNoticeFilter_turnFailed_buffering(t *testing.T) {
 	c := setupNoticeClient(t, stdout)
 
 	msg, err := c.Read()
-	if err == nil {
-		t.Fatalf("expected no message for failed buffered notice; got mode=%v content=%T", msg.Mode, msg.Content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Mode != agent.ModeFlush {
+		t.Fatalf("expected ModeFlush, got %v", msg.Mode)
+	}
+	if _, ok := msg.Content.(agent.Output); !ok {
+		t.Fatalf("expected Output content, got %T", msg.Content)
 	}
 }
 
