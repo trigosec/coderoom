@@ -23,7 +23,7 @@ func TestClientCommandExecution(t *testing.T) {
 	)
 	startClient(t, c)
 
-	if err := c.Send(`Run the shell command: echo hello`); err != nil {
+	if _, err := c.Send(`Run the shell command: echo hello`); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestClientCommandExecution(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(60 * time.Second):
+	case <-time.After(testTimeout):
 		t.Fatal("timed out waiting for turn completion")
 	}
 

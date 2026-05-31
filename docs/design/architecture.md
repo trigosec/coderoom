@@ -53,6 +53,10 @@ The Session Controller is the central orchestrator. All commands, messages, and 
 - Session roster with status indicators
 - Command input
 
+The UI is intentionally lean. It projects session and participant state; it does
+not talk to agent processes directly. All workflow invariants are enforced below
+the UI layer.
+
 ---
 
 ### 2. Session Controller
@@ -65,17 +69,26 @@ Central orchestrator. Responsible for:
 - Tracking session state
 - Controlling agent lifecycle
 
+The session controller is the sole mutator of participant runtime state. It
+coordinates concurrency, owns reader goroutines, and prevents invalid
+transitions (for example, sends while a turn is already in flight).
+
 ---
 
-### 3. Agent Registry
+### 3. Participant Registry
 
-Tracks all agents in the session:
+Tracks all participants in the session:
 
 ```
 alias, backend, role, capabilities, initiative, status
 ```
 
-Status values: `running`, `paused`, `crashed`
+Status values: `idle`, `starting`, `preparing`, `working`, `crashed`
+
+The participant is the stateful runtime entity. Beyond identity and coarse
+status, it carries active-turn runtime state used by the session and UI (for
+example, tracked open streams while the participant is working) and enforces
+runtime invariants for legal transitions.
 
 ---
 
@@ -89,6 +102,8 @@ Manages CLI processes:
 - Detect crashes and restart if needed
 
 Agents are treated as managed processes, not API clients.
+They are transport adapters with minimal internal state beyond buffering and
+protocol handling.
 
 ---
 
@@ -104,6 +119,10 @@ stop()
 ```
 
 Backends are treated as black boxes. Adapters handle tool-specific I/O quirks. Supported backends: Claude Code, Codex, Aider.
+
+An adapter is intentionally stateless at the workflow level: it does not own
+session or participant semantics. Runtime meaning is added one layer up by the
+participant and session controller.
 
 ---
 
@@ -234,6 +253,8 @@ git         = shared state
 diff        = change context
 sandbox     = OS-level boundary
 controller  = session authority
+participant = stateful collaborator
+agent       = stateless transport adapter
 human       = final decision-maker
 ```
 

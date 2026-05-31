@@ -20,7 +20,7 @@ func messageFromEnvelope(msg rpcEnvelope) ([]agent.Message, error) {
 	case methodReasoningSummaryPartAdded:
 		return oneMsg(messageFromReasoningSummaryPartAdded(msg.Params))
 	case methodTurnCompleted:
-		return oneMsg(messageFromTurnCompleted(msg.Params))
+		return messageFromTurnCompleted(msg.Params)
 	case methodTurnFailed:
 		return nil, fmt.Errorf("turn failed: %s", msg.Params)
 	case methodItemStarted:
@@ -50,7 +50,7 @@ func messageFromAgentDelta(raw json.RawMessage) (agent.Message, bool, error) {
 		return agent.Message{}, false, fmt.Errorf("parse agent delta params: %w", err)
 	}
 	return agent.Message{
-		StreamID: turnStreamID(p.TurnID),
+		StreamID: outputStreamID(p.TurnID, p.ItemID),
 		Mode:     agent.ModeStream,
 		Content:  agent.Output{Text: p.Delta},
 	}, true, nil
@@ -80,16 +80,33 @@ func messageFromReasoningSummaryPartAdded(raw json.RawMessage) (agent.Message, b
 	}, true, nil
 }
 
-func messageFromTurnCompleted(raw json.RawMessage) (agent.Message, bool, error) {
+func messageFromTurnCompleted(raw json.RawMessage) ([]agent.Message, error) {
 	var p turnCompletedParams
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return agent.Message{}, false, fmt.Errorf("parse turn completed params: %w", err)
+		return nil, fmt.Errorf("parse turn completed params: %w", err)
 	}
-	return agent.Message{
-		StreamID: turnStreamID(p.Turn.ID),
+	var msgs []agent.Message
+	// Emit per-item output flushes for any agentMessage items present. In the
+	// current Codex protocol items is always empty ("itemsView":"notLoaded") and
+	// item/completed carries the authoritative close signal instead. The loop
+	// acts as a fallback for protocol versions that do populate items, avoiding
+	// a silent stream leak in the UI if item/completed is not sent.
+	for _, item := range p.Turn.Items {
+		if item.Type != "agentMessage" {
+			continue
+		}
+		msgs = append(msgs, agent.Message{
+			StreamID: outputStreamID(p.Turn.ID, item.ID),
+			Mode:     agent.ModeFlush,
+			Content:  agent.Output{},
+		})
+	}
+	msgs = append(msgs, agent.Message{
+		StreamID: activeTurnStreamID,
 		Mode:     agent.ModeFlush,
 		Content:  agent.Output{},
-	}, true, nil
+	})
+	return msgs, nil
 }
 
 func messageFromItemStarted(raw json.RawMessage) (agent.Message, bool, error) {
@@ -154,9 +171,16 @@ func messageFromFileChangePatchUpdated(raw json.RawMessage) (agent.Message, bool
 	}, true, nil
 }
 
-// messageFromItemCompleted returns two messages for commandExecution items:
-// a ModeStream carrying ExitCode, followed by a zero-value ModeFlush.
-// Non-commandExecution items return an empty slice.
+// messageFromItemCompleted converts an item/completed notification.
+//
+// agentMessage: ModeFlush closing the per-item output stream opened by item/agentMessage/delta.
+// commandExecution: two messages — ModeStream carrying ExitCode, then ModeFlush.
+// fileChange: two messages — ModeStream carrying final state, then ModeFlush.
+// reasoning: ModeFlush closing the reasoning stream. summaryPartAdded now fires
+// before deltas (block-start marker), so item/completed is the authoritative
+// close. summaryPartAdded still emits a ModeFlush as belt-and-suspenders; if it
+// arrives before the stream is open, ErrStreamNotTracked is silenced harmlessly.
+// All other item types: no messages.
 func messageFromItemCompleted(raw json.RawMessage) ([]agent.Message, error) {
 	var p itemLifecycleParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -167,6 +191,14 @@ func messageFromItemCompleted(raw json.RawMessage) ([]agent.Message, error) {
 		return nil, fmt.Errorf("parse item/completed item kind: %w", err)
 	}
 	switch kind.Type {
+	case "agentMessage":
+		return []agent.Message{
+			{StreamID: outputStreamID(p.TurnID, kind.ID), Mode: agent.ModeFlush, Content: agent.Output{}},
+		}, nil
+	case "reasoning":
+		return []agent.Message{
+			{StreamID: reasoningStreamID(kind.ID), Mode: agent.ModeFlush, Content: agent.Reasoning{}},
+		}, nil
 	case "commandExecution":
 		var item commandExecutionItem
 		if err := json.Unmarshal(p.Item, &item); err != nil {
@@ -195,10 +227,6 @@ func messageFromItemCompleted(raw json.RawMessage) ([]agent.Message, error) {
 				},
 			},
 			{StreamID: streamID, Mode: agent.ModeFlush, Content: agent.FileChangeSet{}},
-		}, nil
-	case "reasoning":
-		return []agent.Message{
-			{StreamID: reasoningStreamID(kind.ID), Mode: agent.ModeFlush, Content: agent.Reasoning{}},
 		}, nil
 	default:
 		return nil, nil

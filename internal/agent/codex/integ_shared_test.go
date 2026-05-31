@@ -15,6 +15,8 @@ import (
 
 var logDir = flag.String("logdir", "", "directory to write Codex wire logs into (if empty, uses the test temp dir)")
 
+const testTimeout = 20 * time.Second
+
 func wireObserverForTest(t *testing.T) codex.ProtocolObserver {
 	t.Helper()
 	dir := *logDir
@@ -45,11 +47,15 @@ func startClient(t *testing.T, c agent.Agent) {
 	})
 }
 
-// readResponse drains Read() until the turn-end flush (Output+ModeFlush) and
-// returns the accumulated output text.
-func readResponse(t *testing.T, c *codex.Client, timeout time.Duration) string {
+// readResponse drains Read() until the turn-end flush and returns the
+// accumulated output text. anchorID is the stream ID returned by Send(); when
+// non-empty, its ModeFlush is the authoritative turn-end signal. When empty,
+// falls back to the heuristic: all observed output streams have flushed.
+func readResponse(t *testing.T, c *codex.Client, anchorID agent.StreamID, timeout time.Duration) string {
 	t.Helper()
 	var sb strings.Builder
+	open := make(map[agent.StreamID]struct{})
+	seenOutput := false
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -61,15 +67,23 @@ func readResponse(t *testing.T, c *codex.Client, timeout time.Duration) string {
 			if out, ok := msg.Content.(agent.Output); ok {
 				switch msg.Mode {
 				case agent.ModeStream:
+					seenOutput = true
+					open[msg.StreamID] = struct{}{}
 					sb.WriteString(out.Text)
 				case agent.ModeFlush:
+					if anchorID != "" && msg.StreamID == anchorID {
+						return
+					}
 					// SendNotice emits a synthetic turn-end flush on a dedicated
 					// stream. Ignore it here so callers waiting for a visible
 					// response do not terminate early with an empty string.
 					if msg.StreamID == agent.StreamID("codex:notice-turn") {
 						continue
 					}
-					return
+					delete(open, msg.StreamID)
+					if anchorID == "" && seenOutput && len(open) == 0 {
+						return
+					}
 				}
 			}
 		}

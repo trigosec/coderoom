@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
@@ -58,5 +59,53 @@ func TestClientContextPreservation(t *testing.T) {
 	}
 	if !strings.Contains(result, "12") {
 		t.Errorf("expected result to contain '12' (context preserved), got: %s", result)
+	}
+}
+
+func TestClientOutputFlushesMatchSeenOutputStreams(t *testing.T) {
+	cwd, _ := os.Getwd()
+	c := codex.New(cwd, codex.WithObserver(wireObserverForTest(t)))
+	startClient(t, c)
+
+	anchorID, err := c.Send("Reply with exactly: hello")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	open := make(map[agent.StreamID]struct{})
+	open[anchorID] = struct{}{}
+	sawFlush := false
+	deadline := time.After(testTimeout)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for all output streams to flush")
+		default:
+		}
+
+		msg, err := c.Read()
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+		out, ok := msg.Content.(agent.Output)
+		if !ok {
+			continue
+		}
+		switch msg.Mode {
+		case agent.ModeStream:
+			if out.Text == "" {
+				continue
+			}
+			open[msg.StreamID] = struct{}{}
+		case agent.ModeFlush:
+			sawFlush = true
+			if _, ok := open[msg.StreamID]; !ok {
+				t.Fatalf("received output flush for unseen stream %q", msg.StreamID)
+			}
+			delete(open, msg.StreamID)
+			if sawFlush && len(open) == 0 {
+				return
+			}
+		}
 	}
 }

@@ -64,7 +64,7 @@ func (r *Registry) ListAvailable() []*Participant {
 		if p.Agent == nil {
 			continue
 		}
-		if p.Status == StatusStarting || p.Status == StatusCrashed {
+		if p.Status == StatusStarting || p.Status == StatusPreparing || p.Status == StatusCrashed {
 			continue
 		}
 		out = append(out, p)

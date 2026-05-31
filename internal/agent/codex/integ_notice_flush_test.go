@@ -16,11 +16,11 @@ func TestSendNotice_ackEmitsTurnFlush(t *testing.T) {
 	c := codex.New(cwd, codex.WithObserver(wireObserverForTest(t)))
 	startClient(t, c)
 
-	if err := c.SendNotice("Store this in memory. Reply only with acknowledge true."); err != nil {
+	if _, err := c.SendNotice("Store this in memory. Reply only with acknowledge true."); err != nil {
 		t.Fatalf("SendNotice: %v", err)
 	}
 
-	deadline := time.After(60 * time.Second)
+	deadline := time.After(testTimeout)
 	for {
 		select {
 		case <-deadline:
@@ -44,4 +44,3 @@ func TestSendNotice_ackEmitsTurnFlush(t *testing.T) {
 		}
 	}
 }
-

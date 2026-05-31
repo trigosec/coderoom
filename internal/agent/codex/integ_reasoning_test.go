@@ -19,7 +19,8 @@ func TestClientReasoningMessages(t *testing.T) {
 	c := codex.New(cwd, codex.WithModel("gpt-5.2"), codex.WithObserver(wireObserverForTest(t)))
 	startClient(t, c)
 
-	if err := c.Send("Think through whether this condition is correct: `if (!items.length && isEnabled)`. What cases does it allow?"); err != nil {
+	anchorID, err := c.Send("Think through whether this condition is correct: `if (!items.length && isEnabled)`. What cases does it allow?")
+	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -44,7 +45,10 @@ func TestClientReasoningMessages(t *testing.T) {
 				}
 				lastReasoningMode[msg.StreamID] = msg.Mode
 			case agent.Output:
-				if msg.Mode == agent.ModeFlush {
+				// Exit only on the anchor flush — the authoritative turn-end
+				// signal. Per-item flushes from item/completed arrive earlier
+				// and must not cut the loop short before reasoning streams flush.
+				if msg.Mode == agent.ModeFlush && msg.StreamID == anchorID {
 					return
 				}
 			default:
@@ -55,7 +59,7 @@ func TestClientReasoningMessages(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(60 * time.Second):
+	case <-time.After(testTimeout):
 		t.Fatal("timed out waiting for turn completion")
 	}
 

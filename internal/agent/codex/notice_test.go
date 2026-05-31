@@ -271,8 +271,8 @@ func TestNoticeFilter_turnFailed_relaying(t *testing.T) {
 // TestNoticeFilter_noNoticeState verifies that normal (non-notice) turns are
 // unaffected when no notice is active.
 func TestNoticeFilter_noNoticeState(t *testing.T) {
-	stdout := `{"method":"item/agentMessage/delta","params":{"delta":"hello"}}` + "\n" +
-		`{"method":"turn/completed","params":{}}` + "\n"
+	stdout := `{"method":"item/agentMessage/delta","params":{"itemId":"msg1","turnId":"turn1","delta":"hello"}}` + "\n" +
+		`{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"turn1","status":"completed","items":[{"type":"agentMessage","id":"msg1"}]}}}` + "\n"
 	c := newWithIO(t, nopWriteCloser{io.Discard}, bytes.NewBufferString(stdout), nil)
 
 	msg, err := c.Read()

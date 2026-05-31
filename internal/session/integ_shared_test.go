@@ -84,8 +84,7 @@ func drainUntil(t *testing.T, ch <-chan session.Event, want session.Kind, timeou
 	}
 }
 
-// drainUntilIdle reads events until the turn-end signal arrives: a KindAgentMessage
-// carrying Output+ModeFlush, which means the agent has returned to idle.
+// drainUntilIdle reads events until the participant returns to idle.
 func drainUntilIdle(t *testing.T, ch <-chan session.Event, timeout time.Duration) {
 	t.Helper()
 	deadline := time.After(timeout)
@@ -96,10 +95,8 @@ func drainUntilIdle(t *testing.T, ch <-chan session.Event, timeout time.Duration
 				t.Fatal("events channel closed while waiting for agent idle")
 				return
 			}
-			if ev.Kind == session.KindAgentMessage && ev.Msg != nil {
-				if _, ok := ev.Msg.Content.(agent.Output); ok && ev.Msg.Mode == agent.ModeFlush {
-					return
-				}
+			if ev.Kind == session.KindParticipantStatusChanged && ev.StatusTo == participant.StatusIdle {
+				return
 			}
 		case <-deadline:
 			t.Fatalf("timed out after %s waiting for agent idle", timeout)

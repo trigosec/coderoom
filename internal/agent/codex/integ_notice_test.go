@@ -25,7 +25,7 @@ func TestSendNotice_silentAck(t *testing.T) {
 	c := codex.New(cwd, codex.WithObserver(wireObserverForTest(t)))
 	startClient(t, c)
 
-	if err := c.SendNotice("The magic word is PICASSO."); err != nil {
+	if _, err := c.SendNotice("The magic word is PICASSO."); err != nil {
 		t.Fatalf("SendNotice: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestSendNotice_silentAck(t *testing.T) {
 	noticeDeadline := time.After(30 * time.Second)
 	for {
 		time.Sleep(250 * time.Millisecond)
-		if c.Send("Reply with a single word: done") == nil {
+		if _, err := c.Send("Reply with a single word: done"); err == nil {
 			break
 		}
 		select {
@@ -110,15 +110,17 @@ func TestSendNotice_contextRetained(t *testing.T) {
 	c := codex.New(cwd, codex.WithObserver(wireObserverForTest(t)))
 	startClient(t, c)
 
-	if err := c.SendNotice("our secret word is BANANA"); err != nil {
+	if _, err := c.SendNotice("our secret word is BANANA"); err != nil {
 		t.Fatalf("SendNotice: %v", err)
 	}
 
 	// Poll until the notice turn completes, using the question as the probe.
+	var probeAnchor agent.StreamID
 	deadline := time.After(30 * time.Second)
 	for {
 		time.Sleep(250 * time.Millisecond)
-		if c.Send("what is our secret word? Reply with just the word.") == nil {
+		if id, err := c.Send("what is our secret word? Reply with just the word."); err == nil {
+			probeAnchor = id
 			break
 		}
 		select {
@@ -128,7 +130,7 @@ func TestSendNotice_contextRetained(t *testing.T) {
 		}
 	}
 
-	response := readResponse(t, c, 60*time.Second)
+	response := readResponse(t, c, probeAnchor, testTimeout)
 	if !strings.Contains(strings.ToUpper(response), "BANANA") {
 		t.Errorf("expected response to contain BANANA; got: %s", response)
 	}

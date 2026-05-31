@@ -33,8 +33,8 @@ func TestFileChange_emitsFileChangeSetMessages(t *testing.T) {
 	)
 	startClient(t, c)
 
-	const timeout = 60 * time.Second
-	if err := c.Send("Use the built-in file editing capability (not shell commands) to create codex_filechange_stream_test.txt with the contents: ok"); err != nil {
+	const timeout = testTimeout
+	if _, err := c.Send("Use the built-in file editing capability (not shell commands) to create codex_filechange_stream_test.txt with the contents: ok"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 

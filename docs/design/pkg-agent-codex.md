@@ -14,8 +14,8 @@ This document covers two packages designed together:
 ```go
 type Agent interface {
     Start() error
-    Send(prompt string) error
-    SendNotice(prompt string) error
+    Send(prompt string) (StreamID, error)
+    SendNotice(prompt string) (StreamID, error)
     Read() (Message, error)
     Interrupt() error
     Stop() error
@@ -37,6 +37,11 @@ func SendAndWait(a Agent, prompt string) (string, error)
 It calls `Send` then accumulates `Output` stream messages until the turn-level `ModeFlush`, returning the full text response. `Log` messages are discarded. `SendAndWait` is a convenience for callers that only need the final text response and do not need to observe intermediate tool activity.
 
 `Send` + `Read` are the low-level primitives for callers that need to process output as it streams, including `MessageLog` messages.
+
+`Send` and `SendNotice` both return the turn anchor `StreamID`. Callers that
+need full lifecycle control track that anchor and treat its flush as the
+authoritative turn-end signal. Convenience helpers such as `SendAndWait` may
+ignore the returned anchor when they consume the full turn inline.
 
 ---
 
@@ -63,16 +68,22 @@ The API follows the same model as the `http` package: calls are blocking. If the
 
 `Read()` blocks until it can return a meaningful message — either a stdout-derived notification (`delta`, `done`) or a queued stderr line (`log`). Unknown or unrecognised notifications are discarded; the observer records them.
 
+Visible output is item-scoped, not turn-scoped: each `item/agentMessage/delta`
+opens or extends a transcript stream keyed by `turnId + itemId`. When
+`turn/completed` arrives, the adapter inspects `turn.items[]` and emits one
+`Output + ModeFlush` per completed `agentMessage` item, using that same stream
+ID.
+
 The Codex-specific mapping is:
 
 | Source | Message(s) |
 |---|---|
-| `item/agentMessage/delta` | `{ID: "codex:output:<turnId>", Mode: ModeStream, Content: Output{Text: "..."}}` |
+| `item/agentMessage/delta` | `{ID: "codex:output:<turnId>:<itemId>", Mode: ModeStream, Content: Output{Text: "..."}}` |
 | `item/reasoning/delta` | `{ID: "codex:reasoning:<itemId>", Mode: ModeStream, Content: Reasoning{Text: "..."}}` |
 | `item/commandExecution/outputDelta` | `{ID: "codex:command:<itemId>", Mode: ModeStream, Content: Command{Output: "..."}}` |
 | `item/completed` (commandExecution) | `{..., Mode: ModeStream, Content: Command{ExitCode: &n}}` then `{..., Mode: ModeFlush, Content: Empty{}}` |
 | `item/completed` (fileChange) | `{ID: "codex:filechange:<itemId>", Mode: ModeStream, Content: FileChangeSet{...}}` then ModeFlush |
-| `turn/completed` | `{ID: "codex:turn:<turnId>", Mode: ModeFlush, Content: Output{}}` |
+| `turn/completed` | for each completed `agentMessage` item: `{ID: "codex:output:<turnId>:<itemId>", Mode: ModeFlush, Content: Output{}}` |
 | `turn/failed` | error returned from `Read()` |
 | stderr line | `{ID: "codex:log:<…>", Mode: ModeSingle, Content: Log{Text: "..."}}` |
 
@@ -85,9 +96,41 @@ encourages a minimal JSON acknowledgement (e.g. `{"acknowledge":true}`) and supp
 that acknowledgement from `Read()`.
 
 Even when the notice is fully acknowledged (or produces no deltas), the adapter
-still emits a turn-level `Output + ModeFlush` derived from `turn/completed` (or
-`turn/failed`). This ensures downstream consumers can treat notices as a complete
-turn lifecycle (session participant status, barrier-based UI dispatch).
+still emits a synthetic `Output + ModeFlush` on `codex:notice-turn` derived from
+`turn/completed` (or `turn/failed`). This lets downstream consumers treat a
+silent notice as a complete lifecycle without overloading normal output streams.
+
+### Turn anchors
+
+`Send` and `SendNotice` return a turn anchor to the caller.
+
+The anchor is the agent-level contract that defines turn lifetime. It is not
+"the last currently visible output stream"; it is the explicit stream whose
+flush means "this turn is now over".
+
+Why this exists:
+
+- Codex can emit multiple auxiliary streams during one turn (`Output`,
+  `Reasoning`, `Command`, `FileChangeSet`).
+- Those streams may open and close in phases.
+- If a caller inferred turn completion from "all currently observed streams are
+  closed", it could end the turn too early and misclassify later valid output as
+  stray protocol noise.
+
+The adapter therefore gives callers a stable anchor immediately on `Send*`:
+
+- for normal visible turns, the anchor represents the turn lifecycle even though
+  visible output remains item-scoped
+- for notice turns, the adapter emits a dedicated synthetic flush on
+  `codex:notice-turn`
+
+Consumer rule:
+
+- treat the returned anchor as authoritative turn-end
+- do not infer turn completion from auxiliary stream closure alone
+
+This is the bridge between agent protocol semantics and participant/session
+lifecycle semantics.
 
 ### Protocol observer
 

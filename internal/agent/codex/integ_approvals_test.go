@@ -48,8 +48,8 @@ func TestApprovals_fileChange(t *testing.T) {
 		done <- err
 	}()
 
-	assertSawApprovalKind(t, approvals, agent.ApprovalFileChange, 60*time.Second)
-	assertTurnDone(t, done, 60*time.Second)
+	assertSawApprovalKind(t, approvals, agent.ApprovalFileChange, testTimeout)
+	assertTurnDone(t, done, testTimeout)
 
 	if _, err := os.Stat(filepath.Join(cwd, "codex_file_approval_test.txt")); err != nil {
 		t.Fatalf("expected approvals_test.txt to exist: %v", err)

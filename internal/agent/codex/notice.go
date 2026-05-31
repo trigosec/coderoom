@@ -72,6 +72,12 @@ func (c *Client) interceptNotice(ctx context.Context, msg rpcEnvelope) noticeOut
 		// response; discard either way.
 		return noticeContinue
 
+	case methodItemCompleted:
+		// Suppress item/completed for agentMessage items: the delta was intercepted
+		// so no output stream was opened; forwarding the flush would produce a
+		// spurious "stream not tracked" error. Non-agentMessage items pass through.
+		return suppressNoticeAgentMessageItemCompleted(msg)
+
 	case methodTurnCompleted:
 		return c.handleNoticeCompleted(ctx)
 
@@ -223,6 +229,21 @@ func (c *Client) handleNoticeFailed(ctx context.Context) noticeOutcome {
 		return relayAndTurnFlush(ctx, c)
 	}
 	return c.emitNoticeTurnFlush(ctx)
+}
+
+func suppressNoticeAgentMessageItemCompleted(msg rpcEnvelope) noticeOutcome {
+	var p itemLifecycleParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		return noticeUnhandled
+	}
+	var kind itemKind
+	if err := json.Unmarshal(p.Item, &kind); err != nil {
+		return noticeUnhandled
+	}
+	if kind.Type == "agentMessage" {
+		return noticeContinue
+	}
+	return noticeUnhandled
 }
 
 // outcomeOf converts the bool returned by sendBufMessage into a noticeOutcome.

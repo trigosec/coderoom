@@ -93,7 +93,7 @@ func (c InviteCommand) buildInvite(s *Session) (agent.Agent, *participant.Partic
 		Initiative: c.Initiative,
 		Color:      c.Color,
 	}
-	p.MarkStarting(s.now())
+	p.BeginStartup(s.now())
 	return a, p
 }
 
@@ -111,33 +111,41 @@ func startInvitedAgent(alias string, a agent.Agent, s *Session) {
 
 func handleInviteStartError(alias string, err error, s *Session) {
 	s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: fmt.Sprintf("start failed: %v", err)})
-	s.updateParticipant(alias, func(p *participant.Participant) *Event {
+	stateErr := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
 		from := p.Status
-		p.MarkCrashed(s.now())
+		p.Crash(s.now())
 		return &Event{
 			Kind:       KindParticipantStatusChanged,
 			Alias:      alias,
 			StatusFrom: from,
 			StatusTo:   p.Status,
 			Since:      p.Since,
-		}
+		}, nil
 	})
+	if stateErr != nil && !errors.Is(stateErr, errParticipantNotFound) {
+		s.notifyParticipantInvariant(alias, stateErr)
+	}
 	s.notify(Event{Kind: KindAgentCrashed, Alias: alias})
 }
 
 func attachStartedAgent(alias string, a agent.Agent, s *Session) {
-	s.updateParticipant(alias, func(p *participant.Participant) *Event {
+	err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
 		p.Agent = a
 		from := p.Status
-		p.MarkIdle(s.now())
+		if err := p.CompleteStartup(s.now()); err != nil {
+			return nil, fmt.Errorf("complete startup: %w", err)
+		}
 		return &Event{
 			Kind:       KindParticipantStatusChanged,
 			Alias:      alias,
 			StatusFrom: from,
 			StatusTo:   p.Status,
 			Since:      p.Since,
-		}
+		}, nil
 	})
+	if err != nil && !errors.Is(err, errParticipantNotFound) {
+		s.notifyParticipantInvariant(alias, err)
+	}
 }
 
 // RemoveCommand stops and removes an agent from the session.
@@ -186,22 +194,20 @@ func (c BroadcastCommand) execute(s *Session) error {
 	var errs []error
 	var delivered []string
 	for _, p := range s.RoutableParticipants() {
-		s.updateParticipant(p.Alias, func(p *participant.Participant) *Event {
-			from := p.Status
-			p.MarkWorking(s.now())
-			return &Event{
-				Kind:       KindParticipantStatusChanged,
-				Alias:      p.Alias,
-				StatusFrom: from,
-				StatusTo:   p.Status,
-				Since:      p.Since,
+		if err := s.prepareParticipantForWork(p.Alias); err != nil {
+			if !errors.Is(err, errParticipantNotFound) {
+				s.notifyParticipantInvariant(p.Alias, err)
 			}
-		})
-		if err := p.Agent.Send(c.Text); err != nil {
-			s.markIdleIfWorking(p.Alias)
 			errs = append(errs, fmt.Errorf("broadcast to %q: %w", p.Alias, err))
 			continue
 		}
+		anchorID, err := p.Agent.Send(c.Text)
+		if err != nil {
+			s.abortWork(p.Alias)
+			errs = append(errs, fmt.Errorf("broadcast to %q: %w", p.Alias, err))
+			continue
+		}
+		s.beginParticipantWorking(p.Alias, anchorID)
 		delivered = append(delivered, p.Alias)
 	}
 	return newDeliveryError(delivered, errors.Join(errs...))
@@ -219,11 +225,11 @@ type SharedSendCommand struct {
 }
 
 func (c SharedSendCommand) execute(s *Session) error {
-	a, err := acquireParticipantAndMarkWorking(c.Alias, s)
+	a, err := acquireParticipantForDirectSend(c.Alias, s)
 	if err != nil {
 		return err
 	}
-	if err := sendSharedDirect(c.Alias, a, c.TextDirect, s); err != nil {
+	if err := sendPreparedDirect(c.Alias, a, c.TextDirect, s); err != nil {
 		return err
 	}
 	s.notify(Event{Kind: KindSharedSend, Alias: c.Alias, Text: c.TextDirect})
@@ -233,27 +239,33 @@ func (c SharedSendCommand) execute(s *Session) error {
 	return nil
 }
 
-func acquireParticipantAndMarkWorking(alias string, s *Session) (agent.Agent, error) {
-	var a agent.Agent
-	if ok := s.updateParticipant(alias, func(p *participant.Participant) *Event {
+// acquireParticipantForDirectSend captures the participant's agent and
+// transitions it from Idle to Preparing. Direct sends require exclusivity:
+// an already-working participant rejects the command.
+func acquireParticipantForDirectSend(alias string, s *Session) (a agent.Agent, err error) {
+	err = s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
 		if p.Agent == nil || p.Status == participant.StatusStarting || p.Status == participant.StatusCrashed {
-			return nil
+			return nil, nil
 		}
 		a = p.Agent
-		if p.Status == participant.StatusWorking {
-			return nil
-		}
 		from := p.Status
-		p.MarkWorking(s.now())
+		if err := p.PrepareForWork(s.now()); err != nil {
+			return nil, fmt.Errorf("prepare for work: %w", err)
+		}
 		return &Event{
 			Kind:       KindParticipantStatusChanged,
 			Alias:      alias,
 			StatusFrom: from,
 			StatusTo:   p.Status,
 			Since:      p.Since,
+		}, nil
+	})
+	if err != nil {
+		if errors.Is(err, errParticipantNotFound) {
+			return nil, fmt.Errorf("participant %q not found", alias)
 		}
-	}); !ok {
-		return nil, fmt.Errorf("participant %q not found", alias)
+		s.notifyParticipantInvariant(alias, err)
+		return nil, fmt.Errorf("participant %q invalid working transition: %w", alias, err)
 	}
 	if a == nil {
 		return nil, fmt.Errorf("participant %q not ready", alias)
@@ -261,11 +273,51 @@ func acquireParticipantAndMarkWorking(alias string, s *Session) (agent.Agent, er
 	return a, nil
 }
 
-func sendSharedDirect(alias string, a agent.Agent, text string, s *Session) error {
-	if err := a.Send(text); err != nil {
-		s.markIdleIfWorking(alias)
+// acquireParticipantForNotice captures the participant's agent and transitions
+// it to Preparing only when currently Idle. Existing Working/Preparing turns are
+// allowed so a notice can be layered onto an active turn.
+func acquireParticipantForNotice(alias string, s *Session) (a agent.Agent, prepared bool, err error) {
+	err = s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
+		if p.Agent == nil || p.Status == participant.StatusStarting || p.Status == participant.StatusCrashed {
+			return nil, nil
+		}
+		a = p.Agent
+		if p.Status == participant.StatusWorking || p.Status == participant.StatusPreparing {
+			return nil, nil
+		}
+		from := p.Status
+		if err := p.PrepareForWork(s.now()); err != nil {
+			return nil, fmt.Errorf("prepare for work: %w", err)
+		}
+		prepared = true
+		return &Event{
+			Kind:       KindParticipantStatusChanged,
+			Alias:      alias,
+			StatusFrom: from,
+			StatusTo:   p.Status,
+			Since:      p.Since,
+		}, nil
+	})
+	if err != nil {
+		if errors.Is(err, errParticipantNotFound) {
+			return nil, false, fmt.Errorf("participant %q not found", alias)
+		}
+		s.notifyParticipantInvariant(alias, err)
+		return nil, false, fmt.Errorf("participant %q invalid working transition: %w", alias, err)
+	}
+	if a == nil {
+		return nil, false, fmt.Errorf("participant %q not ready", alias)
+	}
+	return a, prepared, nil
+}
+
+func sendPreparedDirect(alias string, a agent.Agent, text string, s *Session) error {
+	anchorID, err := a.Send(text)
+	if err != nil {
+		s.abortWork(alias)
 		return fmt.Errorf("send to %q: %w", alias, err)
 	}
+	s.beginParticipantWorking(alias, anchorID)
 	return nil
 }
 
@@ -275,15 +327,21 @@ func sendSharedNotices(addressedAlias string, text string, s *Session) error {
 		if other.Alias == addressedAlias {
 			continue
 		}
-		a, err := acquireParticipantAndMarkWorking(other.Alias, s)
+		a, prepared, err := acquireParticipantForNotice(other.Alias, s)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("notice to %q: %w", other.Alias, err))
 			continue
 		}
-		if err := a.SendNotice(text); err != nil {
-			s.markIdleIfWorking(other.Alias)
+		anchorID, err := a.SendNotice(text)
+		if err != nil {
+			s.abortWork(other.Alias)
 			errs = append(errs, fmt.Errorf("notice to %q: %w", other.Alias, err))
 			continue
+		}
+		if prepared {
+			s.beginParticipantWorking(other.Alias, anchorID)
+		} else {
+			s.trackAnchorStream(other.Alias, anchorID)
 		}
 		s.notify(Event{Kind: KindSharedNotice, Alias: other.Alias, Text: text})
 	}
@@ -299,30 +357,15 @@ type PrivateSendCommand struct {
 }
 
 func (c PrivateSendCommand) execute(s *Session) error {
-	var a agent.Agent
-	if ok := s.updateParticipant(c.Alias, func(p *participant.Participant) *Event {
-		if p.Agent == nil || p.Status == participant.StatusStarting || p.Status == participant.StatusCrashed {
-			return nil
-		}
-		a = p.Agent
-		from := p.Status
-		p.MarkWorking(s.now())
-		return &Event{
-			Kind:       KindParticipantStatusChanged,
-			Alias:      c.Alias,
-			StatusFrom: from,
-			StatusTo:   p.Status,
-			Since:      p.Since,
-		}
-	}); !ok {
-		return fmt.Errorf("participant %q not found", c.Alias)
+	a, err := acquireParticipantForDirectSend(c.Alias, s)
+	if err != nil {
+		return err
 	}
-	if a == nil {
-		return fmt.Errorf("participant %q not ready", c.Alias)
+	anchorID, sendErr := a.Send(c.Text)
+	if sendErr != nil {
+		s.abortWork(c.Alias)
+		return fmt.Errorf("send to %q: %w", c.Alias, sendErr)
 	}
-	if err := a.Send(c.Text); err != nil {
-		s.markIdleIfWorking(c.Alias)
-		return fmt.Errorf("send to %q: %w", c.Alias, err)
-	}
+	s.beginParticipantWorking(c.Alias, anchorID)
 	return nil
 }

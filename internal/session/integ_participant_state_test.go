@@ -163,8 +163,10 @@ func waitForIdleThenFlush(t *testing.T, b *eventBuf, alias string, timeout time.
 			return false
 		}
 		if _, ok := ev.Msg.Content.(agent.Output); ok && ev.Msg.Mode == agent.ModeFlush {
+			// Per-item flushes can arrive before idle; only the anchor flush
+			// (which triggers idle) is the definitive turn-end signal.
 			if !seenIdle {
-				t.Fatalf("%s: received Output+ModeFlush message before agent.idle event", alias)
+				return false
 			}
 			return true
 		}

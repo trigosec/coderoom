@@ -24,17 +24,27 @@ func newTestAgent() *testAgent {
 }
 
 func (a *testAgent) Start() error { return nil }
-func (a *testAgent) Send(string) error {
+
+const testTurnAnchor = agent.StreamID("test:turn-anchor")
+
+func (a *testAgent) Send(string) (agent.StreamID, error) {
 	a.sendCalls++
-	return a.sendErr
+	if a.sendErr != nil {
+		return "", a.sendErr
+	}
+	return testTurnAnchor, nil
 }
-func (a *testAgent) SendNotice(string) error {
+func (a *testAgent) SendNotice(string) (agent.StreamID, error) {
 	// In this test stub, treat notices as a complete turn that ends immediately.
-	a.push(agent.Message{StreamID: "notice", Mode: agent.ModeFlush, Content: agent.Output{}})
-	return nil
+	const noticeTurnStream = agent.StreamID("codex:notice-turn")
+	a.push(agent.Message{StreamID: noticeTurnStream, Mode: agent.ModeFlush, Content: agent.Output{}})
+	return noticeTurnStream, nil
 }
 func (a *testAgent) Interrupt() error { return nil }
-func (a *testAgent) Stop() error      { close(a.ch); return nil }
+func (a *testAgent) Stop() error {
+	close(a.ch)
+	return nil
+}
 func (a *testAgent) Read() (agent.Message, error) {
 	msg, ok := <-a.ch
 	if !ok {
@@ -181,7 +191,9 @@ func TestBarrierBatch_stagesThenDispatchesWhenIdle(t *testing.T) {
 	assertHistoryDoesNotContainUserInput(t, m, "next turn")
 
 	// Signal turn completion for ada and pump events until it becomes idle.
-	agents["ada"].push(agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{Text: ""}})
+	agents["ada"].push(agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "done"}})
+	agents["ada"].push(agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}})
+	agents["ada"].push(agent.Message{StreamID: testTurnAnchor, Mode: agent.ModeFlush, Content: agent.Output{}})
 	m = pumpUntil(t, m, isIdleStatusChange("ada"))
 
 	if m.room.HasStagedBatch() || m.room.IsComposerStaged() {
@@ -213,7 +225,13 @@ func TestBarrierBatch_autoDispatchPreservesFirstOutputRecord(t *testing.T) {
 		t.Fatal("expected staged batch before ada becomes idle")
 	}
 
-	agents["ada"].push(agent.Message{StreamID: "turn-old-flush", Mode: agent.ModeFlush, Content: agent.Output{}})
+	agents["ada"].push(agent.Message{
+		StreamID: "turn-old-output",
+		Mode:     agent.ModeStream,
+		Content:  agent.Output{Text: "old output"},
+	})
+	agents["ada"].push(agent.Message{StreamID: "turn-old-output", Mode: agent.ModeFlush, Content: agent.Output{}})
+	agents["ada"].push(agent.Message{StreamID: testTurnAnchor, Mode: agent.ModeFlush, Content: agent.Output{}})
 	m = pumpUntil(t, m, isIdleStatusChange("ada"))
 
 	agents["ada"].push(agent.Message{
@@ -277,7 +295,7 @@ func TestBarrierBatch_failedDispatchDoesNotRetryOnRollbackIdle(t *testing.T) {
 		t.Fatalf("expected initial dispatch attempt count 1, got %d", agents["ada"].sendCalls)
 	}
 
-	for range 2 {
+	for range 3 {
 		ev := mustPullEvent(t, &m, 2*time.Second)
 		next, _ = m.Update(sessionEventMsg(ev))
 		m = next.(Model)

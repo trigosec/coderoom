@@ -73,6 +73,15 @@ Roles define how an agent behaves, independent of which model backs it.
 
 Roles act as behavioral contracts and permission hints.
 
+The backend agent and the participant are distinct concepts:
+
+- the backend agent is the transport adapter to an external CLI
+- the participant is the stateful collaborator visible in the room
+
+Runtime state such as working/idle and active turn activity belongs to the
+participant. Session coordinates and mutates that state; the participant
+validates transition invariants; the UI consumes the resulting state.
+
 ---
 
 ## Initiative Levels
@@ -101,6 +110,9 @@ Rules:
 - No agent-to-agent private messaging
 - Reasoning does not leak into the shared room
 - Agents may ACK messages in the shared room for coordination
+
+The UI should consume this communication through session events and participant
+state. It should never invoke agents directly.
 
 ---
 

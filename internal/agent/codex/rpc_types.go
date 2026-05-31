@@ -61,8 +61,10 @@ type notificationParams struct {
 }
 
 type turnCompletedParams struct {
-	Turn struct {
-		ID string `json:"id"`
+	ThreadID string `json:"threadId"`
+	Turn     struct {
+		ID    string     `json:"id"`
+		Items []itemKind `json:"items"`
 	} `json:"turn"`
 }
 

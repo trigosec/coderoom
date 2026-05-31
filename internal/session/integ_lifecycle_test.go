@@ -51,8 +51,7 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	}
 	drainUntil(t, events, session.KindAgentStopped, 10*time.Second)
 
-	if err := a.Send("hello after stop"); err == nil {
+	if _, err := a.Send("hello after stop"); err == nil {
 		t.Error("expected Send to fail after Stop, got nil")
 	}
 }
-

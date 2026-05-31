@@ -4,6 +4,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -32,6 +33,8 @@ type Session struct {
 	now          func() time.Time
 	agentFactory AgentFactory
 }
+
+var errParticipantNotFound = errors.New("participant not found")
 
 // Option configures a Session at construction time.
 type Option func(*Session)
@@ -76,7 +79,7 @@ func (s *Session) Roster() []participant.Participant {
 	ps := s.registry.List()
 	out := make([]participant.Participant, len(ps))
 	for i, p := range ps {
-		out[i] = *p
+		out[i] = p.Snapshot()
 	}
 	return out
 }
@@ -120,6 +123,13 @@ func (s *Session) notify(e Event) {
 	}
 }
 
+func (s *Session) notifyParticipantInvariant(alias string, err error) {
+	if err == nil {
+		return
+	}
+	s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: "participant invariant: " + err.Error()})
+}
+
 func (s *Session) addParticipant(p *participant.Participant) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -160,21 +170,25 @@ func (s *Session) lookupParticipant(alias string) (*participant.Participant, boo
 	return s.registry.Get(alias)
 }
 
-func (s *Session) updateParticipant(alias string, fn func(*participant.Participant) *Event) bool {
+func (s *Session) updateParticipant(alias string, fn func(*participant.Participant) (*Event, error)) error {
 	var ev *Event
+	var err error
 	s.mu.Lock()
 	p, ok := s.registry.Get(alias)
 	if ok {
-		ev = fn(p)
+		ev, err = fn(p)
 	}
 	s.mu.Unlock()
 	if !ok {
-		return false
+		return fmt.Errorf("%w: %q", errParticipantNotFound, alias)
+	}
+	if err != nil {
+		return err
 	}
 	if ev != nil {
 		s.notify(*ev)
 	}
-	return true
+	return nil
 }
 
 // Participant returns a snapshot of the active participant with the given alias.
@@ -185,7 +199,7 @@ func (s *Session) Participant(alias string) (participant.Participant, bool) {
 	if !ok {
 		return participant.Participant{}, false
 	}
-	return *p, true
+	return p.Snapshot(), true
 }
 
 // Participants returns a snapshot of all currently active participants.
@@ -195,7 +209,7 @@ func (s *Session) Participants() []participant.Participant {
 	ps := s.registry.List()
 	out := make([]participant.Participant, len(ps))
 	for i, p := range ps {
-		out[i] = *p
+		out[i] = p.Snapshot()
 	}
 	return out
 }
@@ -216,7 +230,7 @@ func (s *Session) RoutableParticipants() []participant.Participant {
 	ps := s.registry.ListAvailable()
 	out := make([]participant.Participant, len(ps))
 	for i, p := range ps {
-		out[i] = *p
+		out[i] = p.Snapshot()
 	}
 	return out
 }
@@ -238,17 +252,20 @@ func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 func (s *Session) handleAgentReadError(stop <-chan struct{}, alias string) {
 	kind := s.kindForReadError(stop)
 	if kind == KindAgentCrashed {
-		s.updateParticipant(alias, func(p *participant.Participant) *Event {
+		err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
 			from := p.Status
-			p.MarkCrashed(s.now())
+			p.Crash(s.now())
 			return &Event{
 				Kind:       KindParticipantStatusChanged,
 				Alias:      alias,
 				StatusFrom: from,
 				StatusTo:   p.Status,
 				Since:      p.Since,
-			}
+			}, nil
 		})
+		if err != nil && !errors.Is(err, errParticipantNotFound) {
+			s.notifyParticipantInvariant(alias, err)
+		}
 	}
 	s.notify(Event{Kind: kind, Alias: alias})
 }
@@ -262,38 +279,147 @@ func (s *Session) kindForReadError(stop <-chan struct{}) Kind {
 	}
 }
 
-func (s *Session) markWorking(alias string) {
-	s.updateParticipant(alias, func(p *participant.Participant) *Event {
-		if p.Status == participant.StatusWorking {
-			return nil
-		}
+// prepareParticipantForWork transitions the participant to Preparing state
+// under the session lock. Must be followed by Send then beginParticipantWorking
+// (on success) or abortWork (on Send failure).
+func (s *Session) prepareParticipantForWork(alias string) error {
+	return s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
 		from := p.Status
-		p.MarkWorking(s.now())
+		if err := p.PrepareForWork(s.now()); err != nil {
+			return nil, fmt.Errorf("prepare for work: %w", err)
+		}
 		return &Event{
 			Kind:       KindParticipantStatusChanged,
 			Alias:      alias,
 			StatusFrom: from,
 			StatusTo:   p.Status,
 			Since:      p.Since,
-		}
+		}, nil
 	})
 }
 
-func (s *Session) markIdleIfWorking(alias string) {
-	s.updateParticipant(alias, func(p *participant.Participant) *Event {
-		if p.Status != participant.StatusWorking {
-			return nil
-		}
+// beginParticipantWorking transitions from Preparing to Working and atomically
+// tracks the turn-lifecycle anchor in OpenStreams. Call this after a successful
+// Send to close the race window between PrepareForWork and anchor tracking.
+func (s *Session) beginParticipantWorking(alias string, anchor agent.StreamID) {
+	err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
 		from := p.Status
-		p.MarkIdle(s.now())
+		if err := p.BeginWorking(s.now(), anchor); err != nil {
+			return nil, fmt.Errorf("begin working: %w", err)
+		}
 		return &Event{
 			Kind:       KindParticipantStatusChanged,
 			Alias:      alias,
 			StatusFrom: from,
 			StatusTo:   p.Status,
 			Since:      p.Since,
-		}
+		}, nil
 	})
+	if err != nil && !errors.Is(err, errParticipantNotFound) {
+		s.notifyParticipantInvariant(alias, err)
+	}
+}
+
+// abortWork rolls back a Preparing or Working participant to Idle. Use when
+// Send fails after prepareParticipantForWork, or for error rollback paths.
+func (s *Session) abortWork(alias string) {
+	err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
+		if p.Status != participant.StatusWorking && p.Status != participant.StatusPreparing {
+			return nil, nil
+		}
+		from := p.Status
+		if err := p.AbortWork(s.now()); err != nil {
+			return nil, fmt.Errorf("abort work: %w", err)
+		}
+		return &Event{
+			Kind:       KindParticipantStatusChanged,
+			Alias:      alias,
+			StatusFrom: from,
+			StatusTo:   p.Status,
+			Since:      p.Since,
+		}, nil
+	})
+	if err != nil && !errors.Is(err, errParticipantNotFound) {
+		s.notifyParticipantInvariant(alias, err)
+	}
+}
+
+// markIdle transitions the participant to Idle via BecomeIdle. Called when the
+// anchor stream flush is received (shouldIdle=true from CloseStream).
+func (s *Session) markIdle(alias string) {
+	err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
+		from := p.Status
+		if err := p.BecomeIdle(s.now()); err != nil {
+			return nil, fmt.Errorf("become idle: %w", err)
+		}
+		return &Event{
+			Kind:       KindParticipantStatusChanged,
+			Alias:      alias,
+			StatusFrom: from,
+			StatusTo:   p.Status,
+			Since:      p.Since,
+		}, nil
+	})
+	if err != nil && !errors.Is(err, errParticipantNotFound) {
+		s.notifyParticipantInvariant(alias, err)
+	}
+}
+
+// trackAnchorStream tracks a stream for a participant that is already Working
+// (e.g., a listener receiving a notice while an existing turn is in flight).
+// Unlike beginParticipantWorking, this does not change the participant's status
+// or replace its existing anchor.
+func (s *Session) trackAnchorStream(alias string, streamID agent.StreamID) {
+	if streamID == "" {
+		return
+	}
+	s.mu.Lock()
+	p, ok := s.registry.Get(alias)
+	var err error
+	if ok {
+		err = p.TrackStream(streamID)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		s.notifyParticipantInvariant(alias, err)
+	}
+}
+
+func (s *Session) noteWorkingStreamMessage(alias string, msg agent.Message) (shouldIdle bool, sawTracked bool) {
+	var err error
+	s.mu.Lock()
+	p, ok := s.registry.Get(alias)
+	if !ok {
+		s.mu.Unlock()
+		return false, false
+	}
+	switch msg.Mode {
+	case agent.ModeStream:
+		err = p.TrackStream(msg.StreamID)
+		s.mu.Unlock()
+		if err != nil {
+			s.notifyParticipantInvariant(alias, err)
+			return false, false
+		}
+		return false, true
+	case agent.ModeFlush:
+		shouldIdle, err = p.CloseStream(msg.StreamID)
+		s.mu.Unlock()
+		if err != nil {
+			// ErrStreamNotTracked on a flush is expected when belt-and-suspenders
+			// close signals overlap (e.g. item/completed and turn/completed both
+			// carry a close for the same stream). Silence it; other errors are
+			// genuine invariant violations.
+			if !errors.Is(err, participant.ErrStreamNotTracked) {
+				s.notifyParticipantInvariant(alias, err)
+			}
+			return false, false
+		}
+		return shouldIdle, true
+	default:
+		s.mu.Unlock()
+		return false, false
+	}
 }
 
 func (s *Session) participantStatus(alias string) (participant.Status, bool) {
@@ -324,46 +450,30 @@ func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
 }
 
 func (s *Session) applyTurnLifecycle(alias string, msg agent.Message) {
+	// Stream tracking only — no status transitions here. Transitions happen via
+	// prepareParticipantForWork / beginParticipantWorking / markIdle driven by
+	// the session command layer and the anchor stream close.
 	switch msg.Content.(type) {
-	case agent.Output:
+	case agent.Output, agent.Reasoning, agent.Command, agent.FileChangeSet:
 		switch msg.Mode {
 		case agent.ModeStream:
-			s.markWorking(alias)
+			_, _ = s.noteWorkingStreamMessage(alias, msg)
 		case agent.ModeFlush:
-			s.updateParticipant(alias, func(p *participant.Participant) *Event {
-				from := p.Status
-				p.MarkIdle(s.now())
-				return &Event{
-					Kind:       KindParticipantStatusChanged,
-					Alias:      alias,
-					StatusFrom: from,
-					StatusTo:   p.Status,
-					Since:      p.Since,
-				}
-			})
-		default:
+			if shouldIdle, tracked := s.noteWorkingStreamMessage(alias, msg); tracked && shouldIdle {
+				s.markIdle(alias)
+			}
+		case agent.ModeSingle:
+			// Standalone messages are not stream-tracked.
 		}
-	case agent.Reasoning:
-		if msg.Mode == agent.ModeStream {
-			s.markWorking(alias)
-		}
-	case agent.Command, agent.FileChangeSet:
-		// Tool/item streams are turn-scoped output. Treat their stream fragments
-		// as activity so participant status is conservative even if an adapter
-		// emits only tool deltas (no Output/Reasoning fragments).
-		if msg.Mode == agent.ModeStream {
-			s.markWorking(alias)
-		}
-	default:
 	}
 }
 
 func (s *Session) shouldDropIdleStreamFragment(alias string, msg agent.Message) bool {
 	// Protocol guard:
-	// This codebase treats Output+ModeFlush as "turn completed" (see agent.SendAndWait
-	// docstring). If an adapter emits a streaming fragment while the participant is
-	// idle, it is a turn-lifecycle violation. Drop it to avoid spuriously flipping
-	// the participant back to working and confusing barrier-based UI features.
+	// Streaming fragments must belong to an active turn. If an adapter emits one
+	// while the participant is idle, it is a lifecycle violation. Drop it to
+	// avoid spuriously flipping the participant back to working and confusing
+	// barrier-based UI features.
 	//
 	// Note: we allow agent.Log unconditionally (it is not turn-scoped).
 	if msg.Mode != agent.ModeStream {

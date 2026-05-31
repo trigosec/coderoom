@@ -3,6 +3,7 @@ package participant_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
@@ -10,12 +11,14 @@ import (
 
 type fakeAgent struct{}
 
-func (fakeAgent) Start() error                 { return nil }
-func (fakeAgent) Send(string) error            { return nil }
-func (fakeAgent) SendNotice(string) error      { return nil }
-func (fakeAgent) Read() (agent.Message, error) { return agent.Message{}, errors.New("no messages") }
-func (fakeAgent) Interrupt() error             { return nil }
-func (fakeAgent) Stop() error                  { return nil }
+func (fakeAgent) Start() error { return nil }
+func (fakeAgent) Send(string) (agent.StreamID, error) {
+	return "", nil
+}
+func (fakeAgent) SendNotice(string) (agent.StreamID, error) { return "", nil }
+func (fakeAgent) Read() (agent.Message, error)              { return agent.Message{}, errors.New("no messages") }
+func (fakeAgent) Interrupt() error                          { return nil }
+func (fakeAgent) Stop() error                               { return nil }
 
 func newParticipant(alias string) *participant.Participant {
 	return &participant.Participant{
@@ -131,6 +134,10 @@ func TestRegistry_ListAvailable_filtersByAgentAndStatus(t *testing.T) {
 	pCrashed.Status = participant.StatusCrashed
 	pCrashed.Agent = fakeAgent{}
 
+	pPreparing := newParticipant("preparing")
+	pPreparing.Status = participant.StatusPreparing
+	pPreparing.Agent = fakeAgent{}
+
 	pIdle := newParticipant("idle")
 	pIdle.Status = participant.StatusIdle
 	pIdle.Agent = fakeAgent{}
@@ -141,6 +148,7 @@ func TestRegistry_ListAvailable_filtersByAgentAndStatus(t *testing.T) {
 
 	_ = r.Add(pStarting)
 	_ = r.Add(pCrashed)
+	_ = r.Add(pPreparing)
 	_ = r.Add(pIdle)
 	_ = r.Add(pWorking)
 
@@ -154,6 +162,9 @@ func TestRegistry_ListAvailable_filtersByAgentAndStatus(t *testing.T) {
 	}
 	if aliases["crashed"] {
 		t.Fatal("expected crashed participant to be excluded from ListAvailable")
+	}
+	if aliases["preparing"] {
+		t.Fatal("expected preparing participant to be excluded from ListAvailable")
 	}
 	if !aliases["idle"] {
 		t.Fatal("expected idle participant to be included in ListAvailable")
@@ -199,3 +210,67 @@ func TestRegistry_StatusListsAndPredicates(t *testing.T) {
 		t.Fatalf("expected 1 working, got %d", len(r.ListWorking()))
 	}
 }
+
+func TestParticipantSnapshot_copiesOpenStreams(t *testing.T) {
+	p := newParticipant("ada")
+	p.Status = participant.StatusWorking
+	if err := p.TrackStream(agent.StreamID("out1")); err != nil {
+		t.Fatalf("TrackStream: %v", err)
+	}
+
+	snap := p.Snapshot()
+	if _, ok := snap.OpenStreams[agent.StreamID("out1")]; !ok {
+		t.Fatal("expected snapshot to include tracked stream")
+	}
+
+	snap.OpenStreams[agent.StreamID("out2")] = struct{}{}
+	if _, ok := p.OpenStreams[agent.StreamID("out2")]; ok {
+		t.Fatal("expected snapshot stream mutation to not affect participant state")
+	}
+}
+
+func TestParticipantMarkIdle_rejectsOpenStreams(t *testing.T) {
+	p := newParticipant("ada")
+	const anchor = agent.StreamID("anchor1")
+	if err := p.PrepareForWork(testNow()); err != nil {
+		t.Fatalf("PrepareForWork: %v", err)
+	}
+	if err := p.BeginWorking(testNow(), anchor); err != nil {
+		t.Fatalf("BeginWorking: %v", err)
+	}
+	// Anchor is still open in OpenStreams — BecomeIdle must reject.
+	if err := p.BecomeIdle(testNow()); err == nil {
+		t.Fatal("expected BecomeIdle to reject open streams")
+	}
+}
+
+func TestParticipantCloseStream_onlyAnchorTriggersIdle(t *testing.T) {
+	p := newParticipant("ada")
+	if err := p.PrepareForWork(testNow()); err != nil {
+		t.Fatalf("PrepareForWork: %v", err)
+	}
+	if err := p.BeginWorking(testNow(), agent.StreamID("anchor")); err != nil {
+		t.Fatalf("BeginWorking: %v", err)
+	}
+	if err := p.TrackStream(agent.StreamID("out1")); err != nil {
+		t.Fatalf("TrackStream out1: %v", err)
+	}
+
+	shouldIdle, err := p.CloseStream(agent.StreamID("out1"))
+	if err != nil {
+		t.Fatalf("CloseStream out1: %v", err)
+	}
+	if shouldIdle {
+		t.Fatal("expected non-anchor close to keep participant working")
+	}
+
+	shouldIdle, err = p.CloseStream(agent.StreamID("anchor"))
+	if err != nil {
+		t.Fatalf("CloseStream anchor: %v", err)
+	}
+	if !shouldIdle {
+		t.Fatal("expected anchor close to trigger idle")
+	}
+}
+
+func testNow() time.Time { return time.Unix(123, 0) }

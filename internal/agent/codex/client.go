@@ -222,11 +222,11 @@ func (c *Client) Interrupt() error {
 
 // Send writes a turn/start request to stdin and returns immediately.
 // It does not read from stdout. Notifications arrive via Read().
-func (c *Client) Send(prompt string) error {
+func (c *Client) Send(prompt string) (agent.StreamID, error) {
 	c.turn.mu.Lock()
 	if c.turn.state.kind != turnIdle {
 		c.turn.mu.Unlock()
-		return agent.ErrTurnInProgress
+		return "", agent.ErrTurnInProgress
 	}
 	c.turn.state = turnState{kind: turnInflightUnknownID}
 	threadID := c.turn.threadID
@@ -240,19 +240,20 @@ func (c *Client) Send(prompt string) error {
 		c.turn.mu.Lock()
 		c.turn.state = turnState{kind: turnIdle}
 		c.turn.mu.Unlock()
+		return "", err
 	}
-	return err
+	return activeTurnStreamID, nil
 }
 
 // SendNotice delivers context to the agent without expecting a substantive
 // response. The prompt is wrapped with a CONTEXT UPDATE prefix instructing the
 // model to return only {"acknowledge":true}. Any JSON response containing
 // "acknowledge":true is silently discarded; other responses surface as reasoning.
-func (c *Client) SendNotice(prompt string) error {
+func (c *Client) SendNotice(prompt string) (agent.StreamID, error) {
 	c.turn.mu.Lock()
 	if c.turn.state.kind != turnIdle {
 		c.turn.mu.Unlock()
-		return agent.ErrTurnInProgress
+		return "", agent.ErrTurnInProgress
 	}
 	c.turn.state = turnState{kind: turnInflightUnknownID}
 	threadID := c.turn.threadID
@@ -272,11 +273,13 @@ func (c *Client) SendNotice(prompt string) error {
 		c.turn.mu.Lock()
 		c.turn.state = turnState{kind: turnIdle}
 		c.turn.mu.Unlock()
+
 		c.notice.mu.Lock()
 		c.notice.state = noticeIdle
 		c.notice.mu.Unlock()
+		return "", err
 	}
-	return err
+	return noticeTurnStreamID, nil
 }
 
 // Read blocks until a meaningful message is ready — either a stdout-derived

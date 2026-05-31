@@ -8,6 +8,17 @@ It is the layer that owns goroutines. The agent package is synchronous; the sess
 
 It is **not** responsible for parsing raw user input or rendering output — those belong to the TUI layer.
 
+State ownership model:
+
+- `agent` is a synchronous transport adapter to the external CLI
+- `participant` is the stateful runtime entity
+- `session` is the sole mutator/coordinator of participant state
+- `ui` projects session/participant state and should not interact with agents directly
+
+Participant invariants and state-machine rules live in
+[`pkg-participant.md`](pkg-participant.md). The session does not duplicate those
+rules; it coordinates when to invoke them.
+
 ---
 
 ## Input model
@@ -134,16 +145,18 @@ The relationship between session events and the persistent event log (`internal/
 
 `InviteCommand` calls `registry.Add` then `agent.Start`. On success, it emits `KindAgentStarted` and launches a reader goroutine for that agent.
 
-The reader goroutine loops on `agent.Read()`, forwarding each message to observers as a `KindAgentMessage` event (or `KindAgentLog` for `Log` content). The session also inspects messages for participant state management — it does not accumulate or translate content:
+The reader goroutine loops on `agent.Read()`, forwarding each message to observers as a `KindAgentMessage` event (or `KindAgentLog` for `Log` content). The session also inspects messages for participant state management — it does not accumulate or translate content. Open-stream tracking lives on the participant itself, and the session is the sole mutator of that runtime state. The session drives participant transitions; the participant validates whether they are legal:
 
-- Successful `Send` / `SendNotice` calls (including listener notices in `SharedSendCommand`) → `MarkWorking`
-- First `Output` or `Reasoning` fragment (`ModeStream`) → `MarkWorking` (best-effort fallback if a backend doesn't mark working on send)
-- Turn-end `Output + ModeFlush` → `MarkIdle` and emit `KindAgentIdle`
+- Successful `Send` / `SendNotice` calls first commit the participant to the
+  turn (`PrepareForWork`), then transition it to `working` once the adapter
+  returns the turn anchor
+- First `Output`, `Reasoning`, `Command`, or `FileChangeSet` fragment (`ModeStream`) → open a tracked stream for that participant
+- Matching `ModeFlush` for one of those streams → close the tracked stream
+- Anchor flush for the participant's active turn → `MarkIdle`
 
-Note: This design treats `Output + ModeFlush` as the canonical "turn ended" signal
-(see [`pkg-agent-messages.md`](pkg-agent-messages.md)). Adapters must ensure that
-`SendNotice` also produces this turn-level flush even when acknowledgement text is
-suppressed.
+Notice turns are the special case: `SendNotice` may be fully silent, so the
+session primes a synthetic `codex:notice-turn` stream on send and closes it when
+the adapter emits the matching flush.
 
 When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent stop channel) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
 
@@ -180,11 +193,15 @@ The session controller owns:
 - Command execution and dispatch
 - Agent lifecycle (start, stop, crash detection)
 - Message routing to agents
+- Mutation of participant runtime state
 - Emitting session events
 
 The TUI owns:
 - Parsing raw user input into commands
 - Subscribing to events and rendering them
+- Reading participant/session snapshots
+
+The TUI does not talk to agents directly.
 
 The router package will own:
 - The routing rules as the system grows more complex (multi-agent coordination, initiative-driven dispatch)

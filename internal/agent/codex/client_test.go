@@ -16,6 +16,16 @@ type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
 
+func line(s string) string { return s + "\n" }
+
+func turnCompletedLine(itemIDs ...string) string {
+	items := make([]string, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		items = append(items, `{"type":"agentMessage","id":"`+itemID+`"}`)
+	}
+	return line(`{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"t1","status":"completed","items":[` + strings.Join(items, ",") + `]}}}`)
+}
+
 // newWithIO constructs a Client with pre-wired I/O and starts the readStdout
 // goroutine, mirroring what Start() does after the handshake. Used in tests.
 func newWithIO(t *testing.T, stdin io.WriteCloser, stdout io.Reader, obs ProtocolObserver) *Client {
@@ -62,7 +72,9 @@ func TestCodexArgs_modelNotInArgs(t *testing.T) {
 }
 
 func TestRead_turnCompleted(t *testing.T) {
-	stdout := bytes.NewBufferString("{\"method\":\"turn/completed\",\"params\":{}}\n")
+	// Current Codex protocol sends items as "notLoaded" (empty); only the anchor
+	// flush is emitted. Per-item flushes come from item/completed (agentMessage).
+	stdout := bytes.NewBufferString(turnCompletedLine())
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	msg, err := c.Read()
@@ -72,15 +84,22 @@ func TestRead_turnCompleted(t *testing.T) {
 	if msg.Mode != agent.ModeFlush {
 		t.Errorf("expected ModeFlush for turn/completed, got mode=%v", msg.Mode)
 	}
+	if msg.StreamID != activeTurnStreamID {
+		t.Fatalf("expected anchor stream ID %q, got %q", activeTurnStreamID, msg.StreamID)
+	}
 }
 
 func TestRead_delta(t *testing.T) {
-	stdout := bytes.NewBufferString("{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":\"hello\"}}\n")
+	wire := line(`{"method":"item/agentMessage/delta","params":{"itemId":"msg1","turnId":"turn1","delta":"hello"}}`)
+	stdout := bytes.NewBufferString(wire)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	msg, err := c.Read()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.StreamID != agent.StreamID("codex:output:turn1:msg1") {
+		t.Fatalf("expected item-scoped stream ID, got %q", msg.StreamID)
 	}
 	out, ok := msg.Content.(agent.Output)
 	if !ok || out.Text != "hello" {
@@ -89,7 +108,8 @@ func TestRead_delta(t *testing.T) {
 }
 
 func TestRead_reasoningTextDelta(t *testing.T) {
-	stdout := bytes.NewBufferString("{\"method\":\"item/reasoning/textDelta\",\"params\":{\"delta\":\"let me think\",\"contentIndex\":0,\"itemId\":\"i1\",\"threadId\":\"t1\",\"turnId\":\"u1\"}}\n")
+	wire := line(`{"method":"item/reasoning/textDelta","params":{"delta":"let me think","contentIndex":0,"itemId":"i1","threadId":"t1","turnId":"u1"}}`)
+	stdout := bytes.NewBufferString(wire)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	msg, err := c.Read()
@@ -103,7 +123,8 @@ func TestRead_reasoningTextDelta(t *testing.T) {
 }
 
 func TestRead_reasoningSummaryTextDelta(t *testing.T) {
-	stdout := bytes.NewBufferString("{\"method\":\"item/reasoning/summaryTextDelta\",\"params\":{\"delta\":\"summary fragment\",\"summaryIndex\":0,\"itemId\":\"i1\",\"threadId\":\"t1\",\"turnId\":\"u1\"}}\n")
+	wire := line(`{"method":"item/reasoning/summaryTextDelta","params":{"delta":"summary fragment","summaryIndex":0,"itemId":"i1","threadId":"t1","turnId":"u1"}}`)
+	stdout := bytes.NewBufferString(wire)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	msg, err := c.Read()
@@ -117,9 +138,8 @@ func TestRead_reasoningSummaryTextDelta(t *testing.T) {
 }
 
 func TestRead_reasoningSummaryPartAdded_continue(t *testing.T) {
-	stdout := bytes.NewBufferString(
-		"{\"method\":\"item/reasoning/summaryPartAdded\",\"params\":{\"summaryIndex\":0,\"itemId\":\"i1\",\"threadId\":\"t1\",\"turnId\":\"u1\"}}\n",
-	)
+	wire := line(`{"method":"item/reasoning/summaryPartAdded","params":{"summaryIndex":0,"itemId":"i1","threadId":"t1","turnId":"u1"}}`)
+	stdout := bytes.NewBufferString(wire)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	msg, err := c.Read()
@@ -180,26 +200,34 @@ func TestRead_itemStarted_fileChange(t *testing.T) {
 
 func TestRead_itemStarted_nonCommand_skipped(t *testing.T) {
 	// item/started for a non-commandExecution type must be silently skipped.
+	// turn/completed always emits the anchor flush (activeTurnStreamID), so we
+	// consume that first and then expect EOF on the next Read.
 	nonCmd := `{"type":"agentMessage","id":"a1","text":"hi"}`
 	params := `{"turnId":"t1","threadId":"th1","startedAtMs":0,"item":` + nonCmd + `}`
 	stdout := bytes.NewBufferString(
 		`{"method":"item/started","params":` + params + `}` + "\n" +
-			`{"method":"turn/completed","params":{"turn":{"id":"t1"}}}` + "\n",
+			turnCompletedLine(),
 	)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
+	// Consume the anchor flush emitted by turn/completed.
 	msg, err := c.Read()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("expected anchor flush, got error: %v", err)
 	}
-	if msg.Mode != agent.ModeFlush {
-		t.Errorf("expected ModeFlush from turn/completed after skip, got mode=%v", msg.Mode)
+	if msg.StreamID != activeTurnStreamID || msg.Mode != agent.ModeFlush {
+		t.Fatalf("expected anchor flush (streamID=%q, mode=ModeFlush), got streamID=%q mode=%v", activeTurnStreamID, msg.StreamID, msg.Mode)
+	}
+
+	// No more messages; expect EOF.
+	if _, err := c.Read(); err == nil {
+		t.Fatal("expected EOF after skip-only turn completion, got nil")
 	}
 }
 
 func TestRead_commandExecutionOutputDelta(t *testing.T) {
-	params := `{"itemId":"cmd1","turnId":"t1","threadId":"th1","delta":"hello\n"}`
-	stdout := bytes.NewBufferString(`{"method":"item/commandExecution/outputDelta","params":` + params + `}` + "\n")
+	wire := line(`{"method":"item/commandExecution/outputDelta","params":{"itemId":"cmd1","turnId":"t1","threadId":"th1","delta":"hello\n"}}`)
+	stdout := bytes.NewBufferString(wire)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	msg, err := c.Read()
@@ -219,8 +247,8 @@ func TestRead_commandExecutionOutputDelta(t *testing.T) {
 }
 
 func TestRead_fileChangePatchUpdated(t *testing.T) {
-	params := `{"itemId":"fc1","turnId":"t1","threadId":"th1","changes":[{"path":"b.txt","diff":"@@\n","kind":{"type":"update","move_path":null}}]}`
-	stdout := bytes.NewBufferString(`{"method":"item/fileChange/patchUpdated","params":` + params + `}` + "\n")
+	wire := line(`{"method":"item/fileChange/patchUpdated","params":{"itemId":"fc1","turnId":"t1","threadId":"th1","changes":[{"path":"b.txt","diff":"@@\n","kind":{"type":"update","move_path":null}}]}}`)
+	stdout := bytes.NewBufferString(wire)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
 	msg, err := c.Read()
@@ -338,7 +366,7 @@ func TestRead_skipsResponseLines(t *testing.T) {
 	// Response line (ID-bearing, no method) must be skipped; known notification returned.
 	stdout := bytes.NewBufferString(
 		"{\"id\":1,\"result\":{}}\n" +
-			"{\"method\":\"turn/completed\",\"params\":{}}\n",
+			turnCompletedLine("msg1"),
 	)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
@@ -355,7 +383,7 @@ func TestRead_skipsUnknownNotifications(t *testing.T) {
 	// Unknown notifications must be discarded; next known notification returned.
 	stdout := bytes.NewBufferString(
 		"{\"method\":\"turn/started\",\"params\":{}}\n" +
-			"{\"method\":\"turn/completed\",\"params\":{}}\n",
+			turnCompletedLine("msg1"),
 	)
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
 
@@ -378,7 +406,7 @@ func TestRead_returnsErrorOnEOF(t *testing.T) {
 }
 
 func TestRead_observerReceivesCalled(t *testing.T) {
-	stdout := bytes.NewBufferString("{\"method\":\"turn/completed\",\"params\":{}}\n")
+	stdout := bytes.NewBufferString(turnCompletedLine("msg1"))
 	received := make(chan string, 1)
 	obs := &testObserver{onReceive: func(msg string) { received <- msg }}
 	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, obs)

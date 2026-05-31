@@ -227,13 +227,18 @@ type Agent interface {
 	// Start launches the process and completes any required handshake.
 	Start() error
 	// Send writes a prompt to the agent and returns immediately.
-	// Events arrive via Read().
-	Send(prompt string) error
+	// Events arrive via Read(). The returned StreamID is the turn anchor: the
+	// stream the adapter will flush when the turn is fully complete. The session
+	// tracks it so idle is only triggered after the adapter signals turn-end.
+	// Adapters that do not support anchoring return ("", nil); the session
+	// degrades gracefully to per-stream-close idle detection.
+	Send(prompt string) (StreamID, error)
 	// SendNotice delivers context to the agent without expecting a substantive
 	// response. Implementations are responsible for instructing the model to
 	// acknowledge with a minimal signal and suppressing the acknowledgment from
 	// Read(). Non-compliant responses surface as reasoning rather than output.
-	SendNotice(prompt string) error
+	// The returned StreamID is the notice-turn anchor (same contract as Send).
+	SendNotice(prompt string) (StreamID, error)
 	// Read blocks until the next meaningful message arrives from the agent.
 	// Returns an error if the process has exited or the turn has failed.
 	Read() (Message, error)
@@ -251,26 +256,59 @@ type Agent interface {
 // SendAndWait sends a prompt and blocks until the turn is complete,
 // returning the accumulated output text.
 //
-// Turn completion is signalled by Output+ModeFlush. Turns are strictly
-// sequential so there is at most one output stream in flight at a time.
+// A turn may emit multiple item-scoped Output streams. If Send returns a
+// non-empty anchor StreamID, SendAndWait treats a ModeFlush for that stream
+// as the authoritative turn-end signal. Otherwise it falls back to the
+// heuristic: all observed output streams have flushed.
 func SendAndWait(a Agent, prompt string) (string, error) {
-	if err := a.Send(prompt); err != nil {
+	anchorID, err := a.Send(prompt)
+	if err != nil {
 		return "", fmt.Errorf("send: %w", err)
 	}
 	var sb []byte
+	open := make(map[StreamID]struct{})
+	seenOutput := false
 	for {
 		msg, err := a.Read()
 		if err != nil {
 			return "", fmt.Errorf("read: %w", err)
 		}
-		if c, ok := msg.Content.(Output); ok {
-			switch msg.Mode {
-			case ModeStream:
-				sb = append(sb, c.Text...)
-			case ModeFlush:
+		c, ok := msg.Content.(Output)
+		if !ok {
+			continue
+		}
+		switch msg.Mode {
+		case ModeStream:
+			handleOutputStream(msg, c, open, &seenOutput, &sb)
+		case ModeFlush:
+			if handleOutputFlush(msg, anchorID, open, seenOutput) {
 				return string(sb), nil
-			default:
 			}
+		case ModeSingle:
+			handleOutputSingle(c, &seenOutput, &sb)
 		}
 	}
+}
+
+func handleOutputStream(msg Message, c Output, open map[StreamID]struct{}, seenOutput *bool, sb *[]byte) {
+	*seenOutput = true
+	open[msg.StreamID] = struct{}{}
+	*sb = append(*sb, c.Text...)
+}
+
+func handleOutputFlush(msg Message, anchorID StreamID, open map[StreamID]struct{}, seenOutput bool) bool {
+	if anchorID != "" && msg.StreamID == anchorID {
+		return true
+	}
+	delete(open, msg.StreamID)
+	// Heuristic fallback only when no anchor was provided.
+	// With an anchor, the caller must wait for the anchor flush — returning
+	// early on a content stream close would miss output from later items in
+	// the same turn.
+	return anchorID == "" && seenOutput && len(open) == 0
+}
+
+func handleOutputSingle(c Output, seenOutput *bool, sb *[]byte) {
+	*seenOutput = true
+	*sb = append(*sb, c.Text...)
 }

@@ -66,12 +66,12 @@ type Message struct {
 
 **`ModeFlush` carries the same content type as its stream's `ModeStream` messages**, with a zero-value payload. This lets consumers dispatch entirely on content type without inspecting `Mode` to determine what kind of stream is closing.
 
-**Turn-end** is signalled by `Output + ModeFlush`. The adapter emits it from `turn/completed` regardless of whether any output was produced in the turn. For reasoning-only turns the flush arrives with no preceding `Output + ModeStream`.
+**Output stream end** is signalled by `Output + ModeFlush` on the same
+`StreamID` as the corresponding `Output + ModeStream` fragments.
 
-**Notice turn-end** (from `Agent.SendNotice`) is also signalled by `Output + ModeFlush`.
-Adapters may suppress any user-visible acknowledgement text for notices, but they
-must still emit the turn-level flush so downstream consumers (session status,
-barrier-based UI) can treat notices as a complete turn lifecycle.
+**Notice turn-end** (from `Agent.SendNotice`) is also signalled by
+`Output + ModeFlush`, but on a dedicated synthetic stream
+(`codex:notice-turn`) rather than a visible output item stream.
 
 **Reasoning segment end** is signalled by `Reasoning + ModeFlush`. Multiple reasoning segments can occur within a single turn, each with a distinct `StreamID`.
 
@@ -114,21 +114,21 @@ A flush carries a zero-value payload, so `StreamMessage.Accumulate(FlushMessage)
 
 ```
 // Output (text): accumulate then flush
-{ID: "codex:turn:<turnId>",  Mode: ModeStream, Content: Output{Text: "Hel"}}
-{ID: "codex:turn:<turnId>",  Mode: ModeStream, Content: Output{Text: "lo"}}
-{ID: "codex:turn:<turnId>",  Mode: ModeFlush,  Content: Output{}}          // turn-end
+{ID: "codex:output:<turnId>:<itemId>", Mode: ModeStream, Content: Output{Text: "Hel"}}
+{ID: "codex:output:<turnId>:<itemId>", Mode: ModeStream, Content: Output{Text: "lo"}}
+{ID: "codex:output:<turnId>:<itemId>", Mode: ModeFlush,  Content: Output{}}
 
 // After Accumulate:
-{ID: "codex:turn:<turnId>",  Mode: ModeFlush,  Content: Output{Text: "Hello"}}
+{ID: "codex:output:<turnId>:<itemId>", Mode: ModeFlush, Content: Output{Text: "Hello"}}
 ```
 
 Sequences:
 
 ```
-// Output (text): turn-end on Output+ModeFlush
-{ID: "codex:turn:<turnId>",  Mode: ModeStream, Content: Output{Text: "Hel"}}
-{ID: "codex:turn:<turnId>",  Mode: ModeStream, Content: Output{Text: "lo"}}
-{ID: "codex:turn:<turnId>",  Mode: ModeFlush,  Content: Output{}}
+// Output (text): item-scoped deltas and same-stream flush
+{ID: "codex:output:<turnId>:<itemId>", Mode: ModeStream, Content: Output{Text: "Hel"}}
+{ID: "codex:output:<turnId>:<itemId>", Mode: ModeStream, Content: Output{Text: "lo"}}
+{ID: "codex:output:<turnId>:<itemId>", Mode: ModeFlush,  Content: Output{}}
 
 // Reasoning (two segments): each ends with Reasoning+ModeFlush
 {ID: "codex:reasoning:msg_1",  Mode: ModeStream, Content: Reasoning{Text: "..."}}
@@ -144,10 +144,10 @@ Sequences:
 
 StreamIDs are constructed by adapter-internal helpers in `stream_ids.go` and are never parsed or constructed by consumers.
 
-**Consumer rule: compare StreamIDs for equality only.** Never branch on prefixes, suffixes, or substrings. All semantic behavior — turn-end, reasoning segment close, log routing — is driven by the content type and mode of the message, not by inspecting the ID string. The `codex:turn:` / `codex:reasoning:` prefixes visible in the examples are an implementation detail of the Codex adapter and must not leak into consumer logic.
+**Consumer rule: compare StreamIDs for equality only.** Never branch on prefixes, suffixes, or substrings. All semantic behavior — stream closure, reasoning segment close, log routing — is driven by the content type and mode of the message, not by inspecting the ID string. The `codex:output:` / `codex:reasoning:` prefixes visible in the examples are an implementation detail of the Codex adapter and must not leak into consumer logic.
 
 ```go
-func turnStreamID(turnID string) StreamID      // "codex:turn:<turnID>"
+func outputStreamID(turnID, itemID string) StreamID // "codex:output:<turnID>:<itemID>"
 func reasoningStreamID(itemID string) StreamID // "codex:reasoning:<itemID>"
 
 const logStreamID         = StreamID("codex:log")

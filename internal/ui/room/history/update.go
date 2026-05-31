@@ -62,7 +62,7 @@ func (m Model) AppendLogRecord(alias, body string) Model {
 }
 
 // HandleAgentMessage appends or extends a streaming record based on msg.
-// Output+ModeFlush (turn-end) clears all open streams for alias.
+// Output+ModeFlush seals the matching output stream.
 // Reasoning+ModeFlush clears only the matching reasoning stream.
 // Command+ModeFlush seals the stream; the exit code was accumulated via the
 // preceding Command+ModeStream from item/completed.
@@ -70,7 +70,7 @@ func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
 	switch msg.Content.(type) {
 	case agent.Output:
 		if msg.Mode == agent.ModeFlush {
-			return m.clearStreamsForAlias(alias)
+			return m.sealOutputStream(msg.StreamID)
 		}
 		return m.appendOrExtend(alias, msg)
 	case agent.Reasoning:
@@ -124,22 +124,18 @@ func (m Model) openRecord(alias string, msg agent.Message) Model {
 }
 
 func (m Model) sealCommandStream(streamID agent.StreamID) Model {
-	slot, ok := m.streaming[streamID]
-	if !ok {
-		return m
-	}
-	wasAtBottom := m.viewport.AtBottom()
-	_, cached := m.records[slot.recordIdx].RenderCached(m.viewportRenderContext())
-	m.records[slot.recordIdx] = cached
-	delete(m.streaming, streamID)
-	m = m.syncViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-	return m
+	return m.sealStream(streamID)
+}
+
+func (m Model) sealOutputStream(streamID agent.StreamID) Model {
+	return m.sealStream(streamID)
 }
 
 func (m Model) sealFileChangeStream(streamID agent.StreamID) Model {
+	return m.sealStream(streamID)
+}
+
+func (m Model) sealStream(streamID agent.StreamID) Model {
 	slot, ok := m.streaming[streamID]
 	if !ok {
 		return m
