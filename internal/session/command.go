@@ -194,7 +194,8 @@ func (c BroadcastCommand) execute(s *Session) error {
 	var errs []error
 	var delivered []string
 	for _, p := range s.RoutableParticipants() {
-		if err := s.prepareParticipantForWork(p.Alias); err != nil {
+		err := s.prepareParticipantForWork(p.Alias)
+		if err != nil {
 			if !errors.Is(err, errParticipantNotFound) {
 				s.notifyParticipantInvariant(p.Alias, err)
 			}
@@ -210,7 +211,11 @@ func (c BroadcastCommand) execute(s *Session) error {
 		s.beginParticipantWorking(p.Alias, anchorID)
 		delivered = append(delivered, p.Alias)
 	}
-	return newDeliveryError(delivered, errors.Join(errs...))
+	joined := errors.Join(errs...)
+	if joined != nil {
+		return newDeliveryError(delivered, joined)
+	}
+	return nil
 }
 
 // SharedSendCommand sends a message to one agent in the shared room.
