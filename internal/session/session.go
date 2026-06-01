@@ -6,6 +6,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -123,11 +124,75 @@ func (s *Session) notify(e Event) {
 	}
 }
 
-func (s *Session) notifyParticipantInvariant(alias string, err error) {
+func (s *Session) notifyParticipantInvariant(alias string, err error, details ...string) {
 	if err == nil {
 		return
 	}
-	s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: "participant invariant: " + err.Error()})
+	text := "participant invariant: " + err.Error()
+	if len(details) > 0 {
+		cp := append([]string(nil), details...)
+		filtered := cp[:0]
+		for i := range cp {
+			item := strings.TrimSpace(cp[i])
+			if item == "" {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		if len(filtered) > 0 {
+			text += " (" + strings.Join(filtered, "; ") + ")"
+		}
+	}
+	s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: text})
+}
+
+func summarizeAgentMessage(msg agent.Message) string {
+	var payload string
+	switch c := msg.Content.(type) {
+	case agent.Output:
+		payload = "output=" + truncateForLog(c.Text)
+	case agent.Reasoning:
+		payload = "reasoning=" + truncateForLog(c.Text)
+	case agent.Command:
+		if c.Command != "" {
+			payload = "command=" + truncateForLog(c.Command)
+		} else if c.Output != "" {
+			payload = "command_output=" + truncateForLog(c.Output)
+		}
+	case agent.FileChangeSet:
+		payload = fmt.Sprintf("file_changes=%d status=%q", len(c.Changes), c.Status)
+	default:
+		// agent.Log is handled earlier; keep the rest type-oriented.
+		payload = fmt.Sprintf("content=%T", msg.Content)
+	}
+	if payload == "" {
+		payload = fmt.Sprintf("content=%T", msg.Content)
+	}
+	return fmt.Sprintf("mode=%s stream=%q %s", agentModeString(msg.Mode), msg.StreamID, payload)
+}
+
+func agentModeString(m agent.Mode) string {
+	switch m {
+	case agent.ModeStream:
+		return "stream"
+	case agent.ModeFlush:
+		return "flush"
+	case agent.ModeSingle:
+		return "single"
+	default:
+		return fmt.Sprintf("unknown(%d)", m)
+	}
+}
+
+func truncateForLog(s string) string {
+	const maxLen = 200
+	if s == "" {
+		return ""
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
 }
 
 func (s *Session) addParticipant(p *participant.Participant) error {
@@ -398,7 +463,7 @@ func (s *Session) noteWorkingStreamMessage(alias string, msg agent.Message) (sho
 		err = p.TrackStream(msg.StreamID)
 		s.mu.Unlock()
 		if err != nil {
-			s.notifyParticipantInvariant(alias, err)
+			s.notifyParticipantInvariant(alias, err, summarizeAgentMessage(msg))
 			return false, false
 		}
 		return false, true
@@ -411,7 +476,7 @@ func (s *Session) noteWorkingStreamMessage(alias string, msg agent.Message) (sho
 			// carry a close for the same stream). Silence it; other errors are
 			// genuine invariant violations.
 			if !errors.Is(err, participant.ErrStreamNotTracked) {
-				s.notifyParticipantInvariant(alias, err)
+				s.notifyParticipantInvariant(alias, err, summarizeAgentMessage(msg))
 			}
 			return false, false
 		}
@@ -488,7 +553,7 @@ func (s *Session) shouldDropIdleStreamFragment(alias string, msg agent.Message) 
 		s.notify(Event{
 			Kind:  KindAgentLog,
 			Alias: alias,
-			Text:  "protocol: received stream fragment while idle; dropping (try cancel to resync if the agent is stuck)",
+			Text:  "protocol: received stream fragment while idle; dropping (try cancel to resync if the agent is stuck; " + summarizeAgentMessage(msg) + ")",
 		})
 		return true
 	default:
