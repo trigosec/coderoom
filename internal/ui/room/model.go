@@ -371,6 +371,10 @@ func (m Model) ToggleDebugRowNums() Model {
 // totalH is the height available to the room (it excludes any outer chrome like
 // the toolbox and bottom padding).
 func (m Model) HandleResize(innerW, totalH int) Model {
+	wasAtBottom := false
+	if m.history.Ready() {
+		wasAtBottom = m.history.ScrollStats().AtBottom
+	}
 	m.lastSize = tea.WindowSizeMsg{Width: innerW, Height: totalH}
 	m.input.compose = m.input.compose.SetWidth(innerW).SetMaxHeightFromTotal(totalH)
 	// Layout:
@@ -386,6 +390,9 @@ func (m Model) HandleResize(innerW, totalH int) Model {
 	h := max(totalH-(3+inputH), 1)
 	m.history = m.history.SetSize(innerW, h)
 	m.history = m.history.RebuildColors()
+	if wasAtBottom {
+		m.history = m.history.GotoBottom()
+	}
 	return m
 }
 

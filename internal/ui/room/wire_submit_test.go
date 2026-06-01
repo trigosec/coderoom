@@ -141,6 +141,28 @@ func TestComposeResize_preservesBottomAnchor(t *testing.T) {
 	}
 }
 
+func TestStagedStatusResize_preservesBottomAnchor(t *testing.T) {
+	m := New(nil, "")
+	m = m.HandleResize(80, 12)
+	for range 50 {
+		m = m.AppendSystem("line")
+	}
+	m = m.GotoBottom()
+	if !m.AtBottom() {
+		t.Fatal("expected to start at bottom")
+	}
+
+	b := staging.NewBatch(
+		"/send a hi",
+		staging.Action{Kind: staging.ActionSend, Alias: "a", Text: "hi"},
+		[]string{"a"},
+	)
+	m = m.StageBatch(b, []string{"a"}) // blocked => staged status line adds a row
+	if !m.AtBottom() {
+		t.Fatal("expected staged status line resize to keep history anchored to bottom")
+	}
+}
+
 func TestStagedComposer_blocksKeysAndEscEmitsEditMsg(t *testing.T) {
 	m := New(nil, "")
 	m = m.HandleResize(80, 20)
