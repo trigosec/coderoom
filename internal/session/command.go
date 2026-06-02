@@ -56,6 +56,26 @@ type Command interface {
 	execute(s *Session) error
 }
 
+// ResolveApprovalCommand resolves the active approval request and advances the
+// session-managed approval queue.
+type ResolveApprovalCommand struct {
+	ApprovalID int64
+	Choice     agent.ApprovalOption
+}
+
+func (c ResolveApprovalCommand) execute(s *Session) error {
+	if s.approvals == nil {
+		return fmt.Errorf("no approval hub configured on session")
+	}
+	if c.ApprovalID == 0 {
+		return fmt.Errorf("approval id is required")
+	}
+	if !s.approvals.resolve(c.ApprovalID, c.Choice) {
+		return fmt.Errorf("approval %d not active (already resolved, canceled, or queued)", c.ApprovalID)
+	}
+	return nil
+}
+
 // InviteCommand adds an agent to the session and starts it.
 // The session uses its AgentFactory to construct the agent for the given alias.
 type InviteCommand struct {
@@ -86,7 +106,7 @@ func (c InviteCommand) execute(s *Session) error {
 }
 
 func (c InviteCommand) buildInvite(s *Session) (agent.Agent, *participant.Participant) {
-	a := s.agentFactory(c.Alias)
+	a := s.agentFactory(s, c.Alias)
 	p := &participant.Participant{
 		Alias:      c.Alias,
 		Role:       c.Role,

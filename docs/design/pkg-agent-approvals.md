@@ -6,7 +6,8 @@ requests** emitted on stdout (they include an `id`), and it expects the client
 to respond with a **JSON-RPC response** that references the same `id`.
 
 This document defines a minimal, agent-level approval interface focused on
-replicating the Codex CLI workflow in v1:
+replicating the Codex CLI workflow in v1, while keeping UI components
+presentation-only and avoiding cross-boundary state leaks.
 
 - All prompts are handled in the shared room (no rooms/private contexts yet).
 - The Codex client owns protocol details and only asks the application for a
@@ -16,10 +17,12 @@ replicating the Codex CLI workflow in v1:
 
 - Handle Codex approval requests for turns started via `turn/start`.
 - Keep protocol details contained inside `internal/agent/codex`.
-- Provide one generic approval callback interface that the UI/session can
+- Provide one generic approval callback interface that the session can
   implement without depending on Codex request schemas.
 - Preserve ordering: the user should see approvals in the order Codex requested
   them.
+- Keep approval correlation (IDs / pending state) out of UI component state.
+- Process approvals FIFO so the UI handles one prompt at a time.
 
 ## Non-goals (v1)
 
@@ -64,6 +67,12 @@ The listener:
 - returns a normalized decision (or an error),
 - does **not** need to carry protocol identifiers in the response (Codex client
   already has them from parsing the request).
+
+Important layering note:
+
+- `internal/ui/room/approval` is presentation-only (render + key navigation).
+- Approval transport/correlation (what request is pending, which decision
+  completes it) must live outside the UI component layer.
 
 ### Request / decision types
 
@@ -148,6 +157,44 @@ This ensures:
 - approvals are processed sequentially,
 - stdin writes remain serialized.
 
+## Session-managed approvals (recommended)
+
+V1 can keep the shared-room UX while preventing approval state from leaking into
+the root UI model by managing approvals inside the Session Controller.
+
+### High-level flow
+
+1. Codex client receives a JSON-RPC approval request and calls
+   `ApprovalListener.Decide(ctx, req)`.
+2. The listener (implemented by session) allocates an internal `approvalID`,
+   stores a pending entry keyed by `approvalID`, and publishes a session event:
+
+   - `KindApprovalRequested` (payload includes `approvalID`, agent alias, and
+     `ApprovalRequest`).
+
+   This publish must be concurrency-safe and must not call `Session.Execute`
+   (which is single-goroutine by contract).
+3. Session only publishes the head of the queue as `KindApprovalRequested`.
+4. UI observes `KindApprovalRequested` and displays that one approval prompt in
+   the shared room via `room.ShowApproval(req)`.
+5. When the user confirms an option, UI issues a session command:
+
+   - `ResolveApprovalCommand{Choice}`
+
+   The command may also carry `ApprovalID` defensively, but the queue owner is
+   session, not the UI.
+6. Session resolves the active entry, unblocks the listener's `Decide` call,
+   and, if another approval is queued, immediately publishes the next
+   `KindApprovalRequested` event.
+
+### Why session (not UI) owns correlation
+
+- Approvals are a blocking request/response handshake. They require correlation
+  between a specific pending request and a specific user decision.
+- UI components should remain presentation-only; keeping correlation state and
+  queue ownership in session avoids leaking approval lifecycle concepts into the
+  root UI model.
+
 ### Listener wiring
 
 Codex client accepts an optional approval listener via a constructor option:
@@ -156,10 +203,9 @@ Codex client accepts an optional approval listener via a constructor option:
 func WithApprovalListener(l agent.ApprovalListener) Option
 ```
 
-If unset, the client uses the safe defaults described above.
-
-The listener should be configured before `Start()`; changing the listener after
-the process is running is unspecified in v1.
+The Session's `AgentFactory` is responsible for wiring this listener at agent
+construction time (e.g., when `/invite <alias>` starts an agent). UI should not
+wire backend options.
 
 ### Serialization of approval responses
 
@@ -213,7 +259,7 @@ The Codex client validates that the listener's returned `Choice` is present in
 - Should approvals be surfaced as `agent.Message` (so the session/UI owns the full
   UX), rather than being handled inside the Codex client?
   - Decision: no. The approval listener is responsible for surfacing the prompt
-    to the UI. We keep approval transport out of `agent.Message` in v1.
+  to the UI. We keep approval transport out of `agent.Message` in v1.
 - Should we support `acceptForSession` in v1 (for command/file approvals)?
   - Decision: yes. If the backend supports it (Codex does), the listener may
     return it.

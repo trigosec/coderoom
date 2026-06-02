@@ -186,7 +186,7 @@ func invite(t *testing.T, s *session.Session, alias string) {
 
 // fixedFactory returns a session option whose factory always returns the given agent.
 func fixedFactory(a agent.Agent) session.Option {
-	return session.WithAgentFactory(func(_ string) agent.Agent { return a })
+	return session.WithAgentFactory(func(_ *session.Session, _ string) agent.Agent { return a })
 }
 
 func participantStatus(t *testing.T, s *session.Session, alias string) participant.Status {
@@ -235,7 +235,7 @@ func expectTurnMessageForwarded(t *testing.T, obs *testObserver) {
 
 // mappedFactory returns a session option whose factory looks up agents by alias.
 func mappedFactory(agents map[string]agent.Agent) session.Option {
-	return session.WithAgentFactory(func(alias string) agent.Agent { return agents[alias] })
+	return session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] })
 }
 
 // --- tests ---
@@ -339,7 +339,7 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 }
 
 func TestInvite_duplicateAlias(t *testing.T) {
-	s := session.New(session.WithAgentFactory(func(_ string) agent.Agent { return newMockAgent() }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, _ string) agent.Agent { return newMockAgent() }))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")

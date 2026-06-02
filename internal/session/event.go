@@ -24,6 +24,9 @@ const (
 	KindBroadcast    Kind = "message.broadcast" // message sent to all agents
 	KindSharedSend   Kind = "message.shared"    // instruction to one agent, visible to all
 	KindSharedNotice Kind = "message.notice"    // context notice forwarded to a listener
+
+	KindApprovalRequested Kind = "approval.requested" // approval request requiring user decision
+	KindApprovalCleared   Kind = "approval.cleared"   // active approval prompt should be dismissed
 )
 
 // Event is a runtime notification emitted by the session controller.
@@ -32,6 +35,9 @@ type Event struct {
 	Alias string         // participant alias the event relates to
 	Text  string         // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
 	Msg   *agent.Message // for KindAgentMessage; nil for all other kinds
+
+	ApprovalID  int64                  // for KindApprovalRequested, KindApprovalCleared
+	ApprovalReq *agent.ApprovalRequest // for KindApprovalRequested
 
 	StatusFrom participant.Status // for KindParticipantStatusChanged
 	StatusTo   participant.Status // for KindParticipantStatusChanged

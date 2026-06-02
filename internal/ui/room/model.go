@@ -80,6 +80,7 @@ type ApprovalDecisionMsg struct {
 type Model struct {
 	history      history.Model
 	input        inputModel
+	approvalPrev inputKind
 	focus        roomFocus
 	debug        bool
 	lastSize     tea.WindowSizeMsg
@@ -327,6 +328,9 @@ func (m Model) RequestStagedInterrupt(statusByAlias func(alias string) (particip
 
 // ShowApproval switches the input area to an approval prompt.
 func (m Model) ShowApproval(req agent.ApprovalRequest) Model {
+	if m.input.kind != inputApproval {
+		m.approvalPrev = m.input.kind
+	}
 	m.input.approval = m.input.approval.Set(req)
 	m.input.kind = inputApproval
 	m.focus = focusInput
@@ -340,12 +344,16 @@ func (m Model) ShowApproval(req agent.ApprovalRequest) Model {
 // ClearApproval returns to compose input mode and clears the approval prompt.
 func (m Model) ClearApproval() (Model, tea.Cmd) {
 	m.input.approval = m.input.approval.Clear()
-	m.input.kind = inputCompose
+	m.input.kind = m.approvalPrev
+	m.approvalPrev = inputCompose
 	m.focus = focusInput
 	if m.lastSize.Width > 0 && m.lastSize.Height > 0 {
 		m = m.HandleResize(m.lastSize.Width, m.lastSize.Height)
 	}
-	return m.composeFocus()
+	if m.input.kind == inputCompose {
+		return m.composeFocus()
+	}
+	return m, nil
 }
 
 func (m Model) composeFocus() (Model, tea.Cmd) {

@@ -163,7 +163,7 @@ func TestBarrierBatch_stagesThenDispatchesWhenIdle(t *testing.T) {
 		"ada":    newTestAgent(),
 		"turing": newTestAgent(),
 	}
-	s := session.New(session.WithAgentFactory(func(alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
 	m := New(s, ".")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
@@ -207,7 +207,7 @@ func TestBarrierBatch_autoDispatchPreservesFirstOutputRecord(t *testing.T) {
 		"ada":    newTestAgent(),
 		"turing": newTestAgent(),
 	}
-	s := session.New(session.WithAgentFactory(func(alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
 	m := New(s, ".")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
@@ -252,7 +252,7 @@ func TestBarrierBatch_failedDispatchDoesNotCommitUserInput(t *testing.T) {
 	}
 	agents["ada"].sendErr = errors.New("send failed")
 
-	s := session.New(session.WithAgentFactory(func(alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
 	m := New(s, ".")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
@@ -281,7 +281,7 @@ func TestBarrierBatch_failedDispatchDoesNotRetryOnRollbackIdle(t *testing.T) {
 	}
 	agents["ada"].sendErr = errors.New("send failed")
 
-	s := session.New(session.WithAgentFactory(func(alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
 	m := New(s, ".")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
@@ -316,7 +316,7 @@ func TestBarrierBatch_partialDispatchCommitsUserInput(t *testing.T) {
 	}
 	agents["ada"].sendErr = errors.New("send failed")
 
-	s := session.New(session.WithAgentFactory(func(alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
 	m := New(s, ".")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
@@ -345,7 +345,7 @@ func TestBarrierBatch_discardedTargetRestoresDraft(t *testing.T) {
 		"ada": newTestAgent(),
 	}
 
-	s := session.New(session.WithAgentFactory(func(alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
 	m := New(s, ".")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)

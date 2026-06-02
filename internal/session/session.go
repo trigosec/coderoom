@@ -17,7 +17,10 @@ import (
 // AgentFactory constructs an agent.Agent for a given alias. The factory is
 // responsible for wiring any backend-specific options (context, approval
 // listener, logging) before returning.
-type AgentFactory func(alias string) agent.Agent
+//
+// The session is passed to allow factories to use session-owned facilities
+// (e.g., approval routing) without requiring UI-owned glue code.
+type AgentFactory func(s *Session, alias string) agent.Agent
 
 type agentEntry struct {
 	stop chan struct{}
@@ -33,6 +36,7 @@ type Session struct {
 	obs          []Observer
 	now          func() time.Time
 	agentFactory AgentFactory
+	approvals    *approvalHub
 }
 
 var errParticipantNotFound = errors.New("participant not found")
@@ -67,10 +71,17 @@ func New(opts ...Option) *Session {
 		agents:   make(map[string]agentEntry),
 		now:      time.Now,
 	}
+	s.approvals = newApprovalHub(s.notify)
 	for _, o := range opts {
 		o(s)
 	}
 	return s
+}
+
+// ApprovalListener returns an ApprovalListener that publishes approval requests
+// as session events and blocks until the session resolves them.
+func (s *Session) ApprovalListener(alias string) agent.ApprovalListener {
+	return s.approvals.Listener(alias)
 }
 
 // Roster returns a snapshot of participants for UI display.

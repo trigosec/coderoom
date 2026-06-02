@@ -82,7 +82,7 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		// Treat Ctrl+C as cancel when an approval is active.
-		next, cmd := m.ClearApproval()
+		next, cmd, _ := m.handleApprovalMessage(approval.CancelMsg{})
 		return next, cmd
 	default:
 		var cmd tea.Cmd

@@ -41,15 +41,15 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	factory := buildFactory(ctx, cwd, *agentLog)
-	if factory == nil {
+	cleanup, factoryOpt, err := agentFactoryOption(ctx, cwd, *agentLog)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent factory: %v\n", err)
 		return 1
 	}
-	if factory.cleanup != nil {
-		defer factory.cleanup()
+	if cleanup != nil {
+		defer cleanup()
 	}
-
-	sess := session.New(session.WithAgentFactory(factory.agentFactory))
+	sess := session.New(factoryOpt)
 
 	var opts []ui.Option
 	if strings.TrimSpace(os.Getenv("CODEROOM_DEBUG")) == "1" {
@@ -67,33 +67,27 @@ func run() int {
 	return 0
 }
 
-type builtFactory struct {
-	agentFactory session.AgentFactory
-	cleanup      func()
-}
-
-func buildFactory(ctx context.Context, cwd, agentLog string) *builtFactory {
+func agentFactoryOption(ctx context.Context, cwd, agentLog string) (cleanup func(), opt session.Option, err error) {
 	if agentLog == "" {
-		return &builtFactory{
-			agentFactory: func(_ string) agent.Agent {
-				return codex.New(cwd, codex.WithContext(ctx))
-			},
-		}
+		return nil, session.WithAgentFactory(func(s *session.Session, alias string) agent.Agent {
+			return codex.New(cwd, codex.WithContext(ctx), codex.WithApprovalListener(s.ApprovalListener(alias)))
+		}), nil
 	}
 
 	f, err := os.OpenFile(filepath.Clean(agentLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "agent-log: %v\n", err)
-		return nil
+		return nil, nil, fmt.Errorf("open agent log %q: %w", agentLog, err)
 	}
-	return &builtFactory{
-		agentFactory: func(alias string) agent.Agent {
-			return codex.New(cwd, codex.WithContext(ctx), codex.WithObserver(codex.NewLogObserver(f, alias)))
-		},
-		cleanup: func() {
+	return func() {
 			if err := f.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "agent-log close: %v\n", err)
 			}
-		},
-	}
+		}, session.WithAgentFactory(func(s *session.Session, alias string) agent.Agent {
+			return codex.New(
+				cwd,
+				codex.WithContext(ctx),
+				codex.WithObserver(codex.NewLogObserver(f, alias)),
+				codex.WithApprovalListener(s.ApprovalListener(alias)),
+			)
+		}), nil
 }

@@ -37,26 +37,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionEventMsg:
 		next, cmd := m.handleEvent(session.Event(msg))
 		return next, tea.Batch(cmd, awaitEvent(m.queue))
+	default:
+		return m.handleNonSessionMessage(msg)
+	}
+}
+
+func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
 	case room.SubmitMsg:
 		return m.handleSubmit(msg.Text)
-	case room.StagedEditMsg:
-		// User wants to edit the staged payload; discard the staged batch.
-		m.room = m.room.ClearComposerStaged()
-		return m, nil
-	case room.StagedClearMsg:
-		// User cleared the staged payload.
+	case room.ApprovalDecisionMsg:
+		return m.handleApprovalDecision(msg)
+	case room.StagedEditMsg, room.StagedClearMsg:
 		m.room = m.room.ClearComposerStaged()
 		return m, nil
 	case room.StagedInterruptMsg:
 		next := m.handleStagedInterrupt()
 		return next, nil
 	default:
-		var roomCmd tea.Cmd
-		m.room, roomCmd = m.room.Update(msg)
-		var toolboxCmd tea.Cmd
-		m.toolbox, toolboxCmd = m.toolbox.Update(msg)
-		return m, tea.Batch(roomCmd, toolboxCmd)
+		return m.forwardMessage(msg)
 	}
+}
+
+func (m Model) handleApprovalDecision(msg room.ApprovalDecisionMsg) (tea.Model, tea.Cmd) {
+	cmd := session.ResolveApprovalCommand{ApprovalID: m.activeApprovalID, Choice: msg.Choice}
+	if err := m.sess.Execute(cmd); err != nil {
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: resolve approval: %v", err))
+		return m, nil
+	}
+	m.activeApprovalID = 0
+	return m, nil
+}
+
+func (m Model) forwardMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var roomCmd tea.Cmd
+	m.room, roomCmd = m.room.Update(msg)
+	var toolboxCmd tea.Cmd
+	m.toolbox, toolboxCmd = m.toolbox.Update(msg)
+	return m, tea.Batch(roomCmd, toolboxCmd)
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -211,6 +229,10 @@ func (m Model) handleAgentLifecycleEvent(e session.Event) (Model, bool) {
 
 func (m Model) handleMessageEvent(e session.Event) Model {
 	switch e.Kind {
+	case session.KindApprovalRequested:
+		m = m.handleApprovalRequested(e)
+	case session.KindApprovalCleared:
+		m = m.handleApprovalCleared(e)
 	case session.KindSharedNotice:
 		m.room = m.room.AppendSystem("[notice → " + e.Alias + "]")
 	case session.KindAgentLog:
@@ -221,6 +243,28 @@ func (m Model) handleMessageEvent(e session.Event) Model {
 		}
 	default:
 	}
+	return m
+}
+
+func (m Model) handleApprovalRequested(e session.Event) Model {
+	if e.ApprovalReq == nil {
+		return m
+	}
+	m.activeApprovalID = e.ApprovalID
+	req := *e.ApprovalReq
+	if strings.TrimSpace(e.Alias) != "" {
+		req.Ask = "[→ " + e.Alias + "] " + req.Ask
+	}
+	m.room = m.room.ShowApproval(req)
+	return m
+}
+
+func (m Model) handleApprovalCleared(e session.Event) Model {
+	if e.ApprovalID == 0 || e.ApprovalID != m.activeApprovalID {
+		return m
+	}
+	m.activeApprovalID = 0
+	m.room, _ = m.room.ClearApproval()
 	return m
 }
 
