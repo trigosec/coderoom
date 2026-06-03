@@ -1,0 +1,3 @@
+name: approvals_file_change
+input: "prompt"
+{"kind":"recv","match":{"method":"initialize"}}

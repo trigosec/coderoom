@@ -145,7 +145,18 @@ So each transcript step must capture:
 
 ## Transcript schema
 
-Transcript fixtures use one file with:
+Transcript fixtures live under:
+
+```text
+internal/agent/codex/testdata/transcripts/<codex-version>/<test-case>/
+```
+
+Each case directory contains:
+
+- `input.md` — prompt source plus recording configuration front matter
+- `output.transcript` — recorded transcript fixture
+
+The transcript fixture itself uses one file with:
 
 - YAML front matter for scenario metadata and derived assertions captured at the
   `agent.Agent` boundary
@@ -202,6 +213,19 @@ The YAML front matter is descriptive. It captures:
 The front matter is not a duplicate protocol trace. It exists so tests can
 assert high-level outcomes without re-deriving every expectation from raw wire
 steps.
+
+### `input.md`
+
+`input.md` is the source-of-truth input for `codex-record`.
+
+Its front matter configures the live recording run, for example:
+
+- `model`
+- `ask_for_approval`
+- `sandbox`
+- `approval_strategy`
+
+Its Markdown body is the prompt sent to the agent.
 
 ### One-pass recording workflow
 
@@ -308,19 +332,54 @@ If more precision is needed later, the matcher can grow carefully.
 
 ## Recording harness design
 
-Add a recording workflow that runs one real scenario and captures both the
-JSONL step stream and the front matter summary during that run.
+Add a dedicated recording CLI:
+
+```text
+cmd/codex-record
+```
+
+It runs one real scenario and captures both the JSONL step stream and the front
+matter summary during that run.
+
+The initial CLI shape is intentionally simple:
+
+```text
+codex-record [<codex-version> [<test-case>]]
+```
+
+Fixture layout:
+
+```text
+internal/agent/codex/testdata/transcripts/<codex-version>/<test-case>/
+  input.md
+  output.transcript
+```
+
+`input.md` contains minimal front matter for the live run configuration plus the
+prompt body. `output.transcript` is the generated fixture.
+
+Usage:
+
+```text
+codex-record [<codex-version> [<test-case>]]
+```
+
+Behavior:
+
+- no args: record every case under the transcript root
+- one arg: record every case for that Codex version
+- two args: record one case
 
 ### Protocol observer
 
-The transcript recorder should be exposed as a `ProtocolObserver`
-implementation so it can be wired into the existing send/receive hooks with no
-new protocol tap points.
+The transcript recorder should live in a dedicated `internal/transcript`
+package and be exposed as a `ProtocolObserver` implementation so it can be
+wired into the existing send/receive hooks with no new protocol tap points.
 
 Example shape:
 
 ```go
-type TranscriptObserver struct { ... }
+type Observer struct { ... }
 ```
 
 Responsibilities:
@@ -353,6 +412,10 @@ The harness is responsible for:
 
 This keeps the protocol capture boundary clean while still allowing descriptive
 scenario metadata in the final fixture.
+
+The harness reads scenario configuration from `input.md`, launches a real Codex
+run, and writes the final combined fixture to `output.transcript` only after
+both the front matter summary and JSONL step stream are complete.
 
 ### Approval summary provenance
 
@@ -388,10 +451,10 @@ This avoids drift between "record format" and "replay format".
 
 ## Replay peer design
 
-Add a dedicated CLI, tentatively:
+Add a dedicated replay CLI:
 
 ```text
-cmd/transcript-replay
+cmd/codex-replay
 ```
 
 This is a separate subprocess, not an in-process goroutine fake.
@@ -447,7 +510,7 @@ Exact signature may vary, but the meaning is:
 
 ### Why this option
 
-Tests need to replace the launched app-server with `transcript-replay` without
+Tests need to replace the launched app-server with `codex-replay` without
 changing the client’s read/write logic.
 
 This is preferable to environment-variable-only configuration because it keeps
@@ -502,7 +565,7 @@ adding more scenarios.
 1. Add this design doc.
 2. Add `WithAppServerCommand` to the Codex client/process layer.
 3. Implement a structured `TranscriptObserver`.
-4. Implement `cmd/transcript-replay`.
+4. Implement `cmd/codex-replay`.
 5. Record one transcript for the file-change approval scenario.
 6. Add one replay-based test in the normal test suite using that transcript.
 7. Do not migrate existing live integration tests yet.

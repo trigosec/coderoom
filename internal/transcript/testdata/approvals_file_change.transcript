@@ -1,0 +1,26 @@
+---
+name: approvals_file_change
+codex_version: 0.133.0
+model: gpt-5.4
+input: "prompt"
+expect:
+  output:
+    num_messages: 0
+    content: ""
+  reasoning:
+    num_messages: 1
+    content: "think"
+  file_change:
+    num_messages: 2
+    files:
+      - a.txt
+  command:
+    num_messages: 1
+    executed:
+      - "ls -la"
+  approvals:
+    - kind: fileChange
+      decision: accept
+---
+{"kind":"recv","match":{"method":"initialize"}}
+{"kind":"send","message":{"id":1,"result":{"ok":true}}}
