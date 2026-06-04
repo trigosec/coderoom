@@ -300,24 +300,21 @@ func unquoteScalar(value string) (string, error) {
 }
 
 func resolveSelection(root string, args []string) ([]transcriptCase, error) {
-	switch len(args) {
-	case 0:
+	if len(args) == 0 {
 		return resolveAllCases(root)
-	case 1:
+	}
+	if len(args) == 1 {
 		return resolveVersionCases(root, args[0])
-	case 2:
-		var selected [2]string
-		copy(selected[:], args)
-		version := selected[0]
-		testCase := selected[1]
+	}
+	if len(args) == 2 {
+		version, testCase := args[0], args[1]
 		return []transcriptCase{{
 			version: version,
 			name:    testCase,
 			dir:     filepath.Join(root, version, testCase),
 		}}, nil
-	default:
-		return nil, errors.New("usage: codex-record [<codex-version> [<test-case>]]")
 	}
+	return nil, errors.New("usage: codex-record [<codex-version> [<test-case>]]")
 }
 
 func listDirNames(root string) ([]string, error) {
