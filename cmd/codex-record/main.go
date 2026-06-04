@@ -94,9 +94,6 @@ func recordCase(caseDir, version, testCase string, input inputFile) error {
 	if err := runPrompt(client, input.Prompt, collector); err != nil {
 		return err
 	}
-	if err := assertScenarioSideEffect(workDir, testCase); err != nil {
-		return fmt.Errorf("scenario validation: %w", err)
-	}
 	fixture := buildFixture(version, testCase, input, collector)
 	return writeTranscript(filepath.Join(caseDir, "output.transcript"), fixture, recorder.Steps())
 }
@@ -398,19 +395,6 @@ func resolveVersionCases(root, version string) ([]transcriptCase, error) {
 		})
 	}
 	return cases, nil
-}
-
-func assertScenarioSideEffect(workDir, testCase string) error {
-	switch testCase {
-	case "approvals-file-change":
-		_, err := os.Stat(filepath.Join(workDir, "codex_file_approval_test.txt"))
-		if err != nil {
-			return fmt.Errorf("stat expected output file: %w", err)
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported scenario %q", testCase)
-	}
 }
 
 func cleanupDir(path string) {

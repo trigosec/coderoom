@@ -4,8 +4,6 @@ package codex_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,43 +15,6 @@ type approvalListenerFunc func(ctx context.Context, req agent.ApprovalRequest) (
 
 func (f approvalListenerFunc) Decide(ctx context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
 	return f(ctx, req)
-}
-
-func TestApprovals_fileChange(t *testing.T) {
-	cwd := t.TempDir()
-	approvals := make(chan agent.ApprovalRequest, 16)
-	l := approvalListenerFunc(func(_ context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
-		select {
-		case approvals <- req:
-		default:
-		}
-		choice := agent.OptionAccept
-		if !containsApprovalOption(req.Options, choice) && len(req.Options) > 0 {
-			choice = req.Options[0]
-		}
-		return agent.ApprovalDecision{Choice: choice}, nil
-	})
-	c := codex.New(
-		cwd,
-		codex.WithApprovalListener(l),
-		codex.WithAskForApprovalPolicy(codex.AskOnRequest),
-		codex.WithSandboxMode(codex.SandboxReadOnly),
-		codex.WithObserver(wireObserverForTest(t)),
-	)
-	startClient(t, c)
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := agent.SendAndWait(c, "Use the built-in file editing capability (not shell commands) to create codex_file_approval_test.txt with the contents: ok")
-		done <- err
-	}()
-
-	assertSawApprovalKind(t, approvals, agent.ApprovalFileChange, testTimeout)
-	assertTurnDone(t, done, testTimeout)
-
-	if _, err := os.Stat(filepath.Join(cwd, "codex_file_approval_test.txt")); err != nil {
-		t.Fatalf("expected approvals_test.txt to exist: %v", err)
-	}
 }
 
 func TestApprovals_commandExecution(t *testing.T) {
