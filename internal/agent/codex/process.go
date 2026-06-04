@@ -19,6 +19,7 @@ type process struct {
 	askForApproval AskForApprovalPolicy
 	sandboxMode    SandboxMode
 	model          string
+	appServerCmd   []string
 }
 
 func newProc(cwd string) *process {
@@ -26,7 +27,7 @@ func newProc(cwd string) *process {
 }
 
 func (p *process) start() error {
-	args := codexArgs(p.askForApproval, p.sandboxMode)
+	args := p.commandArgs()
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = p.cwd
 
@@ -54,6 +55,13 @@ func (p *process) start() error {
 	p.codexErr = stderr
 	p.cmd = cmd
 	return nil
+}
+
+func (p *process) commandArgs() []string {
+	if len(p.appServerCmd) > 0 {
+		return append([]string(nil), p.appServerCmd...)
+	}
+	return codexArgs(p.askForApproval, p.sandboxMode)
 }
 
 // codexArgs returns the command and arguments for the Codex app-server.

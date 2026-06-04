@@ -122,6 +122,14 @@ func WithSandboxMode(mode SandboxMode) Option {
 	return func(c *Client) { c.proc.sandboxMode = mode }
 }
 
+// WithAppServerCommand overrides the subprocess command used to launch the
+// app-server peer. When unset, the client launches Codex via `npx ... app-server`.
+func WithAppServerCommand(name string, args ...string) Option {
+	return func(c *Client) {
+		c.proc.appServerCmd = append([]string{name}, args...)
+	}
+}
+
 // New returns a Client that will run Codex in the given working directory.
 func New(cwd string, opts ...Option) *Client {
 	c := &Client{proc: newProc(cwd)}

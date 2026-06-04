@@ -44,11 +44,112 @@ func (o *Observer) append(kind string, raw string) {
 	}
 	step := Step{Kind: kind}
 	if kind == "recv" {
-		step.Match = payload
+		step.Match = normalizeReplayMatch(payload)
 	} else {
 		step.Message = payload
 	}
 	o.mu.Lock()
 	o.steps = append(o.steps, step)
 	o.mu.Unlock()
+}
+
+func normalizeReplayMatch(payload any) any {
+	msg, ok := payload.(map[string]any)
+	if !ok {
+		return payload
+	}
+
+	method, _ := msg["method"].(string)
+	switch method {
+	case "initialize":
+		return normalizeInitializeMatch(msg)
+	case "thread/start":
+		return normalizeThreadStartMatch(msg)
+	case "turn/start":
+		return normalizeTurnStartMatch(msg)
+	case "turn/interrupt":
+		return normalizeTurnInterruptMatch(msg)
+	default:
+		return payload
+	}
+}
+
+func normalizeInitializeMatch(msg map[string]any) map[string]any {
+	out := copySelectedFields(msg, "method", "id")
+	params, _ := msg["params"].(map[string]any)
+	if params == nil {
+		return out
+	}
+	out["params"] = map[string]any{
+		"clientInfo":   normalizeClientInfo(params["clientInfo"]),
+		"capabilities": copyMapValue(params["capabilities"]),
+	}
+	return out
+}
+
+func normalizeClientInfo(raw any) map[string]any {
+	clientInfo, _ := raw.(map[string]any)
+	if clientInfo == nil {
+		return nil
+	}
+	return copySelectedMapFields(clientInfo, "name")
+}
+
+func normalizeThreadStartMatch(msg map[string]any) map[string]any {
+	out := copySelectedFields(msg, "method", "id")
+	params, _ := msg["params"].(map[string]any)
+	if params == nil {
+		return out
+	}
+	normParams := copySelectedMapFields(params, "model")
+	if len(normParams) > 0 {
+		out["params"] = normParams
+	}
+	return out
+}
+
+func normalizeTurnStartMatch(msg map[string]any) map[string]any {
+	out := copySelectedFields(msg, "method", "id")
+	params, _ := msg["params"].(map[string]any)
+	if params == nil {
+		return out
+	}
+	out["params"] = copySelectedMapFields(params, "threadId", "input", "outputSchema")
+	return out
+}
+
+func normalizeTurnInterruptMatch(msg map[string]any) map[string]any {
+	out := copySelectedFields(msg, "method", "id")
+	params, _ := msg["params"].(map[string]any)
+	if params == nil {
+		return out
+	}
+	out["params"] = copySelectedMapFields(params, "threadId", "turnId")
+	return out
+}
+
+func copySelectedFields(src map[string]any, keys ...string) map[string]any {
+	return copySelectedMapFields(src, keys...)
+}
+
+func copySelectedMapFields(src map[string]any, keys ...string) map[string]any {
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		if value, ok := src[key]; ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func copyMapValue(raw any) map[string]any {
+	value, _ := raw.(map[string]any)
+	if value == nil {
+		return nil
+	}
+	out := make(map[string]any, len(value))
+	for key, item := range value {
+		out[key] = item
+	}
+	return out
 }
