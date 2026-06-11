@@ -3,6 +3,7 @@
 package codex_test
 
 import (
+	"context"
 	"flag"
 	"os"
 	"strings"
@@ -16,6 +17,12 @@ import (
 var logDir = flag.String("logdir", "", "directory to write Codex wire logs into (if empty, uses the test temp dir)")
 
 const testTimeout = 20 * time.Second
+
+type approvalListenerFunc func(ctx context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error)
+
+func (f approvalListenerFunc) Decide(ctx context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
+	return f(ctx, req)
+}
 
 func wireObserverForTest(t *testing.T) codex.ProtocolObserver {
 	t.Helper()
@@ -45,6 +52,15 @@ func startClient(t *testing.T, c agent.Agent) {
 			t.Errorf("Stop: %v", err)
 		}
 	})
+}
+
+func containsApprovalOption(opts []agent.ApprovalOption, want agent.ApprovalOption) bool {
+	for _, opt := range opts {
+		if opt == want {
+			return true
+		}
+	}
+	return false
 }
 
 // readResponse drains Read() until the turn-end flush and returns the
