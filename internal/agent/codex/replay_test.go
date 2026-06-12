@@ -151,6 +151,7 @@ type replayCollector struct {
 
 	commandStreams    map[agent.StreamID]commandStreamState
 	fileChangeStreams map[agent.StreamID]toolStreamState
+	reasoningStreams  map[agent.StreamID]toolStreamState
 	errs              []error
 }
 
@@ -165,6 +166,7 @@ func (c *replayCollector) observe(msg agent.Message) {
 	case agent.Reasoning:
 		c.reasoningCount++
 		c.reasoningText.WriteString(content.Text)
+		c.observeReasoningStream(msg, content)
 	case agent.FileChangeSet:
 		c.fileChangeCount++
 		for _, change := range content.Changes {
@@ -228,6 +230,26 @@ func (c *replayCollector) observeFileChangeStream(msg agent.Message, content age
 	c.fileChangeStreams[msg.StreamID] = state
 }
 
+func (c *replayCollector) observeReasoningStream(msg agent.Message, content agent.Reasoning) {
+	if c.reasoningStreams == nil {
+		c.reasoningStreams = make(map[agent.StreamID]toolStreamState)
+	}
+	state := c.reasoningStreams[msg.StreamID]
+	if msg.Mode == agent.ModeStream {
+		state.sawStream = true
+		if content.Text == "" {
+			c.errs = append(c.errs, fmt.Errorf("reasoning stream for %q carried empty text", msg.StreamID))
+		}
+	}
+	if msg.Mode == agent.ModeFlush {
+		state.sawFlush = true
+		if content.Text != "" {
+			c.errs = append(c.errs, fmt.Errorf("reasoning flush for %q carried non-zero content %+v", msg.StreamID, content))
+		}
+	}
+	c.reasoningStreams[msg.StreamID] = state
+}
+
 func replayAppendUnique(dst *[]string, value string) {
 	value = strings.TrimSpace(value)
 	if value == "" || slices.Contains(*dst, value) {
@@ -283,7 +305,7 @@ func assertReplayExpectations(expect transcript.Expect, collector *replayCollect
 	if err := assertReplayTextExpectation("output", expect.Output, collector.outputCount, collector.outputText.String()); err != nil {
 		return err
 	}
-	if err := assertReplayTextExpectation("reasoning", expect.Reasoning, collector.reasoningCount, collector.reasoningText.String()); err != nil {
+	if err := assertReplayReasoningExpectation(expect.Reasoning, collector); err != nil {
 		return err
 	}
 	if err := assertReplayFileChangeExpectation(expect.FileChange, collector); err != nil {
@@ -326,6 +348,37 @@ func assertReplayTextExpectation(label string, expected transcript.TextExpectati
 		return fmt.Errorf("%s.content = %q, want %q", label, content, expected.Content)
 	}
 	return nil
+}
+
+func assertReplayReasoningExpectation(expected transcript.ReasoningExpectation, collector *replayCollector) error {
+	if collector.reasoningCount != expected.NumMessages {
+		return fmt.Errorf("reasoning.num_messages = %d, want %d", collector.reasoningCount, expected.NumMessages)
+	}
+	if collector.reasoningText.String() != expected.Content {
+		return fmt.Errorf("reasoning.content = %q, want %q", collector.reasoningText.String(), expected.Content)
+	}
+	numStreams, allFlushed := replayReasoningSummary(collector.reasoningStreams)
+	if numStreams != expected.NumStreams {
+		return fmt.Errorf("reasoning.num_streams = %d, want %d", numStreams, expected.NumStreams)
+	}
+	if allFlushed != expected.AllFlushed {
+		return fmt.Errorf("reasoning.all_flushed = %t, want %t", allFlushed, expected.AllFlushed)
+	}
+	return nil
+}
+
+func replayReasoningSummary(streams map[agent.StreamID]toolStreamState) (int, bool) {
+	numStreams := 0
+	allFlushed := true
+	for _, state := range streams {
+		if state.sawStream {
+			numStreams++
+			if !state.sawFlush {
+				allFlushed = false
+			}
+		}
+	}
+	return numStreams, allFlushed
 }
 
 func assertReplayFileChangeExpectation(expected transcript.FileChangeExpectation, collector *replayCollector) error {

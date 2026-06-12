@@ -10,6 +10,8 @@ expect:
   reasoning:
     num_messages: 1
     content: "think"
+    num_streams: 1
+    all_flushed: true
   file_change:
     num_messages: 2
     files:

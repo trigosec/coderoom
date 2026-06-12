@@ -16,7 +16,7 @@ type File struct {
 // Expect stores the high-level expectations captured during recording.
 type Expect struct {
 	Output     TextExpectation       `yaml:"output"`
-	Reasoning  TextExpectation       `yaml:"reasoning"`
+	Reasoning  ReasoningExpectation  `yaml:"reasoning"`
 	FileChange FileChangeExpectation `yaml:"file_change"`
 	Command    CommandExpectation    `yaml:"command"`
 	Approvals  []ApprovalExpectation `yaml:"approvals"`
@@ -26,6 +26,14 @@ type Expect struct {
 type TextExpectation struct {
 	NumMessages int    `yaml:"num_messages"`
 	Content     string `yaml:"content"`
+}
+
+// ReasoningExpectation summarizes reasoning messages and stream lifecycle.
+type ReasoningExpectation struct {
+	NumMessages int    `yaml:"num_messages"`
+	Content     string `yaml:"content"`
+	NumStreams  int    `yaml:"num_streams"`
+	AllFlushed  bool   `yaml:"all_flushed"`
 }
 
 // FileChangeExpectation summarizes file-change messages observed in a turn.

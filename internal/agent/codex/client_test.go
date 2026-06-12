@@ -46,7 +46,7 @@ func newWithIO(t *testing.T, stdin io.WriteCloser, stdout io.Reader, obs Protoco
 
 func TestCodexArgs_default(t *testing.T) {
 	t.Setenv("CODEX_VERSION_OVERRIDE", "")
-	args := codexArgs("", "")
+	args := codexArgs("", "", "", "")
 	if args[1] != "@openai/codex" {
 		t.Errorf("expected @openai/codex, got %q", args[1])
 	}
@@ -54,7 +54,7 @@ func TestCodexArgs_default(t *testing.T) {
 
 func TestCodexArgs_override(t *testing.T) {
 	t.Setenv("CODEX_VERSION_OVERRIDE", "0.99.0")
-	args := codexArgs("", "")
+	args := codexArgs("", "", "", "")
 	if args[1] != "@openai/codex@0.99.0" {
 		t.Errorf("expected @openai/codex@0.99.0, got %q", args[1])
 	}
@@ -63,10 +63,43 @@ func TestCodexArgs_override(t *testing.T) {
 func TestCodexArgs_modelNotInArgs(t *testing.T) {
 	// Model is passed via thread/start JSON params, not as a CLI flag.
 	t.Setenv("CODEX_VERSION_OVERRIDE", "")
-	args := codexArgs("", "")
+	args := codexArgs("", "", "", "")
 	for _, a := range args {
 		if a == "--model" {
 			t.Errorf("--model must not appear in CLI args, got %v", args)
+		}
+	}
+}
+
+func TestCodexArgs_reasoningEffort(t *testing.T) {
+	t.Setenv("CODEX_VERSION_OVERRIDE", "")
+	args := codexArgs("", "", ReasoningXHigh, "")
+	want := []string{"npx", "@openai/codex", "-c", "model_reasoning_effort=xhigh", "app-server"}
+	if len(args) != len(want) {
+		t.Fatalf("args len = %d, want %d (%v)", len(args), len(want), args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %q, want %q (full=%v)", i, args[i], want[i], args)
+		}
+	}
+}
+
+func TestCodexArgs_reasoningSummary(t *testing.T) {
+	t.Setenv("CODEX_VERSION_OVERRIDE", "")
+	args := codexArgs("", "", "", ReasoningSummaryDetailed)
+	want := []string{
+		"npx", "@openai/codex",
+		"-c", "model_reasoning_summary=detailed",
+		"-c", "model_supports_reasoning_summaries=true",
+		"app-server",
+	}
+	if len(args) != len(want) {
+		t.Fatalf("args len = %d, want %d (%v)", len(args), len(want), args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args[%d] = %q, want %q (full=%v)", i, args[i], want[i], args)
 		}
 	}
 }

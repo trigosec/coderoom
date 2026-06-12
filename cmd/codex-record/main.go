@@ -22,10 +22,12 @@ import (
 const transcriptRoot = "internal/agent/codex/testdata/transcripts"
 
 type inputFile struct {
-	Model          string
-	AskForApproval codex.AskForApprovalPolicy
-	Sandbox        codex.SandboxMode
-	Prompt         string
+	Model            string
+	AskForApproval   codex.AskForApprovalPolicy
+	Sandbox          codex.SandboxMode
+	ReasoningEffort  codex.ReasoningEffort
+	ReasoningSummary codex.ReasoningSummary
+	Prompt           string
 }
 
 type transcriptCase struct {
@@ -37,12 +39,13 @@ type transcriptCase struct {
 type collector struct {
 	turnAnchor agent.StreamID
 
-	outputCount     int
-	outputText      strings.Builder
-	reasoningCount  int
-	reasoningText   strings.Builder
-	fileChangeCount int
-	commandCount    int
+	outputCount      int
+	outputText       strings.Builder
+	reasoningCount   int
+	reasoningText    strings.Builder
+	reasoningStreams map[agent.StreamID]toolStreamState
+	fileChangeCount  int
+	commandCount     int
 
 	filePaths []string
 	commands  []string
@@ -85,7 +88,7 @@ func recordCase(caseDir, version, testCase string, input inputFile) error {
 
 	recorder := transcript.NewObserver()
 	collector := &collector{}
-	client, err := startClient(workDir, input, recorder, collector)
+	client, err := startClient(workDir, testCase, input, recorder, collector)
 	if err != nil {
 		return err
 	}
@@ -98,7 +101,7 @@ func recordCase(caseDir, version, testCase string, input inputFile) error {
 	return writeTranscript(filepath.Join(caseDir, "output.transcript"), fixture, recorder.Steps())
 }
 
-func startClient(workDir string, input inputFile, recorder *transcript.Observer, collector *collector) (*codex.Client, error) {
+func startClient(workDir, _ string, input inputFile, recorder *transcript.Observer, collector *collector) (*codex.Client, error) {
 	listener := approvalListenerFunc(func(req agent.ApprovalRequest) agent.ApprovalDecision {
 		choice := chooseApproval(req.Options)
 		collector.approvals = append(collector.approvals, transcript.ApprovalExpectation{
@@ -107,14 +110,16 @@ func startClient(workDir string, input inputFile, recorder *transcript.Observer,
 		})
 		return agent.ApprovalDecision{Choice: choice}
 	})
-	client := codex.New(
-		workDir,
+	opts := []codex.Option{
 		codex.WithObserver(recorder),
 		codex.WithApprovalListener(listener),
 		codex.WithModel(input.Model),
 		codex.WithAskForApprovalPolicy(input.AskForApproval),
 		codex.WithSandboxMode(input.Sandbox),
-	)
+		codex.WithReasoningEffort(input.ReasoningEffort),
+		codex.WithReasoningSummary(input.ReasoningSummary),
+	}
+	client := codex.New(workDir, opts...)
 	if err := client.Start(); err != nil {
 		return nil, fmt.Errorf("start client: %w", err)
 	}
@@ -147,9 +152,11 @@ func buildFixture(version, testCase string, input inputFile, collector *collecto
 		Input:        input.Prompt,
 		Expect: transcript.Expect{
 			Output: transcript.TextExpectation{NumMessages: collector.outputCount, Content: collector.outputText.String()},
-			Reasoning: transcript.TextExpectation{
+			Reasoning: transcript.ReasoningExpectation{
 				NumMessages: collector.reasoningCount,
 				Content:     collector.reasoningText.String(),
+				NumStreams:  collector.reasoningNumStreams(),
+				AllFlushed:  collector.reasoningAllFlushed(),
 			},
 			FileChange: transcript.FileChangeExpectation{
 				NumMessages: collector.fileChangeCount,
@@ -175,6 +182,7 @@ func (c *collector) observe(msg agent.Message) {
 	case agent.Reasoning:
 		c.reasoningCount++
 		c.reasoningText.WriteString(content.Text)
+		c.observeReasoningStream(msg)
 	case agent.FileChangeSet:
 		c.fileChangeCount++
 		for _, change := range content.Changes {
@@ -188,7 +196,45 @@ func (c *collector) observe(msg agent.Message) {
 	}
 }
 
+func (c *collector) observeReasoningStream(msg agent.Message) {
+	if c.reasoningStreams == nil {
+		c.reasoningStreams = make(map[agent.StreamID]toolStreamState)
+	}
+	state := c.reasoningStreams[msg.StreamID]
+	if msg.Mode == agent.ModeStream {
+		state.sawStream = true
+	}
+	if msg.Mode == agent.ModeFlush {
+		state.sawFlush = true
+	}
+	c.reasoningStreams[msg.StreamID] = state
+}
+
+func (c *collector) reasoningNumStreams() int {
+	count := 0
+	for _, state := range c.reasoningStreams {
+		if state.sawStream {
+			count++
+		}
+	}
+	return count
+}
+
+func (c *collector) reasoningAllFlushed() bool {
+	for _, state := range c.reasoningStreams {
+		if state.sawStream && !state.sawFlush {
+			return false
+		}
+	}
+	return true
+}
+
 type approvalListenerFunc func(req agent.ApprovalRequest) agent.ApprovalDecision
+
+type toolStreamState struct {
+	sawStream bool
+	sawFlush  bool
+}
 
 func (f approvalListenerFunc) Decide(_ context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error) {
 	return f(req), nil
@@ -344,23 +390,40 @@ func applyInputFrontMatterLine(input *inputFile, line string) error {
 	if trimmed == "" || trimmed == "---" {
 		return nil
 	}
+	key, decoded, err := parseInputFrontMatterScalar(trimmed)
+	if err != nil {
+		return err
+	}
+	return assignInputFrontMatterValue(input, key, decoded)
+}
+
+func parseInputFrontMatterScalar(trimmed string) (string, string, error) {
 	key, value, ok := strings.Cut(trimmed, ":")
 	if !ok {
-		return fmt.Errorf("parse front matter line %q", trimmed)
+		return "", "", fmt.Errorf("parse front matter line %q", trimmed)
 	}
+	normalizedKey := strings.TrimSpace(key)
 	decoded, err := unquoteScalar(strings.TrimSpace(value))
 	if err != nil {
-		return fmt.Errorf("decode front matter value for %q: %w", strings.TrimSpace(key), err)
+		return "", "", fmt.Errorf("decode front matter value for %q: %w", normalizedKey, err)
 	}
-	switch strings.TrimSpace(key) {
+	return normalizedKey, decoded, nil
+}
+
+func assignInputFrontMatterValue(input *inputFile, key, decoded string) error {
+	switch key {
 	case "model":
 		input.Model = decoded
 	case "ask_for_approval":
 		input.AskForApproval = codex.AskForApprovalPolicy(decoded)
 	case "sandbox":
 		input.Sandbox = codex.SandboxMode(decoded)
+	case "reasoning_effort":
+		input.ReasoningEffort = codex.ReasoningEffort(decoded)
+	case "reasoning_summary":
+		input.ReasoningSummary = codex.ReasoningSummary(decoded)
 	default:
-		return fmt.Errorf("unknown front matter key %q", strings.TrimSpace(key))
+		return fmt.Errorf("unknown front matter key %q", key)
 	}
 	return nil
 }

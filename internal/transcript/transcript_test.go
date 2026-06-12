@@ -32,7 +32,7 @@ func TestWrite_MatchesTestdata(t *testing.T) {
 		Input:        "prompt",
 		Expect: Expect{
 			Output:     TextExpectation{NumMessages: 0, Content: ""},
-			Reasoning:  TextExpectation{NumMessages: 1, Content: "think"},
+			Reasoning:  ReasoningExpectation{NumMessages: 1, Content: "think", NumStreams: 1, AllFlushed: true},
 			FileChange: FileChangeExpectation{NumMessages: 2, Files: []string{"a.txt"}},
 			Command:    CommandExpectation{NumMessages: 1, Executed: []string{"ls -la"}},
 			Approvals:  []ApprovalExpectation{{Kind: agent.ApprovalFileChange, Decision: agent.OptionAccept}},
@@ -69,6 +69,15 @@ func TestRead_MissingDelimiter(t *testing.T) {
 
 func assertTranscriptFile(t *testing.T, gotFile File) {
 	t.Helper()
+	assertTranscriptIdentity(t, gotFile)
+	assertTranscriptReasoningExpectation(t, gotFile.Expect.Reasoning)
+	assertTranscriptFileChangeExpectation(t, gotFile.Expect.FileChange)
+	assertTranscriptCommandExpectation(t, gotFile.Expect.Command)
+	assertTranscriptApprovals(t, gotFile.Expect.Approvals)
+}
+
+func assertTranscriptIdentity(t *testing.T, gotFile File) {
+	t.Helper()
 	if gotFile.Name != "approvals_file_change" {
 		t.Fatalf("name = %q, want approvals_file_change", gotFile.Name)
 	}
@@ -78,14 +87,33 @@ func assertTranscriptFile(t *testing.T, gotFile File) {
 	if gotFile.Model != "gpt-5.4" {
 		t.Fatalf("model = %q, want gpt-5.4", gotFile.Model)
 	}
-	if gotFile.Expect.FileChange.NumMessages != 2 {
-		t.Fatalf("file change count = %d, want 2", gotFile.Expect.FileChange.NumMessages)
+}
+
+func assertTranscriptReasoningExpectation(t *testing.T, got ReasoningExpectation) {
+	t.Helper()
+	if got.NumStreams != 1 || !got.AllFlushed {
+		t.Fatalf("reasoning expectation = %#v, want num_streams=1 all_flushed=true", got)
 	}
-	if len(gotFile.Expect.Command.Executed) != 1 || gotFile.Expect.Command.Executed[0] != "ls -la" {
-		t.Fatalf("executed commands = %#v, want [\"ls -la\"]", gotFile.Expect.Command.Executed)
+}
+
+func assertTranscriptFileChangeExpectation(t *testing.T, got FileChangeExpectation) {
+	t.Helper()
+	if got.NumMessages != 2 {
+		t.Fatalf("file change count = %d, want 2", got.NumMessages)
 	}
-	if len(gotFile.Expect.Approvals) != 1 || gotFile.Expect.Approvals[0].Decision != agent.OptionAccept {
-		t.Fatalf("approvals = %#v", gotFile.Expect.Approvals)
+}
+
+func assertTranscriptCommandExpectation(t *testing.T, got CommandExpectation) {
+	t.Helper()
+	if len(got.Executed) != 1 || got.Executed[0] != "ls -la" {
+		t.Fatalf("executed commands = %#v, want [\"ls -la\"]", got.Executed)
+	}
+}
+
+func assertTranscriptApprovals(t *testing.T, got []ApprovalExpectation) {
+	t.Helper()
+	if len(got) != 1 || got[0].Decision != agent.OptionAccept {
+		t.Fatalf("approvals = %#v", got)
 	}
 }
 

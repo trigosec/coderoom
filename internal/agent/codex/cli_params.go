@@ -31,3 +31,37 @@ const (
 	// SandboxDangerFull gives the agent broad file access (use with care).
 	SandboxDangerFull SandboxMode = "danger-full-access"
 )
+
+// ReasoningEffort configures Codex's model_reasoning_effort setting.
+type ReasoningEffort string
+
+const (
+	// ReasoningDefault means "do not pass model_reasoning_effort"; Codex uses its default.
+	ReasoningDefault ReasoningEffort = ""
+	// ReasoningMinimal asks Codex for minimal reasoning effort.
+	ReasoningMinimal ReasoningEffort = "minimal"
+	// ReasoningLow asks Codex for low reasoning effort.
+	ReasoningLow ReasoningEffort = "low"
+	// ReasoningMedium asks Codex for medium reasoning effort.
+	ReasoningMedium ReasoningEffort = "medium"
+	// ReasoningHigh asks Codex for high reasoning effort.
+	ReasoningHigh ReasoningEffort = "high"
+	// ReasoningXHigh asks Codex for extra-high reasoning effort.
+	ReasoningXHigh ReasoningEffort = "xhigh"
+)
+
+// ReasoningSummary configures Codex's model_reasoning_summary setting.
+type ReasoningSummary string
+
+const (
+	// ReasoningSummaryDefault means "do not pass model_reasoning_summary".
+	ReasoningSummaryDefault ReasoningSummary = ""
+	// ReasoningSummaryAuto lets Codex choose the reasoning summary level.
+	ReasoningSummaryAuto ReasoningSummary = "auto"
+	// ReasoningSummaryConcise asks Codex for concise reasoning summaries.
+	ReasoningSummaryConcise ReasoningSummary = "concise"
+	// ReasoningSummaryDetailed asks Codex for detailed reasoning summaries.
+	ReasoningSummaryDetailed ReasoningSummary = "detailed"
+	// ReasoningSummaryNone disables reasoning summaries.
+	ReasoningSummaryNone ReasoningSummary = "none"
+)

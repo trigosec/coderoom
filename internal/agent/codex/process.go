@@ -16,10 +16,12 @@ type process struct {
 	codexOut *bufio.Reader
 	codexErr io.Reader
 
-	askForApproval AskForApprovalPolicy
-	sandboxMode    SandboxMode
-	model          string
-	appServerCmd   []string
+	askForApproval   AskForApprovalPolicy
+	sandboxMode      SandboxMode
+	model            string
+	reasoningEffort  ReasoningEffort
+	reasoningSummary ReasoningSummary
+	appServerCmd     []string
 }
 
 func newProc(cwd string) *process {
@@ -61,12 +63,17 @@ func (p *process) commandArgs() []string {
 	if len(p.appServerCmd) > 0 {
 		return append([]string(nil), p.appServerCmd...)
 	}
-	return codexArgs(p.askForApproval, p.sandboxMode)
+	return codexArgs(p.askForApproval, p.sandboxMode, p.reasoningEffort, p.reasoningSummary)
 }
 
 // codexArgs returns the command and arguments for the Codex app-server.
 // CODEX_VERSION_OVERRIDE pins a specific npm version for integration testing.
-func codexArgs(askForApproval AskForApprovalPolicy, sandboxMode SandboxMode) []string {
+func codexArgs(
+	askForApproval AskForApprovalPolicy,
+	sandboxMode SandboxMode,
+	reasoningEffort ReasoningEffort,
+	reasoningSummary ReasoningSummary,
+) []string {
 	pkg := "@openai/codex"
 	if v := os.Getenv("CODEX_VERSION_OVERRIDE"); v != "" {
 		pkg = "@openai/codex@" + v
@@ -77,6 +84,16 @@ func codexArgs(askForApproval AskForApprovalPolicy, sandboxMode SandboxMode) []s
 	}
 	if sandboxMode != SandboxDefault {
 		args = append(args, "--sandbox", string(sandboxMode))
+	}
+	if reasoningEffort != ReasoningDefault {
+		args = append(args, "-c", "model_reasoning_effort="+string(reasoningEffort))
+	}
+	if reasoningSummary != ReasoningSummaryDefault {
+		args = append(
+			args,
+			"-c", "model_reasoning_summary="+string(reasoningSummary),
+			"-c", "model_supports_reasoning_summaries=true",
+		)
 	}
 	args = append(args, "app-server")
 	return args

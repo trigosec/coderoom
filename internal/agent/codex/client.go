@@ -122,6 +122,18 @@ func WithSandboxMode(mode SandboxMode) Option {
 	return func(c *Client) { c.proc.sandboxMode = mode }
 }
 
+// WithReasoningEffort configures Codex's model_reasoning_effort setting.
+// Supported values are model-dependent; use ReasoningDefault to omit the override.
+func WithReasoningEffort(effort ReasoningEffort) Option {
+	return func(c *Client) { c.proc.reasoningEffort = effort }
+}
+
+// WithReasoningSummary configures Codex's model_reasoning_summary setting.
+// When set, Codex is also told that the model supports reasoning summaries.
+func WithReasoningSummary(summary ReasoningSummary) Option {
+	return func(c *Client) { c.proc.reasoningSummary = summary }
+}
+
 // WithAppServerCommand overrides the subprocess command used to launch the
 // app-server peer. When unset, the client launches Codex via `npx ... app-server`.
 func WithAppServerCommand(name string, args ...string) Option {

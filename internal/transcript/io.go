@@ -110,7 +110,7 @@ func writeExpectations(w io.Writer, expect Expect) error {
 	if err := writeTextExpectation(w, "  output", expect.Output); err != nil {
 		return err
 	}
-	if err := writeTextExpectation(w, "  reasoning", expect.Reasoning); err != nil {
+	if err := writeReasoningExpectation(w, expect.Reasoning); err != nil {
 		return err
 	}
 	if err := writeFileChangeExpectation(w, expect.FileChange); err != nil {
@@ -187,9 +187,25 @@ func writeTextExpectation(w io.Writer, key string, v TextExpectation) error {
 	return nil
 }
 
+func writeReasoningExpectation(w io.Writer, v ReasoningExpectation) error {
+	_, err := fmt.Fprintf(
+		w,
+		"  reasoning:\n    num_messages: %d\n    content: %s\n    num_streams: %d\n    all_flushed: %t\n",
+		v.NumMessages,
+		strconv.Quote(v.Content),
+		v.NumStreams,
+		v.AllFlushed,
+	)
+	if err != nil {
+		return fmt.Errorf("write reasoning expectation: %w", err)
+	}
+	return nil
+}
+
 func parseFrontMatter(raw []byte) (File, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	var file File
+	file := File{}
+	file.Expect.Reasoning.AllFlushed = true
 	state := frontMatterStateRoot
 	for scanner.Scan() {
 		nextState, err := applyFrontMatterLine(&file, state, scanner.Text())
@@ -281,6 +297,10 @@ func applyFrontMatterStatefulLine(file *File, state frontMatterState, trimmed st
 		return state, parseNumMessages(file, state, trimmed)
 	case strings.HasPrefix(trimmed, "content: "):
 		return state, parseContent(file, state, trimmed)
+	case strings.HasPrefix(trimmed, "num_streams: "):
+		return state, parseReasoningNumStreams(file, state, trimmed)
+	case strings.HasPrefix(trimmed, "all_flushed: "):
+		return state, parseReasoningAllFlushed(file, state, trimmed)
 	case trimmed == "files: []":
 		file.Expect.FileChange.Files = nil
 		return state, nil
@@ -327,6 +347,30 @@ func parseContent(file *File, state frontMatterState, trimmed string) error {
 		file.Expect.Reasoning.Content = content
 	case frontMatterStateRoot, frontMatterStateFileChange, frontMatterStateCommand, frontMatterStateApprovals:
 	}
+	return nil
+}
+
+func parseReasoningNumStreams(file *File, state frontMatterState, trimmed string) error {
+	if state != frontMatterStateReasoning {
+		return nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(trimmed, "num_streams: ")))
+	if err != nil {
+		return fmt.Errorf("parse num_streams: %w", err)
+	}
+	file.Expect.Reasoning.NumStreams = n
+	return nil
+}
+
+func parseReasoningAllFlushed(file *File, state frontMatterState, trimmed string) error {
+	if state != frontMatterStateReasoning {
+		return nil
+	}
+	value, err := strconv.ParseBool(strings.TrimSpace(strings.TrimPrefix(trimmed, "all_flushed: ")))
+	if err != nil {
+		return fmt.Errorf("parse all_flushed: %w", err)
+	}
+	file.Expect.Reasoning.AllFlushed = value
 	return nil
 }
 

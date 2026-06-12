@@ -29,8 +29,42 @@ func TestParseInputFile(t *testing.T) {
 	if input.Sandbox != codex.SandboxReadOnly {
 		t.Fatalf("sandbox = %q, want %q", input.Sandbox, codex.SandboxReadOnly)
 	}
+	if input.ReasoningEffort != codex.ReasoningDefault {
+		t.Fatalf("reasoning_effort = %q, want empty default", input.ReasoningEffort)
+	}
+	if input.ReasoningSummary != codex.ReasoningSummaryDefault {
+		t.Fatalf("reasoning_summary = %q, want empty default", input.ReasoningSummary)
+	}
 	if !strings.Contains(input.Prompt, "codex_file_approval_test.txt") {
 		t.Fatalf("prompt = %q, want file name", input.Prompt)
+	}
+}
+
+func TestParseInputFile_ReasoningEffort(t *testing.T) {
+	input, err := parseInputFile(strings.NewReader(`---
+model: gpt-5.4
+reasoning_effort: xhigh
+---
+prompt`))
+	if err != nil {
+		t.Fatalf("parseInputFile: %v", err)
+	}
+	if input.ReasoningEffort != codex.ReasoningXHigh {
+		t.Fatalf("reasoning_effort = %q, want %q", input.ReasoningEffort, codex.ReasoningXHigh)
+	}
+}
+
+func TestParseInputFile_ReasoningSummary(t *testing.T) {
+	input, err := parseInputFile(strings.NewReader(`---
+model: gpt-5.4
+reasoning_summary: detailed
+---
+prompt`))
+	if err != nil {
+		t.Fatalf("parseInputFile: %v", err)
+	}
+	if input.ReasoningSummary != codex.ReasoningSummaryDetailed {
+		t.Fatalf("reasoning_summary = %q, want %q", input.ReasoningSummary, codex.ReasoningSummaryDetailed)
 	}
 }
 
