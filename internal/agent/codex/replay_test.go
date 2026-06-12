@@ -148,6 +148,10 @@ type replayCollector struct {
 
 	filePaths []string
 	commands  []string
+
+	commandStreams    map[agent.StreamID]commandStreamState
+	fileChangeStreams map[agent.StreamID]toolStreamState
+	errs              []error
 }
 
 func (c *replayCollector) observe(msg agent.Message) {
@@ -166,12 +170,62 @@ func (c *replayCollector) observe(msg agent.Message) {
 		for _, change := range content.Changes {
 			replayAppendUnique(&c.filePaths, change.Path)
 		}
+		c.observeFileChangeStream(msg, content)
 	case agent.Command:
 		c.commandCount++
 		if strings.TrimSpace(content.Command) != "" {
 			replayAppendUnique(&c.commands, content.Command)
 		}
+		c.observeCommandStream(msg, content)
 	}
+}
+
+type commandStreamState struct {
+	sawStart    bool
+	sawExitCode bool
+	sawFlush    bool
+}
+
+type toolStreamState struct {
+	sawStream bool
+	sawFlush  bool
+}
+
+func (c *replayCollector) observeCommandStream(msg agent.Message, content agent.Command) {
+	if c.commandStreams == nil {
+		c.commandStreams = make(map[agent.StreamID]commandStreamState)
+	}
+	state := c.commandStreams[msg.StreamID]
+	if msg.Mode == agent.ModeStream && content.Command != "" {
+		state.sawStart = true
+	}
+	if msg.Mode == agent.ModeStream && content.ExitCode != nil {
+		state.sawExitCode = true
+	}
+	if msg.Mode == agent.ModeFlush {
+		state.sawFlush = true
+		if content.Command != "" || content.Output != "" || content.ExitCode != nil {
+			c.errs = append(c.errs, fmt.Errorf("command flush for %q carried non-zero content %+v", msg.StreamID, content))
+		}
+	}
+	c.commandStreams[msg.StreamID] = state
+}
+
+func (c *replayCollector) observeFileChangeStream(msg agent.Message, content agent.FileChangeSet) {
+	if c.fileChangeStreams == nil {
+		c.fileChangeStreams = make(map[agent.StreamID]toolStreamState)
+	}
+	state := c.fileChangeStreams[msg.StreamID]
+	if msg.Mode == agent.ModeStream {
+		state.sawStream = true
+	}
+	if msg.Mode == agent.ModeFlush {
+		state.sawFlush = true
+		if content.Status != "" || len(content.Changes) != 0 {
+			c.errs = append(c.errs, fmt.Errorf("file change flush for %q carried non-zero content %+v", msg.StreamID, content))
+		}
+	}
+	c.fileChangeStreams[msg.StreamID] = state
 }
 
 func replayAppendUnique(dst *[]string, value string) {
@@ -220,6 +274,9 @@ func assertReplayExpectations(expect transcript.Expect, collector *replayCollect
 	if listener.err != nil {
 		return listener.err
 	}
+	if err := assertReplayCollectorErrors(collector.errs); err != nil {
+		return err
+	}
 	if err := assertReplayApprovals(expect.Approvals, listener.observed); err != nil {
 		return err
 	}
@@ -235,7 +292,20 @@ func assertReplayExpectations(expect transcript.Expect, collector *replayCollect
 	if err := assertReplayCommandExpectation(expect.Command, collector); err != nil {
 		return err
 	}
+	if err := assertReplayCommandStreams(expect.Command, collector.commandStreams); err != nil {
+		return err
+	}
+	if err := assertReplayFileChangeStreams(expect.FileChange, collector.fileChangeStreams); err != nil {
+		return err
+	}
 	return nil
+}
+
+func assertReplayCollectorErrors(errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	return errs[0]
 }
 
 func assertReplayApprovals(expected, observed []transcript.ApprovalExpectation) error {
@@ -274,6 +344,45 @@ func assertReplayCommandExpectation(expected transcript.CommandExpectation, coll
 	}
 	if !reflect.DeepEqual(collector.commands, expected.Executed) {
 		return fmt.Errorf("command.executed = %v, want %v", collector.commands, expected.Executed)
+	}
+	return nil
+}
+
+func assertReplayCommandStreams(expected transcript.CommandExpectation, streams map[agent.StreamID]commandStreamState) error {
+	if expected.NumMessages == 0 {
+		return nil
+	}
+	if len(streams) == 0 {
+		return fmt.Errorf("expected command stream messages, got none")
+	}
+	for streamID, state := range streams {
+		if !state.sawStart {
+			return fmt.Errorf("command stream %q missing started message", streamID)
+		}
+		if !state.sawExitCode {
+			return fmt.Errorf("command stream %q missing exit code message", streamID)
+		}
+		if !state.sawFlush {
+			return fmt.Errorf("command stream %q missing flush", streamID)
+		}
+	}
+	return nil
+}
+
+func assertReplayFileChangeStreams(expected transcript.FileChangeExpectation, streams map[agent.StreamID]toolStreamState) error {
+	if expected.NumMessages == 0 {
+		return nil
+	}
+	if len(streams) == 0 {
+		return fmt.Errorf("expected file change stream messages, got none")
+	}
+	for streamID, state := range streams {
+		if !state.sawStream {
+			return fmt.Errorf("file change stream %q missing stream message", streamID)
+		}
+		if !state.sawFlush {
+			return fmt.Errorf("file change stream %q missing flush", streamID)
+		}
 	}
 	return nil
 }
