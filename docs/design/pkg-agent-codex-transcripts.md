@@ -151,9 +151,18 @@ Transcript fixtures live under:
 internal/agent/codex/testdata/transcripts/<codex-version>/<test-case>/
 ```
 
-Each case directory contains:
+Each case directory contains either:
 
-- `input.md` — prompt source plus recording configuration front matter
+- `prompt.md` — single-action scenario source plus recording configuration
+  front matter
+
+or:
+
+- `conversation.md` — shared configuration for a multi-action scenario
+- `conversation-01.md`, `conversation-02.md`, ... — ordered scenario actions
+
+and always:
+
 - `output.transcript` — recorded transcript fixture
 
 The transcript fixture itself uses one file with:
@@ -170,7 +179,9 @@ Example:
 name: approvals_file_change
 codex_version: 0.133.0
 model: gpt-5.4
-input: "Use the built-in file editing capability (not shell commands) to create codex_file_approval_test.txt with the contents: ok"
+actions:
+  - kind: prompt
+    text: "Use the built-in file editing capability (not shell commands) to create codex_file_approval_test.txt with the contents: ok"
 
 expect:
   output:
@@ -207,16 +218,20 @@ The YAML front matter is descriptive. It captures:
 
 - scenario identity
 - Codex version / model used to record it
-- the user input for the turn
+- the normalized action list used to drive the scenario
 - expected adapter-level behavior observed during the live recording run
 
 The front matter is not a duplicate protocol trace. It exists so tests can
 assert high-level outcomes without re-deriving every expectation from raw wire
 steps.
 
-### `input.md`
+### Authoring files
 
-`input.md` is the source-of-truth input for `codex-record`.
+Scenario authoring files are the source-of-truth inputs for `codex-record`.
+
+#### Single-action scenarios
+
+Single-action scenarios use `prompt.md`.
 
 Its front matter configures the live recording run, for example:
 
@@ -224,8 +239,85 @@ Its front matter configures the live recording run, for example:
 - `ask_for_approval`
 - `sandbox`
 - `approval_strategy`
+- `reasoning_effort`
+- `reasoning_summary`
 
-Its Markdown body is the prompt sent to the agent.
+Its Markdown body is the text sent to Codex as one `prompt` action.
+
+Example:
+
+```md
+---
+model: gpt-5.4
+---
+Use the built-in file editing capability (not shell commands) to create
+codex_file_approval_test.txt with the contents: ok
+```
+
+#### Multi-action scenarios
+
+Multi-action scenarios use:
+
+- `conversation.md` for shared run configuration
+- `conversation-01.md`, `conversation-02.md`, ... for ordered actions
+
+`conversation.md` contains only shared configuration front matter.
+
+Each `conversation-NN.md` file contains:
+
+- optional per-action front matter
+- a Markdown body, which becomes the text sent to Codex for that action
+
+Supported per-action fields:
+
+- `kind`, default `prompt`
+
+Unknown per-action front matter keys are invalid and should be rejected by the
+implementation until they are explicitly added to the format.
+
+Action kinds:
+
+- `prompt` maps to `Send`
+- `notice` maps to `SendNotice`
+
+Example:
+
+`conversation.md`
+
+```md
+---
+model: gpt-5.4
+---
+```
+
+`conversation-01.md`
+
+```md
+---
+kind: notice
+---
+The magic word is PICASSO.
+```
+
+`conversation-02.md`
+
+```md
+---
+kind: prompt
+---
+Reply with a single word: done
+```
+
+Rules:
+
+- exactly one authoring style may be used in a case directory
+- a case may define `prompt.md` or `conversation.md`, but not both
+- `conversation-NN.md` files are loaded in lexical order
+- `NN` is a zero-padded decimal sequence starting at `01`
+- numbering must be contiguous
+
+This keeps prompt bodies in Markdown without introducing an ambiguous inline
+block grammar.
 
 ### One-pass recording workflow
 
@@ -236,6 +328,8 @@ run:
    of truth for wire replay.
 2. YAML front matter is collected by a recording harness interacting with the
    `agent.Agent` interface and the approval listener boundary.
+3. The normalized action list executed during recording is written into
+   `output.transcript` front matter so replay remains self-contained.
 
 This boundary is intentional:
 
@@ -351,12 +445,16 @@ Fixture layout:
 
 ```text
 internal/agent/codex/testdata/transcripts/<codex-version>/<test-case>/
-  input.md
+  prompt.md
+  or:
+  conversation.md
+  conversation-01.md
+  conversation-02.md
   output.transcript
 ```
 
-`input.md` contains minimal front matter for the live run configuration plus the
-prompt body. `output.transcript` is the generated fixture.
+The authoring files contain the live run configuration plus Markdown bodies for
+one or more actions. `output.transcript` is the generated fixture.
 
 Usage:
 
@@ -404,6 +502,10 @@ interface and collects the front matter assertions during that same run.
 
 The harness is responsible for:
 
+- parsing the action sequence from the authoring files
+- executing each action in order through `Send` or `SendNotice`
+- waiting for each action to reach its completion condition before starting the
+  next one
 - counting category-level `agent.Message` values
 - accumulating visible output / reasoning text when asserted
 - collecting distinct file paths from `agent.FileChangeSet`
@@ -413,9 +515,24 @@ The harness is responsible for:
 This keeps the protocol capture boundary clean while still allowing descriptive
 scenario metadata in the final fixture.
 
-The harness reads scenario configuration from `input.md`, launches a real Codex
-run, and writes the final combined fixture to `output.transcript` only after
-both the front matter summary and JSONL step stream are complete.
+The harness reads scenario configuration and actions from the authoring files,
+launches a real Codex run, executes the scenario in order, and writes the final
+combined fixture to `output.transcript` only after both the front matter
+summary and JSONL step stream are complete.
+
+### Action completion semantics
+
+Action ordering must be explicit and deterministic.
+
+The next action must not start until the previous action has reached its
+completion condition.
+
+Completion conditions:
+
+- `prompt` completes when the action's turn-end flush is observed
+- `notice` completes when the synthetic `codex:notice-turn` flush is observed
+
+These completion rules apply equally during recording and replay-driven tests.
 
 ### Approval summary provenance
 
@@ -441,9 +558,10 @@ against the transcript step stream.
 
 ### Important rule
 
-The JSONL step stream is the source of truth for replay behavior. The front
-matter is the source of truth for high-level adapter expectations observed
-during recording.
+The JSONL step stream is the source of truth for replay behavior. The recorded
+`actions` front matter is the source of truth for replay-side scenario driving.
+The remaining front matter is the source of truth for high-level adapter
+expectations observed during recording.
 
 This avoids drift between "record format" and "replay format".
 
@@ -458,6 +576,15 @@ cmd/codex-replay
 ```
 
 This is a separate subprocess, not an in-process goroutine fake.
+
+The replay-side test harness must execute the normalized `actions` sequence
+stored in `output.transcript`:
+
+- `prompt` actions call `Send`
+- `notice` actions call `SendNotice`
+
+Replay does not depend on `prompt.md` or `conversation*.md` at runtime. Those
+files are authoring inputs for recording only.
 
 ### Why a subprocess
 

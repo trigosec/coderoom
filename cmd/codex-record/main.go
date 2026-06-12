@@ -1,4 +1,4 @@
-// Command codex-record records live Codex transcript fixtures from input.md
+// Command codex-record records live Codex transcript fixtures from prompt.md
 // cases under internal/agent/codex/testdata/transcripts.
 package main
 
@@ -20,6 +20,7 @@ import (
 )
 
 const transcriptRoot = "internal/agent/codex/testdata/transcripts"
+const promptFileName = "prompt.md"
 
 type inputFile struct {
 	Model            string
@@ -60,9 +61,9 @@ func main() {
 	}
 
 	for _, tc := range cases {
-		input, readErr := readInputFile(filepath.Join(tc.dir, "input.md"))
+		input, readErr := readInputFile(filepath.Join(tc.dir, promptFileName))
 		if readErr != nil {
-			fmt.Fprintf(os.Stderr, "read input.md: %v\n", readErr)
+			fmt.Fprintf(os.Stderr, "read %s: %v\n", promptFileName, readErr)
 			os.Exit(1)
 		}
 

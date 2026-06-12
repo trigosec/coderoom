@@ -10,7 +10,7 @@ import (
 )
 
 func TestParseInputFile(t *testing.T) {
-	path := filepath.Join("..", "..", "internal", "agent", "codex", "testdata", "transcripts", "0.133.0", "approvals-file-change", "input.md")
+	path := filepath.Join("..", "..", "internal", "agent", "codex", "testdata", "transcripts", "0.133.0", "approvals-file-change", "prompt.md")
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("ReadFile(%q): %v", path, err)
