@@ -173,10 +173,14 @@ type replayCollector struct {
 	commandStreams    map[agent.StreamID]commandStreamState
 	fileChangeStreams map[agent.StreamID]toolStreamState
 	reasoningStreams  map[agent.StreamID]toolStreamState
+	noticeTurnFlushes int
 	errs              []error
 }
 
 func (c *replayCollector) observe(msg agent.Message) {
+	if c.observeLifecycleFlush(msg) {
+		return
+	}
 	switch content := msg.Content.(type) {
 	case agent.Output:
 		if msg.StreamID == c.turnAnchor && msg.Mode == agent.ModeFlush {
@@ -201,6 +205,17 @@ func (c *replayCollector) observe(msg agent.Message) {
 		}
 		c.observeCommandStream(msg, content)
 	}
+}
+
+func (c *replayCollector) observeLifecycleFlush(msg agent.Message) bool {
+	if msg.StreamID == agent.StreamID("codex:notice-turn") && msg.Mode == agent.ModeFlush {
+		c.noticeTurnFlushes++
+		return true
+	}
+	if msg.StreamID == c.turnAnchor && msg.Mode == agent.ModeFlush {
+		return true
+	}
+	return false
 }
 
 type commandStreamState struct {
@@ -314,15 +329,32 @@ func (l *replayApprovalListener) Decide(_ context.Context, req agent.ApprovalReq
 }
 
 func assertReplayExpectations(expect transcript.Expect, collector *replayCollector, listener *replayApprovalListener) error {
+	if err := assertReplayPreconditions(collector, listener); err != nil {
+		return err
+	}
+	if err := assertReplayMessageExpectations(expect, collector); err != nil {
+		return err
+	}
+	if err := assertReplayStreamExpectations(expect, collector); err != nil {
+		return err
+	}
+	return nil
+}
+
+func assertReplayPreconditions(collector *replayCollector, listener *replayApprovalListener) error {
 	if listener.err != nil {
 		return listener.err
 	}
 	if err := assertReplayCollectorErrors(collector.errs); err != nil {
 		return err
 	}
-	if err := assertReplayApprovals(expect.Approvals, listener.observed); err != nil {
+	if err := assertReplayApprovals(listener.expected, listener.observed); err != nil {
 		return err
 	}
+	return nil
+}
+
+func assertReplayMessageExpectations(expect transcript.Expect, collector *replayCollector) error {
 	if err := assertReplayTextExpectation("output", expect.Output, collector.outputCount, collector.outputText.String()); err != nil {
 		return err
 	}
@@ -335,11 +367,28 @@ func assertReplayExpectations(expect transcript.Expect, collector *replayCollect
 	if err := assertReplayCommandExpectation(expect.Command, collector); err != nil {
 		return err
 	}
+	if err := assertReplayNoticeExpectation(expect.Notice, collector.noticeTurnFlushes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func assertReplayStreamExpectations(expect transcript.Expect, collector *replayCollector) error {
 	if err := assertReplayCommandStreams(expect.Command, collector.commandStreams); err != nil {
 		return err
 	}
 	if err := assertReplayFileChangeStreams(expect.FileChange, collector.fileChangeStreams); err != nil {
 		return err
+	}
+	return nil
+}
+
+func assertReplayNoticeExpectation(expected *transcript.NoticeExpectation, got int) error {
+	if expected == nil {
+		return nil
+	}
+	if got != expected.NumTurnFlushes {
+		return fmt.Errorf("notice.num_turn_flushes = %d, want %d", got, expected.NumTurnFlushes)
 	}
 	return nil
 }

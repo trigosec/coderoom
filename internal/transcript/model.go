@@ -32,12 +32,25 @@ func NormalizedActions(file File) []Action {
 	return []Action{{Kind: "prompt", Text: file.Input}}
 }
 
+// DefaultNoticeTurnFlushes returns the backward-compatible notice flush count
+// implied by the normalized action list.
+func DefaultNoticeTurnFlushes(file File) int {
+	count := 0
+	for _, action := range NormalizedActions(file) {
+		if action.Kind == "notice" {
+			count++
+		}
+	}
+	return count
+}
+
 // Expect stores the high-level expectations captured during recording.
 type Expect struct {
 	Output     TextExpectation       `yaml:"output"`
 	Reasoning  ReasoningExpectation  `yaml:"reasoning"`
 	FileChange FileChangeExpectation `yaml:"file_change"`
 	Command    CommandExpectation    `yaml:"command"`
+	Notice     *NoticeExpectation    `yaml:"notice,omitempty"`
 	Approvals  []ApprovalExpectation `yaml:"approvals"`
 }
 
@@ -65,6 +78,11 @@ type FileChangeExpectation struct {
 type CommandExpectation struct {
 	NumMessages int      `yaml:"num_messages"`
 	Executed    []string `yaml:"executed"`
+}
+
+// NoticeExpectation summarizes synthetic notice lifecycle signals.
+type NoticeExpectation struct {
+	NumTurnFlushes int `yaml:"num_turn_flushes"`
 }
 
 // ApprovalExpectation records one normalized approval request/decision pair.

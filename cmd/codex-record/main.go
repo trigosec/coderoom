@@ -53,10 +53,13 @@ type collector struct {
 	fileChangeCount  int
 	commandCount     int
 
-	filePaths []string
-	commands  []string
-	approvals []transcript.ApprovalExpectation
+	filePaths         []string
+	commands          []string
+	approvals         []transcript.ApprovalExpectation
+	noticeTurnFlushes int
 }
+
+const noticeTurnStreamID = agent.StreamID("codex:notice-turn")
 
 func main() {
 	cases, err := resolveSelection(transcriptRoot, os.Args[1:])
@@ -179,6 +182,12 @@ func sendAction(client *codex.Client, action transcript.Action) (agent.StreamID,
 }
 
 func buildFixture(version, testCase string, input scenario, collector *collector) transcript.File {
+	var noticeExpect *transcript.NoticeExpectation
+	if scenarioHasNotice(input.Actions) {
+		noticeExpect = &transcript.NoticeExpectation{
+			NumTurnFlushes: collector.noticeTurnFlushes,
+		}
+	}
 	return transcript.File{
 		Name:         testCase,
 		CodexVersion: version,
@@ -200,12 +209,25 @@ func buildFixture(version, testCase string, input scenario, collector *collector
 				NumMessages: collector.commandCount,
 				Executed:    collector.commands,
 			},
+			Notice:    noticeExpect,
 			Approvals: collector.approvals,
 		},
 	}
 }
 
+func scenarioHasNotice(actions []transcript.Action) bool {
+	for _, action := range actions {
+		if action.Kind == "notice" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *collector) observe(msg agent.Message) {
+	if c.observeLifecycleFlush(msg) {
+		return
+	}
 	switch content := msg.Content.(type) {
 	case agent.Output:
 		if msg.StreamID == c.turnAnchor && msg.Mode == agent.ModeFlush {
@@ -228,6 +250,17 @@ func (c *collector) observe(msg agent.Message) {
 			appendUnique(&c.commands, content.Command)
 		}
 	}
+}
+
+func (c *collector) observeLifecycleFlush(msg agent.Message) bool {
+	if msg.StreamID == noticeTurnStreamID && msg.Mode == agent.ModeFlush {
+		c.noticeTurnFlushes++
+		return true
+	}
+	if msg.StreamID == c.turnAnchor && msg.Mode == agent.ModeFlush {
+		return true
+	}
+	return false
 }
 
 func (c *collector) observeReasoningStream(msg agent.Message) {

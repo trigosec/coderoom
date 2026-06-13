@@ -73,6 +73,7 @@ func assertTranscriptFile(t *testing.T, gotFile File) {
 	assertTranscriptReasoningExpectation(t, gotFile.Expect.Reasoning)
 	assertTranscriptFileChangeExpectation(t, gotFile.Expect.FileChange)
 	assertTranscriptCommandExpectation(t, gotFile.Expect.Command)
+	assertTranscriptNoticeExpectation(t, gotFile.Expect.Notice)
 	assertTranscriptApprovals(t, gotFile.Expect.Approvals)
 }
 
@@ -110,6 +111,13 @@ func assertTranscriptCommandExpectation(t *testing.T, got CommandExpectation) {
 	t.Helper()
 	if len(got.Executed) != 1 || got.Executed[0] != "ls -la" {
 		t.Fatalf("executed commands = %#v, want [\"ls -la\"]", got.Executed)
+	}
+}
+
+func assertTranscriptNoticeExpectation(t *testing.T, got *NoticeExpectation) {
+	t.Helper()
+	if got != nil {
+		t.Fatalf("notice expectation = %#v, want nil for prompt-only fixture", got)
 	}
 }
 
