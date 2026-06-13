@@ -33,10 +33,6 @@ check: lint test-race
 codex-update:
 	./scripts/upgrade-codex.sh
 
-.PHONY: codex-schema-rewrite
-codex-schema-rewrite:
-	go test -tags integration ./internal/agent/codex/... -run TestSchemaSnapshot -update-schemas
-
 .PHONY: install-hooks
 install-hooks:
 	ln -sf ../../scripts/pre-commit .git/hooks/pre-commit

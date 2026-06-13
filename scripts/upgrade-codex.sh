@@ -1,6 +1,6 @@
 #!/bin/sh
 # upgrade-codex: advance the pinned Codex version to latest, validating each
-# intermediate version against the committed schemas and integration tests.
+# intermediate version against the integration test suite.
 #
 # Usage: make upgrade-codex
 #
@@ -48,11 +48,6 @@ echo ""
 
 for VERSION in $VERSIONS; do
     echo "--- testing @openai/codex@$VERSION ---"
-    # First, ensure schema snapshots are updated for this version if needed.
-    if ! CODEX_VERSION_OVERRIDE=$VERSION go test -tags integration ./internal/agent/codex/... -run TestSchemaSnapshot ; then
-        echo "schema snapshots changed; updating testdata/schemas/ for $VERSION"
-        CODEX_VERSION_OVERRIDE=$VERSION go test -tags integration ./internal/agent/codex/... -run TestSchemaSnapshot -update-schemas
-    fi
     CODEX_VERSION_OVERRIDE=$VERSION go test -tags integration ./internal/agent/codex/...
     echo "ok"
 done
@@ -62,4 +57,4 @@ done
 sed -i "s/^[0-9].*/$(echo "$LATEST")/" CODEX_VERSION
 echo ""
 echo "updated CODEX_VERSION to $LATEST"
-echo "review schema changes (if any) and commit CODEX_VERSION + updated schemas."
+echo "review test results and commit CODEX_VERSION."
