@@ -48,25 +48,46 @@ func runTranscriptCase(t *testing.T, path string) {
 	startReplayClient(t, client)
 
 	collector := &replayCollector{}
-	anchor, err := client.Send(file.Input)
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	collector.turnAnchor = anchor
-
-	for {
-		msg, err := client.Read()
+	for _, action := range transcript.NormalizedActions(file) {
+		anchor, err := replaySendAction(client, action)
 		if err != nil {
-			t.Fatalf("Read: %v", err)
+			t.Fatalf("send action: %v", err)
 		}
-		collector.observe(msg)
-		if msg.StreamID == anchor && msg.Mode == agent.ModeFlush {
-			break
+		collector.turnAnchor = anchor
+
+		for {
+			msg, err := client.Read()
+			if err != nil {
+				t.Fatalf("Read: %v", err)
+			}
+			collector.observe(msg)
+			if msg.StreamID == anchor && msg.Mode == agent.ModeFlush {
+				break
+			}
 		}
 	}
 
 	if err := assertReplayExpectations(file.Expect, collector, listener); err != nil {
 		t.Fatalf("assert replay expectations: %v", err)
+	}
+}
+
+func replaySendAction(client *codex.Client, action transcript.Action) (agent.StreamID, error) {
+	switch action.Kind {
+	case "", "prompt":
+		anchor, err := client.Send(action.Text)
+		if err != nil {
+			return "", fmt.Errorf("send prompt: %w", err)
+		}
+		return anchor, nil
+	case "notice":
+		anchor, err := client.SendNotice(action.Text)
+		if err != nil {
+			return "", fmt.Errorf("send notice: %w", err)
+		}
+		return anchor, nil
+	default:
+		return "", fmt.Errorf("unknown action kind %q", action.Kind)
 	}
 }
 

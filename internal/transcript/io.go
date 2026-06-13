@@ -97,11 +97,26 @@ func writeHeader(w io.Writer, file File) error {
 			return fmt.Errorf("write model: %w", err)
 		}
 	}
-	if _, err := fmt.Fprintf(w, "input: %s\n", strconv.Quote(file.Input)); err != nil {
-		return fmt.Errorf("write input: %w", err)
+	if err := writeActions(w, NormalizedActions(file)); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintln(w, "expect:"); err != nil {
 		return fmt.Errorf("write expect header: %w", err)
+	}
+	return nil
+}
+
+func writeActions(w io.Writer, actions []Action) error {
+	if len(actions) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "actions:"); err != nil {
+		return fmt.Errorf("write actions header: %w", err)
+	}
+	for _, action := range actions {
+		if _, err := fmt.Fprintf(w, "  - kind: %s\n    text: %s\n", action.Kind, strconv.Quote(action.Text)); err != nil {
+			return fmt.Errorf("write action: %w", err)
+		}
 	}
 	return nil
 }
@@ -206,6 +221,7 @@ func parseFrontMatter(raw []byte) (File, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	file := File{}
 	file.Expect.Reasoning.AllFlushed = true
+	file.Actions = nil
 	state := frontMatterStateRoot
 	for scanner.Scan() {
 		nextState, err := applyFrontMatterLine(&file, state, scanner.Text())
@@ -217,6 +233,9 @@ func parseFrontMatter(raw []byte) (File, error) {
 	if err := scanner.Err(); err != nil {
 		return File{}, fmt.Errorf("scan front matter: %w", err)
 	}
+	if len(file.Actions) == 0 && file.Input != "" {
+		file.Actions = NormalizedActions(file)
+	}
 	return file, nil
 }
 
@@ -224,6 +243,7 @@ type frontMatterState string
 
 const (
 	frontMatterStateRoot       frontMatterState = "root"
+	frontMatterStateActions    frontMatterState = "actions"
 	frontMatterStateOutput     frontMatterState = "output"
 	frontMatterStateReasoning  frontMatterState = "reasoning"
 	frontMatterStateFileChange frontMatterState = "file_change"
@@ -265,6 +285,8 @@ func applyFrontMatterLine(file *File, state frontMatterState, line string) (fron
 
 func parseFrontMatterSection(trimmed string) (frontMatterState, bool) {
 	switch {
+	case strings.HasPrefix(trimmed, "actions:"):
+		return frontMatterStateActions, true
 	case strings.HasPrefix(trimmed, "output:"):
 		return frontMatterStateOutput, true
 	case strings.HasPrefix(trimmed, "reasoning:"):
@@ -292,27 +314,47 @@ func applyFrontMatterEmptySection(file *File, trimmed string) {
 }
 
 func applyFrontMatterStatefulLine(file *File, state frontMatterState, trimmed string) (frontMatterState, error) {
-	switch {
-	case strings.HasPrefix(trimmed, "num_messages: "):
+	if state == frontMatterStateActions {
+		return state, parseActionLine(file, trimmed)
+	}
+	if strings.HasPrefix(trimmed, "num_messages: ") {
 		return state, parseNumMessages(file, state, trimmed)
-	case strings.HasPrefix(trimmed, "content: "):
+	}
+	if strings.HasPrefix(trimmed, "content: ") {
 		return state, parseContent(file, state, trimmed)
-	case strings.HasPrefix(trimmed, "num_streams: "):
+	}
+	if strings.HasPrefix(trimmed, "num_streams: ") {
 		return state, parseReasoningNumStreams(file, state, trimmed)
-	case strings.HasPrefix(trimmed, "all_flushed: "):
+	}
+	if strings.HasPrefix(trimmed, "all_flushed: ") {
 		return state, parseReasoningAllFlushed(file, state, trimmed)
-	case trimmed == "files: []":
+	}
+	if trimmed == "files: []" {
 		file.Expect.FileChange.Files = nil
 		return state, nil
-	case trimmed == "executed: []":
+	}
+	if trimmed == "executed: []" {
 		file.Expect.Command.Executed = nil
 		return state, nil
-	case strings.HasPrefix(trimmed, "- "):
+	}
+	if strings.HasPrefix(trimmed, "- ") {
 		return state, parseListItem(file, state, trimmed)
-	case strings.HasPrefix(trimmed, "decision: "):
+	}
+	if strings.HasPrefix(trimmed, "decision: ") {
 		return state, parseApprovalDecision(file, trimmed)
+	}
+	return state, nil
+}
+
+func parseActionLine(file *File, trimmed string) error {
+	switch {
+	case strings.HasPrefix(trimmed, "- kind: "):
+		parseActionKind(file, trimmed)
+		return nil
+	case strings.HasPrefix(trimmed, "text: "):
+		return parseActionText(file, trimmed)
 	default:
-		return state, nil
+		return nil
 	}
 }
 
@@ -330,7 +372,7 @@ func parseNumMessages(file *File, state frontMatterState, trimmed string) error 
 		file.Expect.FileChange.NumMessages = n
 	case frontMatterStateCommand:
 		file.Expect.Command.NumMessages = n
-	case frontMatterStateRoot, frontMatterStateApprovals:
+	case frontMatterStateRoot, frontMatterStateActions, frontMatterStateApprovals:
 	}
 	return nil
 }
@@ -345,7 +387,7 @@ func parseContent(file *File, state frontMatterState, trimmed string) error {
 		file.Expect.Output.Content = content
 	case frontMatterStateReasoning:
 		file.Expect.Reasoning.Content = content
-	case frontMatterStateRoot, frontMatterStateFileChange, frontMatterStateCommand, frontMatterStateApprovals:
+	case frontMatterStateRoot, frontMatterStateActions, frontMatterStateFileChange, frontMatterStateCommand, frontMatterStateApprovals:
 	}
 	return nil
 }
@@ -376,6 +418,8 @@ func parseReasoningAllFlushed(file *File, state frontMatterState, trimmed string
 
 func parseListItem(file *File, state frontMatterState, trimmed string) error {
 	switch state {
+	case frontMatterStateActions:
+		return nil
 	case frontMatterStateFileChange:
 		file.Expect.FileChange.Files = append(file.Expect.FileChange.Files, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
 		return nil
@@ -394,6 +438,24 @@ func parseListItem(file *File, state frontMatterState, trimmed string) error {
 	default:
 		return nil
 	}
+}
+
+func parseActionKind(file *File, trimmed string) {
+	file.Actions = append(file.Actions, Action{
+		Kind: strings.TrimSpace(strings.TrimPrefix(trimmed, "- kind: ")),
+	})
+}
+
+func parseActionText(file *File, trimmed string) error {
+	if len(file.Actions) == 0 {
+		return fmt.Errorf("parse action text: missing action kind")
+	}
+	text, err := parseQuotedValue(trimmed, "text: ")
+	if err != nil {
+		return err
+	}
+	file.Actions[len(file.Actions)-1].Text = text
+	return nil
 }
 
 func parseApprovalDecision(file *File, trimmed string) error {

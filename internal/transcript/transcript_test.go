@@ -29,7 +29,7 @@ func TestWrite_MatchesTestdata(t *testing.T) {
 		Name:         "approvals_file_change",
 		CodexVersion: "0.133.0",
 		Model:        "gpt-5.4",
-		Input:        "prompt",
+		Actions:      []Action{{Kind: "prompt", Text: "prompt"}},
 		Expect: Expect{
 			Output:     TextExpectation{NumMessages: 0, Content: ""},
 			Reasoning:  ReasoningExpectation{NumMessages: 1, Content: "think", NumStreams: 1, AllFlushed: true},
@@ -86,6 +86,9 @@ func assertTranscriptIdentity(t *testing.T, gotFile File) {
 	}
 	if gotFile.Model != "gpt-5.4" {
 		t.Fatalf("model = %q, want gpt-5.4", gotFile.Model)
+	}
+	if len(gotFile.Actions) != 1 || gotFile.Actions[0].Kind != "prompt" || gotFile.Actions[0].Text != "prompt" {
+		t.Fatalf("actions = %#v, want single prompt action", gotFile.Actions)
 	}
 }
 

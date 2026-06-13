@@ -21,14 +21,19 @@ import (
 
 const transcriptRoot = "internal/agent/codex/testdata/transcripts"
 const promptFileName = "prompt.md"
+const conversationFileName = "conversation.md"
 
-type inputFile struct {
+type scenarioConfig struct {
 	Model            string
 	AskForApproval   codex.AskForApprovalPolicy
 	Sandbox          codex.SandboxMode
 	ReasoningEffort  codex.ReasoningEffort
 	ReasoningSummary codex.ReasoningSummary
-	Prompt           string
+}
+
+type scenario struct {
+	Config  scenarioConfig
+	Actions []transcript.Action
 }
 
 type transcriptCase struct {
@@ -61,9 +66,9 @@ func main() {
 	}
 
 	for _, tc := range cases {
-		input, readErr := readInputFile(filepath.Join(tc.dir, promptFileName))
+		input, readErr := readScenario(tc.dir)
 		if readErr != nil {
-			fmt.Fprintf(os.Stderr, "read %s: %v\n", promptFileName, readErr)
+			fmt.Fprintf(os.Stderr, "read scenario: %v\n", readErr)
 			os.Exit(1)
 		}
 
@@ -74,7 +79,7 @@ func main() {
 	}
 }
 
-func recordCase(caseDir, version, testCase string, input inputFile) error {
+func recordCase(caseDir, version, testCase string, input scenario) error {
 	workDir, err := os.MkdirTemp("", "codex-record-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
@@ -89,20 +94,20 @@ func recordCase(caseDir, version, testCase string, input inputFile) error {
 
 	recorder := transcript.NewObserver()
 	collector := &collector{}
-	client, err := startClient(workDir, testCase, input, recorder, collector)
+	client, err := startClient(workDir, testCase, input.Config, recorder, collector)
 	if err != nil {
 		return err
 	}
 	defer stopClient(client)
 
-	if err := runPrompt(client, input.Prompt, collector); err != nil {
+	if err := runScenario(client, input.Actions, collector); err != nil {
 		return err
 	}
 	fixture := buildFixture(version, testCase, input, collector)
 	return writeTranscript(filepath.Join(caseDir, "output.transcript"), fixture, recorder.Steps())
 }
 
-func startClient(workDir, _ string, input inputFile, recorder *transcript.Observer, collector *collector) (*codex.Client, error) {
+func startClient(workDir, _ string, input scenarioConfig, recorder *transcript.Observer, collector *collector) (*codex.Client, error) {
 	listener := approvalListenerFunc(func(req agent.ApprovalRequest) agent.ApprovalDecision {
 		choice := chooseApproval(req.Options)
 		collector.approvals = append(collector.approvals, transcript.ApprovalExpectation{
@@ -127,10 +132,19 @@ func startClient(workDir, _ string, input inputFile, recorder *transcript.Observ
 	return client, nil
 }
 
-func runPrompt(client *codex.Client, prompt string, collector *collector) error {
-	anchor, err := client.Send(prompt)
+func runScenario(client *codex.Client, actions []transcript.Action, collector *collector) error {
+	for _, action := range actions {
+		if err := runAction(client, action, collector); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runAction(client *codex.Client, action transcript.Action, collector *collector) error {
+	anchor, err := sendAction(client, action)
 	if err != nil {
-		return fmt.Errorf("send prompt: %w", err)
+		return err
 	}
 	collector.turnAnchor = anchor
 	for {
@@ -145,12 +159,31 @@ func runPrompt(client *codex.Client, prompt string, collector *collector) error 
 	}
 }
 
-func buildFixture(version, testCase string, input inputFile, collector *collector) transcript.File {
+func sendAction(client *codex.Client, action transcript.Action) (agent.StreamID, error) {
+	switch action.Kind {
+	case "", "prompt":
+		anchor, err := client.Send(action.Text)
+		if err != nil {
+			return "", fmt.Errorf("send prompt: %w", err)
+		}
+		return anchor, nil
+	case "notice":
+		anchor, err := client.SendNotice(action.Text)
+		if err != nil {
+			return "", fmt.Errorf("send notice: %w", err)
+		}
+		return anchor, nil
+	default:
+		return "", fmt.Errorf("unknown action kind %q", action.Kind)
+	}
+}
+
+func buildFixture(version, testCase string, input scenario, collector *collector) transcript.File {
 	return transcript.File{
 		Name:         testCase,
 		CodexVersion: version,
-		Model:        input.Model,
-		Input:        input.Prompt,
+		Model:        input.Config.Model,
+		Actions:      input.Actions,
 		Expect: transcript.Expect{
 			Output: transcript.TextExpectation{NumMessages: collector.outputCount, Content: collector.outputText.String()},
 			Reasoning: transcript.ReasoningExpectation{
@@ -292,33 +325,106 @@ func setCodexVersion(version string) (func(), error) {
 	}, nil
 }
 
-func readInputFile(path string) (inputFile, error) {
-	f, err := os.Open(filepath.Clean(path))
-	if err != nil {
-		return inputFile{}, fmt.Errorf("open input file %q: %w", path, err)
+func readScenario(caseDir string) (scenario, error) {
+	hasPrompt := fileExists(filepath.Join(caseDir, promptFileName))
+	hasConversation := fileExists(filepath.Join(caseDir, conversationFileName))
+	switch {
+	case hasPrompt && hasConversation:
+		return scenario{}, errors.New("found both prompt.md and conversation.md")
+	case hasPrompt:
+		return readPromptScenario(filepath.Join(caseDir, promptFileName))
+	case hasConversation:
+		return readConversationScenario(caseDir)
+	default:
+		return scenario{}, errors.New("missing prompt.md or conversation.md")
 	}
-	defer closeFile(f)
-	return parseInputFile(f)
 }
 
-func parseInputFile(r io.Reader) (inputFile, error) {
+func readPromptScenario(path string) (scenario, error) {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return scenario{}, fmt.Errorf("open prompt file %q: %w", path, err)
+	}
+	defer closeFile(f)
+	config, body, err := parseMarkdownScenarioFile(f)
+	if err != nil {
+		return scenario{}, err
+	}
+	if strings.TrimSpace(body) == "" {
+		return scenario{}, errors.New("empty prompt body")
+	}
+	return scenario{
+		Config: config,
+		Actions: []transcript.Action{{
+			Kind: "prompt",
+			Text: strings.TrimSpace(body),
+		}},
+	}, nil
+}
+
+func readConversationScenario(caseDir string) (scenario, error) {
+	config, err := readConversationConfig(filepath.Join(caseDir, conversationFileName))
+	if err != nil {
+		return scenario{}, err
+	}
+	actionFiles, err := resolveConversationActionFiles(caseDir)
+	if err != nil {
+		return scenario{}, err
+	}
+	actions := make([]transcript.Action, 0, len(actionFiles))
+	for _, path := range actionFiles {
+		action, err := readConversationAction(path)
+		if err != nil {
+			return scenario{}, err
+		}
+		actions = append(actions, action)
+	}
+	return scenario{Config: config, Actions: actions}, nil
+}
+
+func readConversationConfig(path string) (scenarioConfig, error) {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return scenarioConfig{}, fmt.Errorf("open conversation file %q: %w", path, err)
+	}
+	defer closeFile(f)
+	config, body, err := parseMarkdownScenarioFile(f)
+	if err != nil {
+		return scenarioConfig{}, err
+	}
+	if strings.TrimSpace(body) != "" {
+		return scenarioConfig{}, errors.New("conversation.md body must be empty")
+	}
+	return config, nil
+}
+
+func readConversationAction(path string) (transcript.Action, error) {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return transcript.Action{}, fmt.Errorf("open conversation action %q: %w", path, err)
+	}
+	defer closeFile(f)
+	action, err := parseConversationActionFile(f)
+	if err != nil {
+		return transcript.Action{}, fmt.Errorf("parse conversation action %q: %w", path, err)
+	}
+	return action, nil
+}
+
+func parseMarkdownScenarioFile(r io.Reader) (scenarioConfig, string, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return inputFile{}, fmt.Errorf("read input file: %w", err)
+		return scenarioConfig{}, "", fmt.Errorf("read scenario file: %w", err)
 	}
 	parts := bytes.SplitN(data, []byte("\n---\n"), 2)
 	if len(parts) != 2 {
-		return inputFile{}, errors.New("missing front matter delimiter")
+		return scenarioConfig{}, "", errors.New("missing front matter delimiter")
 	}
 	input, err := parseInputFrontMatter(parts[0])
 	if err != nil {
-		return inputFile{}, err
+		return scenarioConfig{}, "", err
 	}
-	input.Prompt = strings.TrimSpace(string(parts[1]))
-	if input.Prompt == "" {
-		return inputFile{}, errors.New("empty prompt body")
-	}
-	return input, nil
+	return input, string(parts[1]), nil
 }
 
 func appendUnique(dst *[]string, value string) {
@@ -376,19 +482,19 @@ func listDirNames(root string) ([]string, error) {
 	return names, nil
 }
 
-func parseInputFrontMatter(raw []byte) (inputFile, error) {
-	var input inputFile
+func parseInputFrontMatter(raw []byte) (scenarioConfig, error) {
+	var input scenarioConfig
 	for _, line := range strings.Split(string(raw), "\n") {
 		if err := applyInputFrontMatterLine(&input, line); err != nil {
-			return inputFile{}, err
+			return scenarioConfig{}, err
 		}
 	}
 	return input, nil
 }
 
-func applyInputFrontMatterLine(input *inputFile, line string) error {
+func applyInputFrontMatterLine(input *scenarioConfig, line string) error {
 	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || trimmed == "---" {
+	if trimmed == "" || trimmed == "---" || strings.HasPrefix(trimmed, "#") {
 		return nil
 	}
 	key, decoded, err := parseInputFrontMatterScalar(trimmed)
@@ -411,7 +517,7 @@ func parseInputFrontMatterScalar(trimmed string) (string, string, error) {
 	return normalizedKey, decoded, nil
 }
 
-func assignInputFrontMatterValue(input *inputFile, key, decoded string) error {
+func assignInputFrontMatterValue(input *scenarioConfig, key, decoded string) error {
 	switch key {
 	case "model":
 		input.Model = decoded
@@ -427,6 +533,95 @@ func assignInputFrontMatterValue(input *inputFile, key, decoded string) error {
 		return fmt.Errorf("unknown front matter key %q", key)
 	}
 	return nil
+}
+
+func parseConversationActionFile(r io.Reader) (transcript.Action, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return transcript.Action{}, fmt.Errorf("read conversation action file: %w", err)
+	}
+	parts := bytes.SplitN(data, []byte("\n---\n"), 2)
+	if len(parts) == 1 {
+		body := strings.TrimSpace(string(parts[0]))
+		if body == "" {
+			return transcript.Action{}, errors.New("empty conversation action body")
+		}
+		return transcript.Action{Kind: "prompt", Text: body}, nil
+	}
+	action, err := parseConversationActionFrontMatter(parts[0])
+	if err != nil {
+		return transcript.Action{}, err
+	}
+	action.Text = strings.TrimSpace(string(parts[1]))
+	if action.Text == "" {
+		return transcript.Action{}, errors.New("empty conversation action body")
+	}
+	if action.Kind == "" {
+		action.Kind = "prompt"
+	}
+	return action, nil
+}
+
+func parseConversationActionFrontMatter(raw []byte) (transcript.Action, error) {
+	var action transcript.Action
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || trimmed == "---" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, decoded, err := parseInputFrontMatterScalar(trimmed)
+		if err != nil {
+			return transcript.Action{}, err
+		}
+		switch key {
+		case "kind":
+			action.Kind = decoded
+		default:
+			return transcript.Action{}, fmt.Errorf("unknown conversation action key %q", key)
+		}
+	}
+	return action, nil
+}
+
+func resolveConversationActionFiles(caseDir string) ([]string, error) {
+	names, err := listDirNamesOrFiles(caseDir)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, name := range names {
+		if strings.HasPrefix(name, "conversation-") && strings.HasSuffix(name, ".md") {
+			files = append(files, name)
+		}
+	}
+	slices.Sort(files)
+	if len(files) == 0 {
+		return nil, errors.New("missing conversation action files")
+	}
+	for index, name := range files {
+		expected := fmt.Sprintf("conversation-%02d.md", index+1)
+		if name != expected {
+			return nil, fmt.Errorf("expected %s, found %s", expected, name)
+		}
+	}
+	paths := make([]string, 0, len(files))
+	for _, name := range files {
+		paths = append(paths, filepath.Join(caseDir, name))
+	}
+	return paths, nil
+}
+
+func listDirNamesOrFiles(root string) ([]string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read directory %q: %w", root, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	slices.Sort(names)
+	return names, nil
 }
 
 func resolveAllCases(root string) ([]transcriptCase, error) {
@@ -459,6 +654,11 @@ func resolveVersionCases(root, version string) ([]transcriptCase, error) {
 		})
 	}
 	return cases, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func cleanupDir(path string) {

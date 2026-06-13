@@ -2,7 +2,9 @@
 name: approvals_file_change
 codex_version: 0.133.0
 model: gpt-5.4
-input: "prompt"
+actions:
+  - kind: prompt
+    text: "prompt"
 expect:
   output:
     num_messages: 0

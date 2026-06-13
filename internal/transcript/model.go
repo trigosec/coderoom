@@ -6,11 +6,30 @@ import "github.com/trigosec/coderoom/internal/agent"
 
 // File is the on-disk transcript fixture: front matter plus replay steps.
 type File struct {
-	Name         string `yaml:"name"`
-	CodexVersion string `yaml:"codex_version,omitempty"`
-	Model        string `yaml:"model,omitempty"`
-	Input        string `yaml:"input"`
-	Expect       Expect `yaml:"expect"`
+	Name         string   `yaml:"name"`
+	CodexVersion string   `yaml:"codex_version,omitempty"`
+	Model        string   `yaml:"model,omitempty"`
+	Input        string   `yaml:"input,omitempty"`
+	Actions      []Action `yaml:"actions,omitempty"`
+	Expect       Expect   `yaml:"expect"`
+}
+
+// Action is one normalized scenario action used to drive replay.
+type Action struct {
+	Kind string `yaml:"kind"`
+	Text string `yaml:"text"`
+}
+
+// NormalizedActions returns the recorded action list, or a legacy single
+// prompt action when older fixtures only carry Input.
+func NormalizedActions(file File) []Action {
+	if len(file.Actions) > 0 {
+		return file.Actions
+	}
+	if file.Input == "" {
+		return nil
+	}
+	return []Action{{Kind: "prompt", Text: file.Input}}
 }
 
 // Expect stores the high-level expectations captured during recording.
