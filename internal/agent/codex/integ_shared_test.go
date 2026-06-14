@@ -6,17 +6,13 @@ import (
 	"context"
 	"flag"
 	"os"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
 )
 
 var logDir = flag.String("logdir", "", "directory to write Codex wire logs into (if empty, uses the test temp dir)")
-
-const testTimeout = 20 * time.Second
 
 type approvalListenerFunc func(ctx context.Context, req agent.ApprovalRequest) (agent.ApprovalDecision, error)
 
@@ -52,62 +48,4 @@ func startClient(t *testing.T, c agent.Agent) {
 			t.Errorf("Stop: %v", err)
 		}
 	})
-}
-
-func containsApprovalOption(opts []agent.ApprovalOption, want agent.ApprovalOption) bool {
-	for _, opt := range opts {
-		if opt == want {
-			return true
-		}
-	}
-	return false
-}
-
-// readResponse drains Read() until the turn-end flush and returns the
-// accumulated output text. anchorID is the stream ID returned by Send(); when
-// non-empty, its ModeFlush is the authoritative turn-end signal. When empty,
-// falls back to the heuristic: all observed output streams have flushed.
-func readResponse(t *testing.T, c *codex.Client, anchorID agent.StreamID, timeout time.Duration) string {
-	t.Helper()
-	var sb strings.Builder
-	open := make(map[agent.StreamID]struct{})
-	seenOutput := false
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			msg, err := c.Read()
-			if err != nil {
-				return
-			}
-			if out, ok := msg.Content.(agent.Output); ok {
-				switch msg.Mode {
-				case agent.ModeStream:
-					seenOutput = true
-					open[msg.StreamID] = struct{}{}
-					sb.WriteString(out.Text)
-				case agent.ModeFlush:
-					if anchorID != "" && msg.StreamID == anchorID {
-						return
-					}
-					// SendNotice emits a synthetic turn-end flush on a dedicated
-					// stream. Ignore it here so callers waiting for a visible
-					// response do not terminate early with an empty string.
-					if msg.StreamID == agent.StreamID("codex:notice-turn") {
-						continue
-					}
-					delete(open, msg.StreamID)
-					if anchorID == "" && seenOutput && len(open) == 0 {
-						return
-					}
-				}
-			}
-		}
-	}()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Fatalf("timed out after %s waiting for response", timeout)
-	}
-	return sb.String()
 }
