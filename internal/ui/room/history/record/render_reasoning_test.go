@@ -4,17 +4,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 	"github.com/trigosec/coderoom/internal/agent"
 )
 
 func withANSIProfile(t *testing.T, fn func()) {
 	t.Helper()
-	prev := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	prev := lipgloss.Writer.Profile
+	lipgloss.Writer.Profile = colorprofile.ANSI256
+	t.Cleanup(func() { lipgloss.Writer.Profile = prev })
 	fn()
 }
 

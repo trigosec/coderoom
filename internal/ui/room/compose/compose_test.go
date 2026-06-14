@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -12,7 +12,7 @@ func TestAltEnter_insertsNewlineWithoutSubmitting(t *testing.T) {
 	m := New()
 	m = m.SetValue("hello")
 
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	m, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter, Mod: tea.ModAlt}))
 	if got := m.Value(); got != "hello\n" {
 		t.Fatalf("expected Alt+Enter to insert newline, got %q", got)
 	}
@@ -25,7 +25,7 @@ func TestCtrlC_clearsValue(t *testing.T) {
 	m := New()
 	m = m.SetValue("draft")
 
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
 	if cmd != nil {
 		t.Fatal("expected no cmd from Ctrl+C")
 	}
@@ -36,7 +36,7 @@ func TestCtrlC_clearsValue(t *testing.T) {
 
 func TestCtrlC_noopWhenEmpty(t *testing.T) {
 	m := New()
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
 	if cmd != nil {
 		t.Fatal("expected no cmd from Ctrl+C on empty input")
 	}
@@ -49,9 +49,9 @@ func TestCtrlRight_movesWordForward(t *testing.T) {
 	m := New()
 	m = m.SetWidth(40).SetValue("hello world")
 	// Move cursor to start (Ctrl+A) so there is a word to jump over.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
 	before := m.input.LineInfo().CharOffset
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: tea.ModCtrl}))
 	after := m.input.LineInfo().CharOffset
 	if after <= before {
 		t.Fatalf("expected ctrl+right to advance cursor; before=%d after=%d", before, after)
@@ -63,7 +63,7 @@ func TestCtrlLeft_movesWordBackward(t *testing.T) {
 	m = m.SetWidth(40).SetValue("hello world")
 	// Cursor starts at end after SetValue; ctrl+left must move it back.
 	before := m.input.LineInfo().CharOffset
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlLeft})
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModCtrl}))
 	after := m.input.LineInfo().CharOffset
 	if after >= before {
 		t.Fatalf("expected ctrl+left to move cursor back; before=%d after=%d", before, after)
@@ -84,14 +84,14 @@ func TestUp_onFirstLine_movesToFirstChar(t *testing.T) {
 	m = m.SetWidth(40).SetMaxHeightFromTotal(30).SetValue("hello\nworld")
 
 	// Move to first line.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	if got := m.input.Line(); got != 0 {
 		t.Fatalf("expected to be on first line, got %d", got)
 	}
 	// Put cursor at a non-zero column on the first line.
 	// Note: this mutates the textarea directly (bypassing Update/recalcHeight),
 	// which is intentional here: the test is about cursor movement semantics.
-	m.input.SetCursor(3)
+	m.input.SetCursorColumn(3)
 	if off := m.input.LineInfo().ColumnOffset; off == 0 {
 		t.Fatalf("expected cursor column >0 before Up, got %d", off)
 	}
@@ -101,7 +101,7 @@ func TestUp_onFirstLine_movesToFirstChar(t *testing.T) {
 	if !m.input.Focused() {
 		t.Fatal("expected textarea to be focused")
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	li := m.input.LineInfo()
 	if got := m.input.Line(); got != 0 {
 		t.Fatalf("expected to remain on first line after Up, got %d", got)
@@ -126,7 +126,7 @@ func TestDown_onLastLine_movesToLastChar(t *testing.T) {
 	}
 
 	// Down at bottom should move to end of line.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	if off := m.input.LineInfo().ColumnOffset; off != len("world") {
 		t.Fatalf("expected cursor to move to end of line (%d), got %d", len("world"), off)
 	}
@@ -174,7 +174,7 @@ func TestHasBelow_trueWhenCursorAtTop(t *testing.T) {
 	m = m.SetWidth(40).SetMaxHeightFromTotal(6).SetValue("a\nb\nc\nd\ne")
 	// Move cursor to the first line via Ctrl+Home equivalent (Ctrl+A then Up).
 	for range 10 {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	}
 	if !m.HasBelow() {
 		t.Error("expected HasBelow=true when cursor is at the top of an overflowing buffer")
@@ -237,7 +237,7 @@ func TestIndicators_overflowShowAboveBelow(t *testing.T) {
 
 	// Move cursor to top; bottom content is hidden.
 	for range 20 {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	}
 	if m.HasAbove() {
 		t.Error("expected HasAbove=false at top of buffer")
@@ -253,7 +253,7 @@ func TestKeyRunes_multiRuneWithTrailingSpace_updatesWrapping(t *testing.T) {
 
 	// Simulate IME/paste delivering multiple runes at once, including a trailing
 	// space that has historically triggered under-counting of wrapped rows.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("aaaaaaaaaaa aaaaaaaaaaa ")})
+	m, _ = m.Update(tea.PasteMsg{Content: "aaaaaaaaaaa aaaaaaaaaaa "})
 
 	if got := m.Height(); got < 2 {
 		t.Fatalf("expected wrapped input height >=2, got %d", got)
@@ -272,7 +272,7 @@ func TestView_scrolledToTop_showsPrompt(t *testing.T) {
 	}
 	// Move cursor to top.
 	for range 50 {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	}
 	view := ansi.Strip(m.View())
 	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
@@ -304,7 +304,7 @@ func TestScrollOff_stickyScrollTracksCursor(t *testing.T) {
 	// than one row per keypress.
 	prev := m.scrollOff
 	for range 20 {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 		if delta := prev - m.scrollOff; delta < 0 || delta > 1 {
 			t.Fatalf("unexpected scrollOff jump: prev=%d now=%d", prev, m.scrollOff)
 		}
@@ -316,7 +316,7 @@ func TestKeyRunes_multiRuneEndingWithNewline_keepsBlankLineVisible(t *testing.T)
 	m := New()
 	m = m.SetWidth(20).SetMaxHeightFromTotal(30)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello world\n")})
+	m, _ = m.Update(tea.PasteMsg{Content: "hello world\n"})
 
 	view := ansi.Strip(m.View())
 	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
@@ -341,7 +341,7 @@ func TestKeyRunes_multiLinePaste_doesNotHideFirstLine(t *testing.T) {
 	m = m.SetWidth(60).SetMaxHeightFromTotal(5)
 
 	paste := "I am glad that corpus made an impression. I am still exploring the workflow interaction and the feedback loop and will definitely involve you as it grows.\na"
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(paste)})
+	m, _ = m.Update(tea.PasteMsg{Content: paste})
 
 	view := ansi.Strip(m.View())
 	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
@@ -383,7 +383,7 @@ func TestKeyRunes_trailingDoubleSpaceBeforeNewline_doesNotClip(t *testing.T) {
 	// starts with continuation indent rather than the prompt).
 	for w := 12; w <= 80; w++ {
 		mw := m.SetWidth(w).SetMaxHeightFromTotal(30)
-		mw, _ = mw.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
+		mw, _ = mw.Update(tea.PasteMsg{Content: text})
 		view := ansi.Strip(mw.View())
 		lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
 		if len(lines) == 0 {

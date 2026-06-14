@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 )
 
 func TestHistoryFocus_rendersCursorInViewport(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	prev := lipgloss.Writer.Profile
+	lipgloss.Writer.Profile = colorprofile.ANSI256
+	t.Cleanup(func() { lipgloss.Writer.Profile = prev })
 
 	m := New(nil, "")
 	m = m.HandleResize(40, 10)
@@ -28,7 +28,7 @@ func TestHistoryFocus_rendersCursorInViewport(t *testing.T) {
 	}
 
 	// Enter history focus.
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
 	lines = strings.Split(next.View(), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected at least 2 lines in view; got %d", len(lines))

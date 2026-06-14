@@ -3,7 +3,7 @@ package room
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/ui/room/approval"
 	"github.com/trigosec/coderoom/internal/ui/room/staging"
@@ -57,13 +57,13 @@ func TestApprovalMode_enterEmitsApprovalDecisionMsgAndReturnsToCompose(t *testin
 		Options: []agent.ApprovalOption{agent.OptionDecline, agent.OptionAccept},
 	})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown}) // select accept
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown})) // select accept
 	if cmd != nil {
 		t.Fatal("expected no cmd from navigation")
 	}
 
 	// Enter produces a ConfirmMsg, which must be fed back into Update to get a decision.
-	next, cmd = next.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd = next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if cmd == nil {
 		t.Fatal("expected cmd from approval confirm")
 	}
@@ -92,7 +92,7 @@ func TestApprovalMode_escEmitsDeclineDecisionMsg(t *testing.T) {
 		Options: []agent.ApprovalOption{agent.OptionDecline, agent.OptionAccept},
 	})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
 	if cmd == nil {
 		t.Fatal("expected cmd from Esc cancel")
 	}
@@ -118,7 +118,7 @@ func TestApprovalMode_ctrlCEmitsCancelDecisionMsg(t *testing.T) {
 		Options: []agent.ApprovalOption{agent.OptionAccept, agent.OptionCancel, agent.OptionDecline},
 	})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
 	if cmd == nil {
 		t.Fatal("expected cmd from Ctrl+C cancel")
 	}
@@ -147,7 +147,7 @@ func TestApprovalMode_ctrlCRestoresStagedComposer(t *testing.T) {
 		Options: []agent.ApprovalOption{agent.OptionAccept, agent.OptionCancel, agent.OptionDecline},
 	})
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
 	if cmd == nil {
 		t.Fatal("expected cmd from Ctrl+C cancel")
 	}

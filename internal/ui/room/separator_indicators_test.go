@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -37,7 +37,7 @@ func TestSeparatorIndicators_topNeverShowsDown(t *testing.T) {
 	m = m.HandleResize(80, 9)
 	m = m.SetComposeValue("a\nb\nc\nd\ne")
 	for range 10 {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	}
 	top, _ := separatorLines(m)
 	if strings.Contains(top, "▼") {
@@ -50,7 +50,7 @@ func TestSeparatorIndicators_belowWhenCursorAtTop(t *testing.T) {
 	m = m.HandleResize(80, 9)
 	m = m.SetComposeValue("a\nb\nc\nd\ne")
 	for range 10 {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	}
 	_, bottom := separatorLines(m)
 	if !strings.Contains(bottom, "▼") {

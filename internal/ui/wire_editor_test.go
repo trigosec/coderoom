@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/ui/editor"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -16,7 +16,7 @@ func TestCtrlG_withoutEditorAddsSystemRecordAndPreservesBuffer(t *testing.T) {
 	m := makeReadyModel(t)
 	m.room = m.room.SetComposeValue("draft")
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'g', Mod: tea.ModCtrl}))
 	m2 := next.(Model)
 	if got := m2.room.ComposeValue(); got != "draft" {
 		t.Fatalf("expected input preserved when editor is unset, got %q", got)

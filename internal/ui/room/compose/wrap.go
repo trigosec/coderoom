@@ -36,7 +36,7 @@ func countVisualRows(text string, contentW int) int {
 }
 
 // wrapTextareaLine implements the same word-wrapping behavior as
-// github.com/charmbracelet/bubbles/textarea (v1.x).
+// charm.land/bubbles/v2/textarea (v1.x).
 //
 // Notably, it:
 //   - wraps on whitespace

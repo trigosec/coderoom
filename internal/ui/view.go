@@ -2,12 +2,14 @@ package ui
 
 import (
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 )
 
-// View renders the current model state as a string for Bubble Tea to display.
-func (m Model) View() string {
+// View renders the current model state for Bubble Tea to display.
+func (m Model) View() tea.View {
 	if !m.room.Ready() {
-		return ""
+		return tea.NewView("")
 	}
 	left := strings.Repeat(" ", marginH)
 
@@ -22,5 +24,7 @@ func (m Model) View() string {
 	// Avoid a trailing newline: when the rendered frame height matches the
 	// terminal height, a final newline can scroll the terminal and make the
 	// first row appear "missing".
-	return strings.TrimRight(sb.String(), "\n")
+	v := tea.NewView(strings.TrimRight(sb.String(), "\n"))
+	v.AltScreen = true
+	return v
 }

@@ -3,7 +3,7 @@ package room
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/ui/editor"
@@ -18,7 +18,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.WindowSizeMsg:
 		// Parent is expected to call HandleResize with a height already adjusted
@@ -41,17 +41,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlO {
+func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	k := msg.Key()
+	if k.Code == 'o' && k.Mod.Contains(tea.ModCtrl) {
 		return m.toggleFocus()
 	}
 
 	// PgUp/PgDn always scroll history, regardless of focus.
-	if msg.Type == tea.KeyPgUp {
+	if k.Code == tea.KeyPgUp {
 		m.history = m.history.HalfPageUp()
 		return m, nil
 	}
-	if msg.Type == tea.KeyPgDown {
+	if k.Code == tea.KeyPgDown {
 		m.history = m.history.HalfPageDown()
 		return m, nil
 	}
@@ -78,21 +79,20 @@ func (m Model) toggleFocus() (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleApprovalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
+func (m Model) handleApprovalKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	k := msg.Key()
+	if k.Code == 'c' && k.Mod.Contains(tea.ModCtrl) {
 		// Treat Ctrl+C as cancel when an approval is active.
 		next, cmd, _ := m.handleApprovalMessage(approval.CancelMsg{})
 		return next, cmd
-	default:
-		var cmd tea.Cmd
-		m.input.approval, cmd = m.input.approval.Update(msg)
-		// Confirmation/cancel is signaled via messages.
-		return m, cmd
 	}
+	var cmd tea.Cmd
+	m.input.approval, cmd = m.input.approval.Update(msg)
+	// Confirmation/cancel is signaled via messages.
+	return m, cmd
 }
 
-func (m Model) handleComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.input.kind == inputStaged {
 		return m.handleStagedComposeKey(msg)
 	}
@@ -100,17 +100,18 @@ func (m Model) handleComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m.handleDraftComposeKey(msg)
 }
 
-func (m Model) handleStagedComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
+func (m Model) handleStagedComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	k := msg.Key()
+	switch {
+	case k.Code == tea.KeyEsc:
 		// Return to draft mode with the staged text loaded for editing.
 		m = m.ClearComposerStaged()
 		m.focus = focusInput
 		next, focusCmd := m.composeFocus()
 		return next, tea.Batch(focusCmd, func() tea.Msg { return StagedEditMsg{} })
-	case tea.KeyCtrlX:
+	case k.Code == 'x' && k.Mod.Contains(tea.ModCtrl):
 		return m, func() tea.Msg { return StagedInterruptMsg{} }
-	case tea.KeyCtrlC:
+	case k.Code == 'c' && k.Mod.Contains(tea.ModCtrl):
 		if m.input.compose.Value() == "" {
 			return m, nil
 		}
@@ -124,11 +125,12 @@ func (m Model) handleStagedComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 }
 
-func (m Model) handleDraftComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleDraftComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	k := msg.Key()
 	switch {
-	case msg.Type == tea.KeyCtrlG:
+	case k.Code == 'g' && k.Mod.Contains(tea.ModCtrl):
 		return m.startEditorCompose()
-	case msg.Type == tea.KeyEnter && !msg.Alt:
+	case k.Code == tea.KeyEnter && !k.Mod.Contains(tea.ModAlt):
 		raw := m.input.compose.Value()
 		if strings.TrimSpace(raw) == "" {
 			return m, nil
@@ -144,12 +146,12 @@ func (m Model) handleDraftComposeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 }
 
-func (m Model) handleHistoryKey(msg tea.KeyMsg) (Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC:
-		return m, nil
-	case tea.KeyCtrlG:
-		return m.openEditorWithTranscript()
+func (m Model) handleHistoryKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	k := msg.Key()
+	if k.Mod.Contains(tea.ModCtrl) {
+		return m.handleHistoryCtrlKey(k, msg)
+	}
+	switch k.Code {
 	case tea.KeyUp:
 		m.history = m.history.ScrollUp(1)
 		return m, nil
@@ -168,6 +170,19 @@ func (m Model) handleHistoryKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m.composeFocus()
 		}
 		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.history, cmd = m.history.Update(msg)
+		return m, cmd
+	}
+}
+
+func (m Model) handleHistoryCtrlKey(k tea.Key, msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch k.Code {
+	case 'c':
+		return m, nil
+	case 'g':
+		return m.openEditorWithTranscript()
 	default:
 		var cmd tea.Cmd
 		m.history, cmd = m.history.Update(msg)

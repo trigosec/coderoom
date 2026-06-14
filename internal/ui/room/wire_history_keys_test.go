@@ -3,7 +3,7 @@ package room
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestPgUpPgDown_scrollHistoryWithoutAffectingComposer(t *testing.T) {
@@ -19,7 +19,7 @@ func TestPgUpPgDown_scrollHistoryWithoutAffectingComposer(t *testing.T) {
 	beforeInput := m.ComposeValue()
 	beforeY := m.YOffset()
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp}))
 	if next.ComposeValue() != beforeInput {
 		t.Fatalf("expected PgUp not to mutate composer input; got %q", next.ComposeValue())
 	}
@@ -27,7 +27,7 @@ func TestPgUpPgDown_scrollHistoryWithoutAffectingComposer(t *testing.T) {
 		t.Fatalf("expected PgUp to scroll history; yOffset unchanged (%d)", beforeY)
 	}
 
-	next2, _ := next.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	next2, _ := next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown}))
 	if next2.ComposeValue() != beforeInput {
 		t.Fatalf("expected PgDn not to mutate composer input; got %q", next2.ComposeValue())
 	}
@@ -41,14 +41,14 @@ func TestHistoryFocus_homeEndJumpToTopBottom(t *testing.T) {
 	}
 
 	// Enter history focus.
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
 
-	next, _ = next.Update(tea.KeyMsg{Type: tea.KeyHome})
+	next, _ = next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
 	if next.YOffset() != 0 {
 		t.Fatalf("expected Home to jump to top; yOffset=%d", next.YOffset())
 	}
 
-	next, _ = next.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	next, _ = next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd}))
 	if !next.AtBottom() {
 		t.Fatalf("expected End to jump to bottom; yOffset=%d", next.YOffset())
 	}
@@ -63,10 +63,10 @@ func TestHistoryFocus_arrowKeysScroll(t *testing.T) {
 	m = m.GotoBottom()
 
 	// Enter history focus.
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
 	beforeY := next.YOffset()
 
-	next2, _ := next.Update(tea.KeyMsg{Type: tea.KeyUp})
+	next2, _ := next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
 	if next2.YOffset() == beforeY {
 		t.Fatalf("expected Up to scroll history in history focus; yOffset unchanged (%d)", beforeY)
 	}

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
 	"github.com/trigosec/coderoom/internal/session"
@@ -59,7 +59,6 @@ func run() int {
 
 	if _, err := tea.NewProgram(
 		ui.New(sess, cwd, opts...),
-		tea.WithAltScreen(),
 	).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1

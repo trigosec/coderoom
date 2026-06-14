@@ -11,7 +11,7 @@ func TestView_doesNotEndWithNewline(t *testing.T) {
 	// Add some content so we exercise the viewport/input/toolbox composition.
 	m.room = m.room.AppendSystem("[x]")
 
-	view := m.View()
+	view := m.View().Content
 	if strings.HasSuffix(view, "\n") {
 		// Bug/regression guard:
 		// When the rendered frame height matches the terminal height, a trailing
@@ -32,7 +32,7 @@ func TestView_doesNotExceedTerminalHeight(t *testing.T) {
 		m.room = m.room.AppendSystem("[x]")
 	}
 
-	view := m.View()
+	view := m.View().Content
 	lines := 0
 	if view != "" {
 		lines = strings.Count(view, "\n") + 1

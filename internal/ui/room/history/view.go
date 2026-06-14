@@ -21,7 +21,7 @@ func (m Model) View() string {
 	if viewportView != "" {
 		viewportLines = strings.Split(viewportView, "\n")
 	}
-	lines := make([]string, m.viewport.Height)
+	lines := make([]string, m.viewport.Height())
 	for i := range lines {
 		if i < len(viewportLines) {
 			lines[i] = viewportLines[i]
@@ -95,7 +95,7 @@ func (m Model) DebugLabel() string {
 	}
 
 	return fmt.Sprintf("y=%d h=%d rec=%d ln=%d first=%s viewFirst=%s viewWho=%d viewLn=%d",
-		m.viewport.YOffset, m.viewport.Height,
+		m.viewport.YOffset(), m.viewport.Height(),
 		len(m.records), contentLines,
 		first, viewFirst,
 		viewWho, viewLines)
@@ -113,7 +113,7 @@ func (m Model) DebugSummary() string {
 		lines = lines[:8]
 	}
 	parts := []string{
-		fmt.Sprintf("  y=%d h=%d rec=%d", m.viewport.YOffset, m.viewport.Height, len(m.records)),
+		fmt.Sprintf("  y=%d h=%d rec=%d", m.viewport.YOffset(), m.viewport.Height(), len(m.records)),
 		"  viewTop:",
 	}
 	for _, line := range lines {

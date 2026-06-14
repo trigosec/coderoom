@@ -3,7 +3,7 @@ package compose
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textarea"
+	"charm.land/bubbles/v2/textarea"
 )
 
 // cursorVisualRowCol returns the cursor position in visual (soft-wrapped)

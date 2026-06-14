@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/ui/room/staging"
 )
 
@@ -37,7 +37,7 @@ func TestEnter_emitsSubmitMsgAndClearsComposer(t *testing.T) {
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("hello")
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if got := next.ComposeValue(); got != "" {
 		t.Fatalf("expected Enter to clear composer immediately, got %q", got)
 	}
@@ -59,11 +59,11 @@ func TestEnter_secondPressDoesNotEmitDuplicateSubmit(t *testing.T) {
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("hello")
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if cmd == nil {
 		t.Fatal("expected first Enter to emit SubmitMsg")
 	}
-	next2, cmd2 := next.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next2, cmd2 := next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if cmd2 != nil {
 		msg := cmd2()
 		t.Fatalf("expected second Enter to emit no command, got %T (%v)", msg, msg)
@@ -78,7 +78,7 @@ func TestEnter_whitespaceOnlyDoesNotEmitSubmitMsg(t *testing.T) {
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("   \n\t ")
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	if got := next.ComposeValue(); got == "" {
 		t.Fatalf("expected Enter not to clear composer for whitespace-only input")
 	}
@@ -93,7 +93,7 @@ func TestCtrlC_clearsComposerOnlyWhenFocused(t *testing.T) {
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("draft")
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
 	if cmd != nil {
 		t.Fatalf("expected Ctrl+C to return nil cmd, got non-nil")
 	}
@@ -102,10 +102,10 @@ func TestCtrlC_clearsComposerOnlyWhenFocused(t *testing.T) {
 	}
 
 	// Switch to history focus.
-	next, _ = next.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	next, _ = next.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
 	next = next.SetComposeValue("draft2")
 
-	next2, _ := next.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	next2, _ := next.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
 	if got := next2.ComposeValue(); got != "draft2" {
 		t.Fatalf("expected Ctrl+C no-op in history focus, got %q", got)
 	}
@@ -169,7 +169,7 @@ func TestStagedComposer_blocksKeysAndEscEmitsEditMsg(t *testing.T) {
 	m = m.SetComposerStaged("hello", "Message on-hold.")
 
 	// Random typing is ignored.
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'x', Text: "x"}))
 	if cmd != nil {
 		t.Fatalf("expected no cmd from typing while staged, got non-nil")
 	}
@@ -178,7 +178,7 @@ func TestStagedComposer_blocksKeysAndEscEmitsEditMsg(t *testing.T) {
 	}
 
 	// Esc exits staged mode and emits StagedEditMsg.
-	next2, cmd2 := next.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	next2, cmd2 := next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
 	if next2.IsComposerStaged() {
 		t.Fatal("expected staged mode cleared after Esc")
 	}
@@ -205,7 +205,7 @@ func TestDispatchStagedBatch_restoresComposerFocus(t *testing.T) {
 	}
 
 	// Typing should work again after auto-dispatch clears staging.
-	next2, _ := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	next2, _ := next.Update(tea.KeyPressMsg(tea.Key{Code: 'x', Text: "x"}))
 	if got := next2.ComposeValue(); got != "x" {
 		t.Fatalf("expected composer to accept input after dispatch, got %q", got)
 	}

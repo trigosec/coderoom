@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -19,9 +19,9 @@ func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 		// Many terminals deliver "normal typing" as KeyRunes with a single rune,
 		// but some inputs (IME/paste) may deliver multiple runes at once. Exercise
 		// both forms by sending the whole line as one KeyRunes message.
-		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(line)})
+		next, _ := m.Update(tea.PasteMsg{Content: line})
 		m = next.(Model)
-		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 		m = next.(Model)
 		if cmd != nil {
 			next, _ = m.Update(cmd())
@@ -66,9 +66,9 @@ func TestWhoEcho_twiceVisibleInSmallTerminal(t *testing.T) {
 	m := makeReadyModelWithHeight(t, 11)
 
 	sendLine := func(line string) {
-		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(line)})
+		next, _ := m.Update(tea.PasteMsg{Content: line})
 		m = next.(Model)
-		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 		m = next.(Model)
 		if cmd != nil {
 			next, _ = m.Update(cmd())

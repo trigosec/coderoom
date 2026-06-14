@@ -1,7 +1,7 @@
 package compose
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Update handles messages. Ctrl+C clears the input; Alt+Enter inserts a
@@ -11,12 +11,12 @@ import (
 // parent before reaching this Update.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	default:
 		// Paste events and other textarea-driven messages arrive here (not as
-		// KeyMsg). Recalculate height before and after so the textarea's internal
-		// viewport scrolling decisions use the correct height.
+		// KeyPressMsg). Recalculate height before and after so the textarea's
+		// internal viewport scrolling decisions use the correct height.
 		m = m.recalcHeight()
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -24,7 +24,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if out, ok := m.handleCtrlCKey(msg); ok {
 		return out, nil
 	}
@@ -37,8 +37,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m.handleTextKey(msg)
 }
 
-func (m Model) handleCtrlCKey(msg tea.KeyMsg) (Model, bool) {
-	if msg.Type != tea.KeyCtrlC {
+func (m Model) handleCtrlCKey(msg tea.KeyPressMsg) (Model, bool) {
+	k := msg.Key()
+	if k.Code != 'c' || !k.Mod.Contains(tea.ModCtrl) {
 		return m, false
 	}
 	if m.input.Value() == "" {
@@ -48,11 +49,12 @@ func (m Model) handleCtrlCKey(msg tea.KeyMsg) (Model, bool) {
 	return m.recalcHeight(), true
 }
 
-func (m Model) handleEnterKey(msg tea.KeyMsg) (Model, bool) {
-	if msg.Type != tea.KeyEnter {
+func (m Model) handleEnterKey(msg tea.KeyPressMsg) (Model, bool) {
+	k := msg.Key()
+	if k.Code != tea.KeyEnter {
 		return m, false
 	}
-	if msg.Alt {
+	if k.Mod.Contains(tea.ModAlt) {
 		m.input.InsertRune('\n')
 		return m.recalcHeight(), true
 	}
@@ -60,8 +62,9 @@ func (m Model) handleEnterKey(msg tea.KeyMsg) (Model, bool) {
 	return m, true
 }
 
-func (m Model) handleNavKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
-	switch msg.Type {
+func (m Model) handleNavKey(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	k := msg.Key()
+	switch k.Code {
 	case tea.KeyUp:
 		// When already on the first visual row of the buffer, Up moves to the
 		// first character.
@@ -79,7 +82,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		li := m.input.LineInfo()
 		if m.input.Line() >= lastLine && li.RowOffset+1 >= li.Height {
 			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnd})
+			m.input, cmd = m.input.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd}))
 			return m.recalcHeight(), cmd, true
 		}
 		var cmd tea.Cmd
@@ -90,7 +93,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	}
 }
 
-func (m Model) handleTextKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleTextKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	m = m.recalcHeight()
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)

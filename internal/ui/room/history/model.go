@@ -3,7 +3,7 @@ package history
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
+	"charm.land/bubbles/v2/viewport"
 	"github.com/trigosec/coderoom/internal/agent"
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -51,9 +51,9 @@ func New(colorByAlias func(string) string, departedColor string) Model {
 
 // ScrollStats reports the current scroll position and content height.
 func (m Model) ScrollStats() ScrollStats {
-	viewportRows := m.viewport.Height
+	viewportRows := m.viewport.Height()
 	contentRows := m.contentLines
-	top := m.viewport.YOffset
+	top := m.viewport.YOffset()
 
 	if viewportRows < 0 {
 		viewportRows = 0
@@ -108,7 +108,7 @@ func (m Model) viewportRenderContext() rec.RenderContext {
 	return rec.RenderContext{
 		Key: rec.RenderKey{
 			Mode:         rec.RenderViewport,
-			Width:        m.viewport.Width,
+			Width:        m.viewport.Width(),
 			ColorVersion: m.colorVersion,
 		},
 		ColorForAlias: m.resolveColor,
@@ -149,10 +149,10 @@ func (m Model) StreamingIdx(alias string) (int, bool) {
 func (m Model) IsDeparted(alias string) bool { return m.departed[alias] }
 
 // Height returns the current viewport height.
-func (m Model) Height() int { return m.viewport.Height }
+func (m Model) Height() int { return m.viewport.Height() }
 
 // Width returns the current viewport width.
-func (m Model) Width() int { return m.viewport.Width }
+func (m Model) Width() int { return m.viewport.Width() }
 
 // ToggleDebugRowNums flips the row-number overlay.
 func (m Model) ToggleDebugRowNums() Model {

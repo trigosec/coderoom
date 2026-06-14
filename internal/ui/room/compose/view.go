@@ -3,7 +3,7 @@ package compose
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textarea"
+	"charm.land/bubbles/v2/textarea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -16,7 +16,7 @@ var promptWidth = ansi.StringWidth("❯ ")
 // TODO: once charmbracelet/bubbles/v2 ships PR #822, the custom rendering
 // below can be replaced with a targeted post-paste viewport reset via the
 // public API. Requires migrating from bubbles v1 to v2 (different import
-// path). See: https://github.com/charmbracelet/bubbles/pull/822
+// path). See: https://charm.land/bubbles/v2/pull/822
 func (m Model) View() string {
 	// Don't rely on textarea's internal viewport rendering for multi-line input.
 	// When pasting multiple logical lines, textarea's viewport can end up
@@ -36,8 +36,8 @@ func (m Model) View() string {
 
 func applyDecorations(input textarea.Model) textarea.Model {
 	input.ShowLineNumbers = false
-	input.SetPromptFunc(promptWidth, func(lineIndex int) string {
-		if lineIndex == 0 {
+	input.SetPromptFunc(promptWidth, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
 			return "❯ "
 		}
 		return "  "

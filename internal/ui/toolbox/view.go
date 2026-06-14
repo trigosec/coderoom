@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	rw "github.com/mattn/go-runewidth"
 	"github.com/trigosec/coderoom/internal/participant"
@@ -190,9 +190,12 @@ func renderCell(p participant.Participant, now time.Time, width int) string {
 	reserved := ansi.StringWidth(glyph) + 1 + ansi.StringWidth(elapsed)
 	aliasAvail := min(aliasMax, max(0, width-reserved))
 	base := glyph + " " + truncateToWidth(p.Alias, aliasAvail) + elapsed
-	cell := padOrTruncateToWidth(base, width)
 	if p.Color != "" {
-		cell = lipgloss.NewStyle().Foreground(lipgloss.Color(p.Color)).Render(cell)
+		colored := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Color)).Render(base)
+		if pad := width - ansi.StringWidth(base); pad > 0 {
+			return colored + strings.Repeat(" ", pad)
+		}
+		return colored
 	}
-	return cell
+	return padOrTruncateToWidth(base, width)
 }

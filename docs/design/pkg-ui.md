@@ -164,10 +164,10 @@ Open questions (deferred to implementation):
 ## Dependencies
 
 ```
-github.com/charmbracelet/bubbletea         # framework
-github.com/charmbracelet/bubbles/viewport  # scrollable history output
-github.com/charmbracelet/bubbles/textarea  # multi-line compose input
-github.com/charmbracelet/lipgloss          # styling
+charm.land/bubbletea/v2                    # framework
+charm.land/bubbles/v2/viewport             # scrollable history output
+charm.land/bubbles/v2/textarea             # multi-line compose input
+charm.land/lipgloss/v2                     # styling
 github.com/rivo/uniseg                     # display-width-aware line metrics
 ```
 

@@ -1,7 +1,7 @@
 package approval
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // ConfirmMsg is emitted when the user confirms the currently selected option.
@@ -12,39 +12,24 @@ type CancelMsg struct{}
 
 // Update handles key navigation for approvals.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+	key, ok := msg.(tea.KeyPressMsg)
 	if !ok || !m.Active() {
 		return m, nil
 	}
 	return m.handleKey(key)
 }
 
-func (m Model) handleKey(key tea.KeyMsg) (Model, tea.Cmd) {
-	switch key.Type {
-	case tea.KeyUp:
+func (m Model) handleKey(key tea.KeyPressMsg) (Model, tea.Cmd) {
+	k := key.Key()
+	switch k.Code {
+	case tea.KeyUp, 'k':
 		return m.move(-1), nil
-	case tea.KeyDown:
+	case tea.KeyDown, 'j':
 		return m.move(1), nil
-	case tea.KeyRunes:
-		return m.handleRunes(key.Runes)
 	case tea.KeyEnter:
 		return m, func() tea.Msg { return ConfirmMsg{} }
 	case tea.KeyEsc:
 		return m, func() tea.Msg { return CancelMsg{} }
-	default:
-		return m, nil
-	}
-}
-
-func (m Model) handleRunes(runes []rune) (Model, tea.Cmd) {
-	if len(runes) != 1 {
-		return m, nil
-	}
-	switch runes[0] {
-	case 'k':
-		return m.move(-1), nil
-	case 'j':
-		return m.move(1), nil
 	default:
 		return m, nil
 	}

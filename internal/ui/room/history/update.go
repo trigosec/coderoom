@@ -3,8 +3,8 @@ package history
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -12,18 +12,18 @@ import (
 // SetSize initialises or resizes the viewport.
 func (m Model) SetSize(w, h int) Model {
 	if !m.ready {
-		m.viewport = viewport.New(w, h)
+		m.viewport = viewport.New(viewport.WithWidth(w), viewport.WithHeight(h))
 		m.ready = true
 	} else {
-		m.viewport.Width = w
-		m.viewport.Height = h
+		m.viewport.SetWidth(w)
+		m.viewport.SetHeight(h)
 	}
 	return m.syncViewport()
 }
 
 // SetHeight adjusts the viewport height and re-syncs content.
 func (m Model) SetHeight(h int) Model {
-	m.viewport.Height = h
+	m.viewport.SetHeight(h)
 	return m.syncViewport()
 }
 
@@ -215,7 +215,7 @@ func (m Model) GotoBottom() Model { m.viewport.GotoBottom(); return m }
 func (m Model) AtBottom() bool { return m.viewport.AtBottom() }
 
 // YOffset returns the current viewport vertical scroll offset.
-func (m Model) YOffset() int { return m.viewport.YOffset }
+func (m Model) YOffset() int { return m.viewport.YOffset() }
 
 func (m Model) syncViewport() Model {
 	if !m.ready {
