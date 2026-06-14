@@ -44,9 +44,10 @@ release:
 	@git diff --exit-code --quiet && git diff --cached --exit-code --quiet || \
 		(echo "error: working tree is dirty — commit first"; exit 1)
 	@VERSION=$$(./scripts/next-version.sh); \
+	GITHUB_TOKEN=$$(gh auth token) && \
 	echo "releasing $$VERSION"; \
 	git tag $$VERSION && \
-	goreleaser release --clean
+	GITHUB_TOKEN=$$GITHUB_TOKEN goreleaser release --clean
 
 .PHONY: commit-release
 commit-release: commit release
