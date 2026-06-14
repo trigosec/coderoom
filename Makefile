@@ -35,6 +35,22 @@ upgrade-codex:
 install-hooks:
 	ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 
+.PHONY: commit
+commit:
+	git commit
+
+.PHONY: release
+release:
+	@git diff --exit-code --quiet && git diff --cached --exit-code --quiet || \
+		(echo "error: working tree is dirty — commit first"; exit 1)
+	@VERSION=$$(./scripts/next-version.sh); \
+	echo "releasing $$VERSION"; \
+	git tag $$VERSION && \
+	goreleaser release --clean
+
+.PHONY: commit-release
+commit-release: commit release
+
 # Playground targets
 .PHONY: $(shell grep -h '\.PHONY' playground/Makefile | sed 's/\.PHONY: //')
 %:
