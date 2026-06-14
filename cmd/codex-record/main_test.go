@@ -6,6 +6,25 @@ import (
 	"testing"
 )
 
+func TestCollectorNormalizeRecordedPath(t *testing.T) {
+	c := &collector{workDir: "/tmp/codex-record-123"}
+
+	if got := c.normalizeRecordedPath("/tmp/codex-record-123/file.txt"); got != "file.txt" {
+		t.Fatalf("normalizeRecordedPath(file) = %q, want file.txt", got)
+	}
+	if got := c.normalizeRecordedPath("/tmp/codex-record-123/nested/file.txt"); got != filepath.Join("nested", "file.txt") {
+		t.Fatalf("normalizeRecordedPath(nested) = %q", got)
+	}
+	other := "/tmp/other/file.txt"
+	if got := c.normalizeRecordedPath(other); got != other {
+		t.Fatalf("normalizeRecordedPath(other) = %q, want %q", got, other)
+	}
+	relative := "already-relative.txt"
+	if got := c.normalizeRecordedPath(relative); got != relative {
+		t.Fatalf("normalizeRecordedPath(relative) = %q, want %q", got, relative)
+	}
+}
+
 func TestResolveSelection(t *testing.T) {
 	root := filepath.Join("..", "..", "internal", "agent", "codex", "testdata", "transcripts")
 

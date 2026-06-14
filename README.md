@@ -89,11 +89,12 @@ sending to that agent).
 
 ```
 make test  # quick test suite
-make check # golangci-lint and test suite with -race
+make pre-commit # golangci-lint and test suite with -race
+make test-all   # full test suite including integration tests
 ```
 
 Integration tests (require external CLIs):
 
-```
+```bash
 make test-integration
 ```

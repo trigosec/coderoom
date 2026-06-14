@@ -15,8 +15,8 @@ make build              # build ./cmd/coderoom
 make lint               # run golangci-lint
 make test               # unit tests
 make test-integration   # integration tests (requires Codex installed)
-make check              # lint + test
-make check-all          # lint + test + test-integration (used by pre-commit)
+make pre-commit         # lint + test
+make test-all           # lint + test + test-integration
 make upgrade-codex      # advance pinned Codex version to latest
 make install-hooks      # install pre-commit hook
 ```

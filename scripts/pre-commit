@@ -3,7 +3,7 @@ set -e
 
 start=$(date +%s)
 
-make check
+make pre-commit
 
 end=$(date +%s)
 elapsed=$((end - start))

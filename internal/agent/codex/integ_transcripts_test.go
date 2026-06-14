@@ -38,7 +38,7 @@ func TestClientLiveTranscriptScenarios(t *testing.T) {
 		codex.WithModel("gpt-5.4"),
 		codex.WithAskForApprovalPolicy(codex.AskOnRequest),
 		codex.WithSandboxMode(codex.SandboxDangerFull),
-		codex.WithReasoningEffort(codex.ReasoningHigh),
+		codex.WithReasoningEffort(codex.ReasoningMedium),
 		codex.WithReasoningSummary(codex.ReasoningSummaryDetailed),
 	)
 	startClient(t, client)

@@ -27,6 +27,7 @@ type transcriptCase struct {
 
 type collector struct {
 	turnAnchor agent.StreamID
+	workDir    string
 
 	outputCount      int
 	outputText       strings.Builder
@@ -52,14 +53,22 @@ func main() {
 	}
 
 	for _, tc := range cases {
+		if _, err := fmt.Fprintf(os.Stdout, "recording transcript %s (%s)\n", tc.name, tc.version); err != nil {
+			fmt.Fprintf(os.Stderr, "write progress: %v\n", err)
+			os.Exit(1)
+		}
 		input, readErr := transcript.ReadInputDir(tc.dir)
 		if readErr != nil {
-			fmt.Fprintf(os.Stderr, "read scenario: %v\n", readErr)
+			fmt.Fprintf(os.Stderr, "read scenario %s (%s): %v\n", tc.name, tc.dir, readErr)
 			os.Exit(1)
 		}
 
 		if err := recordCase(tc.dir, tc.version, tc.name, input); err != nil {
-			fmt.Fprintf(os.Stderr, "record transcript: %v\n", err)
+			fmt.Fprintf(os.Stderr, "record transcript %s (%s): %v\n", tc.name, tc.dir, err)
+			os.Exit(1)
+		}
+		if _, err := fmt.Fprintf(os.Stdout, "recorded transcript %s (%s)\n", tc.name, tc.version); err != nil {
+			fmt.Fprintf(os.Stderr, "write progress: %v\n", err)
 			os.Exit(1)
 		}
 	}
@@ -79,7 +88,7 @@ func recordCase(caseDir, version, testCase string, input transcript.Input) error
 	defer restoreEnv()
 
 	recorder := transcript.NewObserver()
-	collector := &collector{}
+	collector := &collector{workDir: workDir}
 	client, err := startClient(workDir, testCase, input.Config, recorder, collector)
 	if err != nil {
 		return err
@@ -225,7 +234,7 @@ func (c *collector) observe(msg agent.Message) {
 	case agent.FileChangeSet:
 		c.fileChangeCount++
 		for _, change := range content.Changes {
-			appendUnique(&c.filePaths, change.Path)
+			appendUnique(&c.filePaths, c.normalizeRecordedPath(change.Path))
 		}
 	case agent.Command:
 		c.commandCount++
@@ -258,6 +267,20 @@ func (c *collector) observeReasoningStream(msg agent.Message) {
 		state.sawFlush = true
 	}
 	c.reasoningStreams[msg.StreamID] = state
+}
+
+func (c *collector) normalizeRecordedPath(path string) string {
+	if c.workDir == "" || !filepath.IsAbs(path) {
+		return path
+	}
+	rel, err := filepath.Rel(c.workDir, path)
+	if err != nil {
+		return path
+	}
+	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return path
+	}
+	return filepath.Clean(rel)
 }
 
 func (c *collector) reasoningNumStreams() int {

@@ -21,17 +21,15 @@ test-race:
 test-integration:
 	go test -tags integration ./...
 
-# check-all runs everything. Track wall time — when it exceeds 15-20s
-# consistently, split pre-commit to use `check` (lint + unit tests only).
-.PHONY: check-all
-check-all: lint test-race test-integration
+.PHONY: test-all
+test-all: lint test-race test-integration
 
-.PHONY: check
-check: lint test-race
+.PHONY: pre-commit
+pre-commit: lint test-race
 
-.PHONY: codex-update
-codex-update:
-	./scripts/upgrade-codex.sh
+.PHONY: upgrade-codex
+upgrade-codex:
+	./scripts/upgrade-codex-latest.sh
 
 .PHONY: install-hooks
 install-hooks:
