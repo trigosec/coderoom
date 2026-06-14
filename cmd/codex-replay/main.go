@@ -28,7 +28,7 @@ func run() error {
 	}
 	defer closeTranscript(file)
 
-	_, steps, err := transcript.Read(file)
+	_, steps, err := transcript.ReadOutput(file)
 	if err != nil {
 		return fmt.Errorf("read transcript: %w", err)
 	}

@@ -16,7 +16,7 @@ func TestRead_FromTestdata(t *testing.T) {
 		t.Fatalf("ReadFile(%q): %v", path, err)
 	}
 
-	gotFile, gotSteps, err := Read(bytes.NewReader(data))
+	gotFile, gotSteps, err := ReadOutput(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestRead_FromTestdata(t *testing.T) {
 }
 
 func TestWrite_MatchesTestdata(t *testing.T) {
-	file := File{
+	output := Output{
 		Name:         "approvals_file_change",
 		CodexVersion: "0.133.0",
 		Model:        "gpt-5.4",
@@ -44,7 +44,7 @@ func TestWrite_MatchesTestdata(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := Write(&buf, file, steps); err != nil {
+	if err := WriteOutput(&buf, output, steps); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 
@@ -62,12 +62,12 @@ func TestRead_MissingDelimiter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(malformed): %v", err)
 	}
-	if _, _, err := Read(bytes.NewReader(data)); err == nil {
+	if _, _, err := ReadOutput(bytes.NewReader(data)); err == nil {
 		t.Fatal("Read succeeded, want error for missing delimiter")
 	}
 }
 
-func assertTranscriptFile(t *testing.T, gotFile File) {
+func assertTranscriptFile(t *testing.T, gotFile Output) {
 	t.Helper()
 	assertTranscriptIdentity(t, gotFile)
 	assertTranscriptReasoningExpectation(t, gotFile.Expect.Reasoning)
@@ -77,7 +77,7 @@ func assertTranscriptFile(t *testing.T, gotFile File) {
 	assertTranscriptApprovals(t, gotFile.Expect.Approvals)
 }
 
-func assertTranscriptIdentity(t *testing.T, gotFile File) {
+func assertTranscriptIdentity(t *testing.T, gotFile Output) {
 	t.Helper()
 	if gotFile.Name != "approvals_file_change" {
 		t.Fatalf("name = %q, want approvals_file_change", gotFile.Name)

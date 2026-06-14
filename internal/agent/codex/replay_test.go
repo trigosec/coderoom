@@ -117,16 +117,16 @@ func transcriptCaseName(path string) string {
 	return filepath.ToSlash(strings.TrimPrefix(dir, "testdata/transcripts/"))
 }
 
-func readTranscriptFixture(path string) (transcript.File, error) {
+func readTranscriptFixture(path string) (transcript.Output, error) {
 	file, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return transcript.File{}, fmt.Errorf("open %q: %w", path, err)
+		return transcript.Output{}, fmt.Errorf("open %q: %w", path, err)
 	}
 	defer func() { _ = file.Close() }()
 
-	fixture, _, err := transcript.Read(file)
+	fixture, _, err := transcript.ReadOutput(file)
 	if err != nil {
-		return transcript.File{}, fmt.Errorf("parse %q: %w", path, err)
+		return transcript.Output{}, fmt.Errorf("parse %q: %w", path, err)
 	}
 	return fixture, nil
 }

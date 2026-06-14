@@ -1,11 +1,9 @@
-// Package transcript defines the transcript fixture model and IO helpers used
-// by Codex recording and replay tooling.
 package transcript
 
 import "github.com/trigosec/coderoom/internal/agent"
 
-// File is the on-disk transcript fixture: front matter plus replay steps.
-type File struct {
+// Output is the on-disk transcript fixture: front matter plus replay steps.
+type Output struct {
 	Name         string   `yaml:"name"`
 	CodexVersion string   `yaml:"codex_version,omitempty"`
 	Model        string   `yaml:"model,omitempty"`
@@ -14,29 +12,26 @@ type File struct {
 	Expect       Expect   `yaml:"expect"`
 }
 
-// Action is one normalized scenario action used to drive replay.
-type Action struct {
-	Kind string `yaml:"kind"`
-	Text string `yaml:"text"`
-}
+// File is a compatibility alias for the recorded transcript fixture.
+type File = Output
 
 // NormalizedActions returns the recorded action list, or a legacy single
 // prompt action when older fixtures only carry Input.
-func NormalizedActions(file File) []Action {
-	if len(file.Actions) > 0 {
-		return file.Actions
+func NormalizedActions(output Output) []Action {
+	if len(output.Actions) > 0 {
+		return output.Actions
 	}
-	if file.Input == "" {
+	if output.Input == "" {
 		return nil
 	}
-	return []Action{{Kind: "prompt", Text: file.Input}}
+	return []Action{{Kind: "prompt", Text: output.Input}}
 }
 
 // DefaultNoticeTurnFlushes returns the backward-compatible notice flush count
 // implied by the normalized action list.
-func DefaultNoticeTurnFlushes(file File) int {
+func DefaultNoticeTurnFlushes(output Output) int {
 	count := 0
-	for _, action := range NormalizedActions(file) {
+	for _, action := range NormalizedActions(output) {
 		if action.Kind == "notice" {
 			count++
 		}
