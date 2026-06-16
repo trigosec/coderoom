@@ -1,6 +1,6 @@
-// Command codex-upgrade-compare compares two transcript version directories and
-// validates that the newer recordings preserve the broad behavioral signals
-// present in the older version.
+// Command codex-upgrade-compare compares two transcript version directories or
+// two transcript output files and validates that the newer recordings preserve
+// the broad behavioral signals present in the older version.
 package main
 
 import (
@@ -21,9 +21,27 @@ func main() {
 
 func run() error {
 	if len(os.Args) != 3 {
-		return fmt.Errorf("usage: codex-upgrade-compare <previous-version-dir> <current-version-dir>")
+		return fmt.Errorf("usage: codex-upgrade-compare <previous-version-dir|previous-output.transcript> <current-version-dir|current-output.transcript>")
 	}
-	return compareVersionDirs(filepath.Clean(os.Args[1]), filepath.Clean(os.Args[2]))
+	previousPath := filepath.Clean(os.Args[1])
+	currentPath := filepath.Clean(os.Args[2])
+
+	previousInfo, err := os.Stat(previousPath)
+	if err != nil {
+		return fmt.Errorf("stat %q: %w", previousPath, err)
+	}
+	currentInfo, err := os.Stat(currentPath)
+	if err != nil {
+		return fmt.Errorf("stat %q: %w", currentPath, err)
+	}
+
+	if previousInfo.IsDir() != currentInfo.IsDir() {
+		return fmt.Errorf("path kinds differ: previous=%q current=%q", previousPath, currentPath)
+	}
+	if previousInfo.IsDir() {
+		return compareVersionDirs(previousPath, currentPath)
+	}
+	return compareOutputFiles(previousPath, currentPath)
 }
 
 func compareVersionDirs(previousDir, currentDir string) error {
@@ -50,6 +68,21 @@ func compareVersionDirs(previousDir, currentDir string) error {
 		if err := transcript.CompareUpgradeOutputs(previousOutput, currentOutput); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
+	}
+	return nil
+}
+
+func compareOutputFiles(previousPath, currentPath string) error {
+	previousOutput, err := readOutput(previousPath)
+	if err != nil {
+		return fmt.Errorf("previous transcript: %w", err)
+	}
+	currentOutput, err := readOutput(currentPath)
+	if err != nil {
+		return fmt.Errorf("current transcript: %w", err)
+	}
+	if err := transcript.CompareUpgradeOutputs(previousOutput, currentOutput); err != nil {
+		return fmt.Errorf("compare transcripts: %w", err)
 	}
 	return nil
 }

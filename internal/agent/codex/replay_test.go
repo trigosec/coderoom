@@ -218,6 +218,24 @@ func (c *replayCollector) observeLifecycleFlush(msg agent.Message) bool {
 	return false
 }
 
+func normalizeReplayFilePath(path string) string {
+	if !filepath.IsAbs(path) {
+		return path
+	}
+	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	for i, part := range parts {
+		if !strings.HasPrefix(part, "codex-record-") {
+			continue
+		}
+		rel := filepath.Join(parts[i+1:]...)
+		if rel == "" || rel == "." {
+			return path
+		}
+		return filepath.Clean(rel)
+	}
+	return path
+}
+
 type commandStreamState struct {
 	sawStart    bool
 	sawExitCode bool
@@ -456,6 +474,13 @@ func assertReplayFileChangeExpectation(expected transcript.FileChangeExpectation
 		return fmt.Errorf("file_change.num_messages = %d, want %d", collector.fileChangeCount, expected.NumMessages)
 	}
 	if !reflect.DeepEqual(collector.filePaths, expected.Files) {
+		normalized := make([]string, 0, len(collector.filePaths))
+		for _, path := range collector.filePaths {
+			normalized = append(normalized, normalizeReplayFilePath(path))
+		}
+		if reflect.DeepEqual(normalized, expected.Files) {
+			return nil
+		}
 		return fmt.Errorf("file_change.files = %v, want %v", collector.filePaths, expected.Files)
 	}
 	return nil

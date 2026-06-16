@@ -35,7 +35,7 @@ func TestClientLiveTranscriptScenarios(t *testing.T) {
 		workDir,
 		codex.WithObserver(wireObserverForTest(t)),
 		codex.WithApprovalListener(listener),
-		codex.WithModel("gpt-5.4"),
+		codex.WithModel("gpt-5.4-mini"),
 		codex.WithAskForApprovalPolicy(codex.AskOnRequest),
 		codex.WithSandboxMode(codex.SandboxDangerFull),
 		codex.WithReasoningEffort(codex.ReasoningMedium),

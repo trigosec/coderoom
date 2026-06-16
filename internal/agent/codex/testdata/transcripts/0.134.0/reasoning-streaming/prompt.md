@@ -1,6 +1,6 @@
 ---
-model: gpt-5.4
-reasoning_effort: xhigh
+model: gpt-5.4-mini
+reasoning_effort: low
 reasoning_summary: detailed
 ---
 Think carefully through the boolean condition `if (!items.length && isEnabled)`.
