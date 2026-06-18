@@ -103,9 +103,23 @@ type Observer interface {
 }
 ```
 
-Implementations must be fast; avoid operations that can block for non-trivial time. A blocking observer will stall all agent reader goroutines. If the TUI needs to process events on its own goroutine, it puts the event on an internal queue inside its `OnEvent` implementation — the session controller is not responsible for that decoupling.
+Implementations must be fast; avoid operations that can block for non-trivial time. A blocking observer will stall all agent reader goroutines. If an observer needs to process events on its own goroutine, it puts the event on an internal queue inside its `OnEvent` implementation — the session controller is not responsible for that decoupling.
 
-Multiple observers are supported (e.g. TUI + event logger).
+Multiple observers are supported (e.g. TUI + room + event logger). Per [`pkg-room.md`](pkg-room.md), `room.Room` registers as an observer for chat/record projection only. The TUI continues to register directly as its own `session.Observer` for participant and approval state, exactly as it does today — room does not replace that registration, it adds a second one alongside it.
+
+`session.Event` is the canonical runtime event model for Code Room.
+
+- session publishes `session.Event`
+- room consumes `session.Event` and projects rooms + records
+- UI renders room state rather than assembling chat semantics directly from
+  `session.Event`
+- future persistence / replay should derive from `session.Event`
+
+We do **not** want a second peer event model owned by another package. If a
+persisted event-log schema is needed later, it should be defined as a
+projection of `session.Event`, not as a competing source of truth. See
+[`pkg-room.md`](pkg-room.md) for the room/record projection layer that sits
+between session events and the UI.
 
 `Event` is defined in the session package:
 
@@ -115,21 +129,34 @@ type Kind string
 const (
     KindAgentStarting Kind = "agent.starting"   // agent process is being started
     KindAgentStarted  Kind = "agent.started"    // agent is ready to receive messages
-    KindAgentIdle     Kind = "agent.idle"       // agent is idle (turn ended); emitted whenever Status transitions to idle
     KindAgentStopped  Kind = "agent.stopped"    // agent was cleanly removed
     KindAgentCrashed  Kind = "agent.crashed"    // agent exited unexpectedly
     KindAgentLog      Kind = "agent.log"        // diagnostic line from the agent (e.g. stderr); always forwarded, rendering is the observer's choice
     KindAgentMessage  Kind = "agent.message"    // typed agent output; see Msg field
-    KindBroadcast     Kind = "message.broadcast" // message sent to all agents
-    KindSharedSend    Kind = "message.shared"   // instruction to one agent, visible to all
-    KindSharedNotice  Kind = "message.notice"   // context notice forwarded to a listener
+
+    KindParticipantStatusChanged Kind = "participant.status" // any participant.Status transition, including idle; see StatusFrom/StatusTo
+
+    KindBroadcast    Kind = "message.broadcast" // message sent to all agents
+    KindSharedSend   Kind = "message.shared"    // instruction to one agent, visible to all
+    KindSharedNotice Kind = "message.notice"    // context notice forwarded to a listener
+
+    KindApprovalRequested Kind = "approval.requested" // approval request requiring user decision
+    KindApprovalCleared   Kind = "approval.cleared"   // active approval prompt should be dismissed
 )
 
 type Event struct {
-    Kind  Kind
-    Alias string          // participant alias the event relates to
-    Text  string          // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
-    Msg   *agent.Message  // for KindAgentMessage; nil for all other kinds
+    Kind   Kind
+    Alias  string          // participant alias the event relates to
+    Text   string          // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
+    Msg    *agent.Message  // for KindAgentMessage; nil for all other kinds
+    SendID int64           // for KindSharedSend, KindSharedNotice; see below
+
+    ApprovalID  int64                  // for KindApprovalRequested, KindApprovalCleared
+    ApprovalReq *agent.ApprovalRequest // for KindApprovalRequested
+
+    StatusFrom participant.Status // for KindParticipantStatusChanged
+    StatusTo   participant.Status // for KindParticipantStatusChanged
+    Since      time.Time          // for KindParticipantStatusChanged; equals participant.Since after the transition
 }
 ```
 
@@ -137,7 +164,11 @@ type Event struct {
 
 `KindAgentLog` is kept as a dedicated kind with `Text` set directly. This lets observers handle diagnostic lines without inspecting message content.
 
-The relationship between session events and the persistent event log (`internal/event`) is deferred — the two will be connected when session state persistence is implemented.
+`SendID` correlates a `KindSharedNotice` event back to the `KindSharedSend` it followed. `Event.Alias` means something different per kind (addressee for `KindSharedSend`, notified listener for `KindSharedNotice`), so there is otherwise no way for an observer to tell which send a given notice belongs to except by assuming event order. `SharedSendCommand` generates one `SendID` per invocation and stamps it on the `KindSharedSend` event and on every `KindSharedNotice` event it produces, so observers (room) don't have to infer the relationship from session's locking behavior.
+
+`KindParticipantStatusChanged` is emitted for every `participant.Status` transition the session drives, including the idle transition after a turn ends — there is no separate "idle" kind. `StatusFrom`, `StatusTo`, and `Since` are sufficient for an observer that only needs to track status; full participant identity (role, initiative, color) is read from `session.Roster()`, not reconstructed from events.
+
+`KindApprovalRequested` carries `ApprovalID` and `ApprovalReq` (the `agent.ApprovalRequest` payload); `Alias` identifies the participant the approval is for. `KindApprovalCleared` carries only `ApprovalID`, identifying which active prompt should be dismissed.
 
 ---
 
@@ -152,7 +183,7 @@ The reader goroutine loops on `agent.Read()`, forwarding each message to observe
   returns the turn anchor
 - First `Output`, `Reasoning`, `Command`, or `FileChangeSet` fragment (`ModeStream`) → open a tracked stream for that participant
 - Matching `ModeFlush` for one of those streams → close the tracked stream
-- Anchor flush for the participant's active turn → `MarkIdle`
+- Anchor flush for the participant's active turn → `MarkIdle`, which emits `KindParticipantStatusChanged` (`StatusTo: participant.StatusIdle`)
 
 Notice turns are the special case: `SendNotice` may be fully silent, so the
 session primes a synthetic `codex:notice-turn` stream on send and closes it when
@@ -171,10 +202,12 @@ When `Read()` returns an error, the goroutine checks whether shutdown was reques
 | Command | Routing |
 |---|---|
 | `BroadcastCommand` | Emits `KindBroadcast`; sends text to all agents regardless of initiative |
-| `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `KindSharedSend` event (addressed agent) and one `KindSharedNotice` event per notified listener |
+| `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `KindSharedSend` event (addressed agent) and one `KindSharedNotice` event per notified listener, all sharing one `SendID` |
 | `PrivateSendCommand` | Sends text to the addressed agent only; no shared room event; no other agents notified |
 
-Shared room visibility is a property of the event kind. The TUI renders `KindBroadcast` events to all views and `KindAgentMessage` events to the relevant agent's view (shared or private, depending on routing policy).
+Shared room visibility is a property of the event kind, but the session does
+not own the final chat projection. It emits runtime events; the room package
+decides how those events become rooms and records for the UI.
 
 ---
 
@@ -196,12 +229,16 @@ The session controller owns:
 - Mutation of participant runtime state
 - Emitting session events
 
+The room package owns:
+- Projection of `session.Event` into chat-visible rooms and records
+- Record accumulation / finalization for streaming agent output
+- The canonical room data model consumed by the UI
+
 The TUI owns:
 - Parsing raw user input into commands
-- Subscribing to events and rendering them
+- Rendering room state
 - Reading participant/session snapshots
+- Forwarding commands to session / room as appropriate
 
-The TUI does not talk to agents directly.
-
-The router package will own:
-- The routing rules as the system grows more complex (multi-agent coordination, initiative-driven dispatch)
+The TUI does not talk to agents directly and should not assemble chat semantics
+from raw session events.

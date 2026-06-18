@@ -234,7 +234,6 @@ func (m Model) handleMessageEvent(e session.Event) Model {
 	case session.KindApprovalCleared:
 		m = m.handleApprovalCleared(e)
 	case session.KindSharedNotice:
-		m.room = m.room.AppendSystem("[notice → " + e.Alias + "]")
 	case session.KindAgentLog:
 		m.room = m.room.AppendLog(e.Alias, e.Text)
 	case session.KindAgentMessage:

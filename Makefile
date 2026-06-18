@@ -47,6 +47,7 @@ release:
 	GITHUB_TOKEN=$$(gh auth token) && \
 	echo "releasing $$VERSION"; \
 	git tag $$VERSION && \
+	git push origin $$VERSION && \
 	GITHUB_TOKEN=$$GITHUB_TOKEN goreleaser release --clean
 
 .PHONY: commit-release

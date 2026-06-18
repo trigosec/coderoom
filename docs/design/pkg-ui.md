@@ -114,7 +114,7 @@ No fixed-size buffers. No dropped events. If the UI falls behind, the internal s
 | `KindAgentLog`     | `▸ <line>` in grey (lipgloss); de-emphasised diagnostic output; does not participate in streaming state; appended as a standalone line like any other event |
 | `KindBroadcast` | `[all] <text>` |
 | `KindSharedSend` | `[→ ada] <text>` |
-| `KindSharedNotice` | `[notice → ada]` |
+| `KindSharedNotice` | no standalone record; listener routing is implied by the sender record footer (for example `→ ada  → tim`) |
 | `KindDelta` | streamed inline: `ada> <fragment>` on first delta, subsequent fragments appended to the same line |
 | `KindDone` | closes the current streaming line |
 

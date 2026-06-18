@@ -69,22 +69,11 @@ func TestHandleEvent_agentLog(t *testing.T) {
 	}
 }
 
-func TestHandleEvent_systemRecords(t *testing.T) {
-	tests := []struct {
-		name  string
-		event session.Event
-		want  string
-	}{
-		{"sharedNotice", session.Event{Kind: session.KindSharedNotice, Alias: "ada"}, "[notice → ada]"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := makeReadyModel(t)
-			m = pushEvent(m, tt.event)
-			if !hasRecord(m, record.KindSystem, tt.want) {
-				t.Errorf("expected system record %q; records: %v", tt.want, m.room.HistoryRecords())
-			}
-		})
+func TestHandleEvent_sharedNoticeProducesNoSystemRecord(t *testing.T) {
+	m := makeReadyModel(t)
+	m = pushEvent(m, session.Event{Kind: session.KindSharedNotice, Alias: "ada"})
+	if len(m.room.HistoryRecords()) != 0 {
+		t.Errorf("expected no history record for shared notice; got %v", m.room.HistoryRecords())
 	}
 }
 
