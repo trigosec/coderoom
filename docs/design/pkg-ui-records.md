@@ -4,31 +4,31 @@
 
 The current model accumulates output as a flat `[]string` of lines. This produces a wall of undifferentiated text that is hard to scan. The record model replaces it with structured units that carry authorship, visual identity, and routing metadata, making conversations readable at a glance.
 
+This document describes UI rendering concerns for records. The canonical
+record model belongs in `internal/room` as `room.Record`; the UI consumes that
+model and may wrap it with view-local state when needed.
+
 ---
 
 ## Record
 
-A record is the atomic unit of viewport content. Each session event maps to one record, with one exception: consecutive `KindDelta` events for the same alias coalesce into a single `recordKindAgentOutput` record until the matching `KindDone` closes it.
+A record is the atomic unit of viewport content. Canonical records are owned by
+`internal/room`; the UI should render them rather than define a competing
+source-of-truth record model.
 
 ```go
-type recordKind int
-
-const (
-    recordKindUserInput  recordKind = iota // what the user typed
-    recordKindAgentOutput                  // streaming response from an agent
-    recordKindSystem                       // lifecycle and routing notices
-    recordKindLog                          // agent diagnostic line (stderr)
-)
-
-type record struct {
-    kind    recordKind
-    alias   string // agent alias; empty for user input and system records
-    body    string // accumulated content; grows during streaming
-    routing []string // aliases shown in the footer (broadcast / direct send)
+type ViewRecord struct {
+    Record room.Record
+    // Optional UI-local state such as collapsed/expanded or cached rendering
+    // lives here, not in room.Record.
 }
+
+// room.Record remains the canonical semantic unit; the UI derives view state
+// from it.
 ```
 
-`body` is the canonical, unstyled source of truth. Wrapping and styling are applied at render time, not stored.
+Canonical text and metadata live in `room.Record`. Wrapping and styling are
+applied at render time, not stored.
 
 ---
 
@@ -78,7 +78,9 @@ Single line, greyed out (lipgloss colour 240). Identical to current rendering; j
 
 ### Routing footer
 
-When the user sends a broadcast or direct message, the input record shows who was addressed. Each alias in the footer is rendered in that agent's assigned colour:
+When the user sends a broadcast or direct message, the input record shows who
+the UI routed the message to. Each alias in the footer is rendered in that
+agent's assigned colour:
 
 ```
   > hello everyone
@@ -86,15 +88,21 @@ When the user sends a broadcast or direct message, the input record shows who wa
 
 ```
 
-For a direct send (`@ada do the thing`) only the addressed agent appears:
+For a direct send (`@ada do the thing`) the footer may include both the
+directly addressed agent and any listener recipients implied by shared-room
+routing:
 
 ```
   > @ada do the thing
-  → ada
+  → ada    → tim
 
 ```
 
-The `→` arrow is plain; only the alias text is coloured. The footer is part of the `recordKindUserInput` record and is populated from `record.routing` at render time. It is omitted when `routing` is empty (e.g. `/invite`, `/who`, `/help`).
+The `→` arrow is plain; only the alias text is coloured. The footer is part of
+the rendered user-input record, but it is a UI-owned reference signal rather
+than canonical room message state. The UI computes it from the routing decision
+at submission time and renders it from view-local metadata. It is omitted when
+there is no routing signal to show (e.g. `/invite`, `/who`, `/help`).
 
 ---
 
@@ -123,11 +131,12 @@ Assignment is round-robin. Colour is released when the agent leaves but not reus
 
 ## Streaming
 
-Streaming output maps naturally onto the agent output record. When the first `KindDelta` for an alias arrives, a new `recordKindAgentOutput` is opened and appended to the record slice. Subsequent deltas for the same alias extend `record.body` in place. `KindDone` closes the record (marks it as no longer streaming).
-
-`streaming map[string]int` maps alias → index in the records slice, the same role it plays today for `lines`.
-
-The streaming record's body grows on every delta. The viewport is re-rendered from the records slice on each update; only the open record's rendered form changes.
+Streaming output maps naturally onto the agent output record, but the opening,
+extension, and closing of that record are room concerns. The UI should consume
+already-projected record state from `internal/room` and render it. If the UI
+needs fast access to which records are still open, that should be derived from
+room-owned state supplied through the room component, not rebuilt from raw
+session events in `history`.
 
 ---
 
@@ -141,12 +150,14 @@ Wrapping moves from `syncViewport` into the record renderer. Each record renders
 
 | Current | Replaced by |
 |---|---|
-| `lines []string` | `records []record` |
-| `wrappedLines []string` | `renderedRecords []string` |
+| `lines []string` | canonical `[]room.Record` plus UI-local view state |
+| `wrappedLines []string` | rendered/cache state owned by the history view |
 | `linePrefixes []string` | per-record render function (no stored prefix) |
-| `streaming map[string]int` | same, index into `records` |
+| streaming reconstruction in UI | room-owned streaming/projection state |
 
-`appendLine` is replaced by `appendRecord(r record)`. `handleDelta` opens or extends a `recordKindAgentOutput` record. `handleEnter` creates a `recordKindUserInput` record before dispatching the action.
+The important boundary is: room owns canonical records; the UI renders them.
+If the UI needs a wrapper type, it wraps `room.Record` rather than redefining
+the canonical model.
 
 ---
 

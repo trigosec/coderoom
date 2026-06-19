@@ -1,43 +1,12 @@
-// Package record tests the history record primitives (rendering, caching, and
+// Package record tests the history record primitives (rendering and
 // accumulation).
 package record
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/trigosec/coderoom/internal/agent"
 )
-
-func TestAccumulate_invalidatesRenderCache(t *testing.T) {
-	r := NewAgent("bot", agent.Message{
-		StreamID: "out1",
-		Mode:     agent.ModeStream,
-		Content:  agent.Output{Text: "hel"},
-	})
-	ctx := RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80, ColorVersion: 1}}
-	_, r = r.RenderCached(ctx)
-	if !r.renderCache.valid {
-		t.Fatal("expected cache to be valid after first render")
-	}
-
-	next, err := r.Accumulate(agent.Message{
-		StreamID: "out1",
-		Mode:     agent.ModeStream,
-		Content:  agent.Output{Text: "lo"},
-	})
-	if err != nil {
-		t.Fatalf("Accumulate: %v", err)
-	}
-	if next.renderCache.valid {
-		t.Fatal("expected cache to be invalidated after accumulate")
-	}
-
-	out, _ := next.RenderCached(ctx)
-	if !strings.Contains(out, "hello") {
-		t.Fatalf("expected re-render after accumulate to include full text; got %q", out)
-	}
-}
 
 func TestAccumulate_updatesMsgAndCachesText(t *testing.T) {
 	r := NewAgent("bot", agent.Message{

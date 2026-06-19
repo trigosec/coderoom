@@ -21,15 +21,11 @@ func withANSIProfile(t *testing.T, fn func()) {
 func TestRenderReasoning_bodyUsesSystemStyleExceptEmphasis(t *testing.T) {
 	withANSIProfile(t, func() {
 		span := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-		out := Record{
-			Kind:  KindReasoning,
-			Alias: "alice",
-			Msg: &agent.Message{
-				StreamID: "s1",
-				Mode:     agent.ModeStream,
-				Content:  agent.Reasoning{Text: "plain **bold** plain"},
-			},
-		}.Render(RenderContext{
+		out := Render(NewAgent("alice", agent.Message{
+			StreamID: "s1",
+			Mode:     agent.ModeStream,
+			Content:  agent.Reasoning{Text: "plain **bold** plain"},
+		}), RenderContext{
 			Key: RenderKey{
 				Mode:  RenderViewport,
 				Width: 200,

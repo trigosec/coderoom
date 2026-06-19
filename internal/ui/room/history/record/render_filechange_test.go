@@ -9,35 +9,6 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 )
 
-func TestFormatFileChangeBody(t *testing.T) {
-	t.Run("empty", func(t *testing.T) {
-		if got := FormatFileChangeBody(nil); got != "" {
-			t.Fatalf("expected empty string, got %q", got)
-		}
-	})
-
-	t.Run("single appends trailing newline", func(t *testing.T) {
-		got := FormatFileChangeBody([]agent.FileChange{
-			{Path: "a.txt", ChangeKind: "update", Diff: "diff --git a/a.txt b/a.txt\n+hi"},
-		})
-		want := "=== a.txt (update)\ndiff --git a/a.txt b/a.txt\n+hi\n"
-		if got != want {
-			t.Fatalf("unexpected body:\nwant:\n%q\ngot:\n%q", want, got)
-		}
-	})
-
-	t.Run("multiple separated by blank line", func(t *testing.T) {
-		got := FormatFileChangeBody([]agent.FileChange{
-			{Path: "a.txt", Diff: "A\n"},
-			{Path: "b.txt", ChangeKind: "add", Diff: "B"},
-		})
-		want := "=== a.txt\nA\n\n=== b.txt (add)\nB\n"
-		if got != want {
-			t.Fatalf("unexpected body:\nwant:\n%q\ngot:\n%q", want, got)
-		}
-	})
-}
-
 func TestRenderFileChangePending(t *testing.T) {
 	colors := func(string) string { return "" }
 
@@ -65,7 +36,7 @@ func TestRenderFileChangeRendersListPreviewAndStatus(t *testing.T) {
 			Status: agent.ToolStatusCompleted,
 		},
 	}
-	r := Record{Kind: KindFileChange, Alias: "agent", Msg: &fc}
+	r := NewAgent("agent", fc)
 	got := renderFileChangeStripped(t, r, colors)
 
 	for _, needle := range []string{
@@ -100,7 +71,7 @@ func TestRenderFileChangeDeduplicatesEntries(t *testing.T) {
 			Status: agent.ToolStatusCompleted,
 		},
 	}
-	r := Record{Kind: KindFileChange, Alias: "agent", Msg: &fc}
+	r := NewAgent("agent", fc)
 	got := renderFileChangeStripped(t, r, colors)
 
 	if c := strings.Count(got, "- add a.txt"); c != 1 {
@@ -124,8 +95,8 @@ func TestRenderFileChangePencilPromptIsColorized(t *testing.T) {
 				Changes: []agent.FileChange{{Path: "a.txt"}},
 			},
 		}
-		r := Record{Kind: KindFileChange, Alias: "agent", Msg: &fc}
-		got := r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}, ColorForAlias: colors})
+		r := NewAgent("agent", fc)
+		got := Render(r, RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}, ColorForAlias: colors})
 
 		re := regexp.MustCompile(`\x1b\[[0-9;]*m✎\s*\x1b\[[0-9;]*m`)
 		if !re.MatchString(got) {
@@ -156,8 +127,8 @@ func TestRenderFileChangeDiffIsColorized(t *testing.T) {
 				},
 			},
 		}
-		r := Record{Kind: KindFileChange, Alias: "agent", Msg: &fc}
-		got := r.Render(RenderContext{Key: RenderKey{Mode: RenderTranscript, Width: 0}, ColorForAlias: colors})
+		r := NewAgent("agent", fc)
+		got := Render(r, RenderContext{Key: RenderKey{Mode: RenderTranscript, Width: 0}, ColorForAlias: colors})
 
 		wantLine := func(prefix string) {
 			t.Helper()
@@ -179,5 +150,5 @@ func TestRenderFileChangeDiffIsColorized(t *testing.T) {
 
 func renderFileChangeStripped(t *testing.T, r Record, colors func(string) string) string {
 	t.Helper()
-	return ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}, ColorForAlias: colors}))
+	return ansi.Strip(Render(r, RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}, ColorForAlias: colors}))
 }

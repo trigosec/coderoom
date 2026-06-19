@@ -4,6 +4,7 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/palette"
 	"github.com/trigosec/coderoom/internal/ui/room"
@@ -29,7 +30,7 @@ func WithStartupHelpTip(enabled bool) Option {
 type sessionEventMsg session.Event
 
 // awaitEvent returns a Cmd that blocks until the next event is available.
-func awaitEvent(q *eventQueue) tea.Cmd {
+func awaitEvent(q *queue.Queue[session.Event]) tea.Cmd {
 	return func() tea.Msg {
 		e, ok := q.Pull()
 		if !ok {
@@ -39,10 +40,10 @@ func awaitEvent(q *eventQueue) tea.Cmd {
 	}
 }
 
-// channelObserver implements session.Observer by pushing events into an
-// eventQueue. It is safe to call from any goroutine.
+// channelObserver implements session.Observer by pushing events into a
+// queue.Queue. It is safe to call from any goroutine.
 type channelObserver struct {
-	queue *eventQueue
+	queue *queue.Queue[session.Event]
 }
 
 func (o channelObserver) OnEvent(e session.Event) {
@@ -52,7 +53,7 @@ func (o channelObserver) OnEvent(e session.Event) {
 // Model is the Bubble Tea application state for the coderoom TUI.
 type Model struct {
 	sess     *session.Session
-	queue    *eventQueue
+	queue    *queue.Queue[session.Event]
 	room     room.Model
 	toolbox  toolbox.Model
 	debug    bool
@@ -71,7 +72,7 @@ type Model struct {
 // The session must have an AgentFactory configured before any invite commands
 // are executed.
 func New(sess *session.Session, cwd string, opts ...Option) Model {
-	q := newEventQueue()
+	q := queue.New[session.Event]()
 	sess.AddObserver(channelObserver{queue: q})
 
 	colorByAlias := func(alias string) string {
@@ -81,10 +82,13 @@ func New(sess *session.Session, cwd string, opts ...Option) Model {
 		return ""
 	}
 
+	roomModel := room.New(colorByAlias, palette.ColorDeparted)
+	sess.AddObserver(roomModel.SessionObserver())
+
 	m := Model{
 		sess:    sess,
 		queue:   q,
-		room:    room.New(colorByAlias, palette.ColorDeparted),
+		room:    roomModel,
 		toolbox: toolbox.New(),
 		cwd:     cwd,
 	}

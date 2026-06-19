@@ -6,6 +6,7 @@ import (
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -13,7 +14,7 @@ import (
 // --- channelObserver ---
 
 func TestChannelObserver_forwardsToQueue(t *testing.T) {
-	q := newEventQueue()
+	q := queue.New[session.Event]()
 	obs := channelObserver{queue: q}
 	go obs.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
 	got, ok := q.Pull()
@@ -269,8 +270,11 @@ func TestRoutingFor(t *testing.T) {
 	if got := routingFor(Broadcast{Text: "hi"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
 		t.Errorf("broadcast routing: got %v, want [ada bob]", got)
 	}
-	if got := routingFor(Send{Alias: "ada", Text: "hi"}, ps); !slices.Equal(got, []string{"ada"}) {
-		t.Errorf("send routing: got %v, want [ada]", got)
+	if got := routingFor(Send{Alias: "ada", Text: "hi"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
+		t.Errorf("send routing: got %v, want [ada bob]", got)
+	}
+	if got := routingFor(Send{Alias: "nobody", Text: "hi"}, ps); !slices.Equal(got, []string{"nobody", "ada", "bob"}) {
+		t.Errorf("send routing for missing alias: got %v, want [nobody ada bob]", got)
 	}
 	if got := routingFor(Help{}, ps); got != nil {
 		t.Errorf("help routing: got %v, want nil", got)

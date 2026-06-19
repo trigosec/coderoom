@@ -8,7 +8,8 @@ It sits between:
 
 - `internal/session`, which publishes runtime events and owns agent/process
   coordination
-- `internal/ui`, which renders rooms and records for the human
+- `internal/ui/room`, which adapts room state into Bubble Tea presentation
+  state for the human
 
 The room package is **not** responsible for:
 
@@ -80,6 +81,18 @@ That means:
   - transient styling state
 
 That presentation state belongs in `internal/ui`.
+For the room pane specifically, the adapter boundary is `internal/ui/room`.
+
+That boundary is behavioral, not a ban on importing the package. Lower-level
+UI packages such as `internal/ui/room/history` (and its `record`
+sub-package) may import `internal/room` to consume the canonical
+`Record`/`Kind` types directly — that's the point of keeping `room.Record`
+canonical instead of redefining it (see "Record" below); a type alias gives
+zero-cost reuse with no parallel type to keep in sync. What they must not
+depend on is `internal/room`'s behavioral surface — `Room`, `Observer`,
+`OnEvent`, `Snapshot`, or anything else that talks to a live room instance.
+Only `internal/ui/room` holds a `*room.Room` and drives it; `history` and
+`record` only ever see plain `Record`/`Kind` values handed to them.
 
 Participant membership in a room may be:
 
@@ -139,6 +152,10 @@ The key point is:
 unit. The UI may wrap a `room.Record` with additional per-view state, but that
 state should not live in `room.Record` itself.
 
+`room.Record` is the canonical record model for the product. UI rendering
+packages should consume it; room should not reuse a UI-owned record type as its
+source of truth.
+
 ---
 
 ## Input / output boundary
@@ -185,6 +202,10 @@ UI.
 
 The UI should render room state, not derive chat semantics from `session.Event`
 directly.
+
+The intended UI integration point is the room Bubble Tea component:
+`internal/ui/room`. Top-level `internal/ui` should coordinate components and
+session commands, but it should not own room-state projection logic itself.
 
 The UI also needs a direct path to append user-authored records that do not
 originate from agent runtime events.
@@ -254,17 +275,15 @@ The room package therefore owns:
 - record identity
 - open vs completed state
 - accumulation of visible output text for one logical record
-- accumulation of routing metadata when multiple runtime events contribute to
-  one visible record
+- message state required to represent in-progress and completed chat-visible
+  records correctly over time
 
-Routing accumulation needs a correlation key, not arrival order. A
-`KindSharedSend` record's routing list is built up as `KindSharedNotice`
-events arrive afterward, and the only reliable way to know which record a
-given notice belongs to is `session.Event.SendID`. Room should key its
-"open" `SharedSend` record by `SendID` while it is still accepting notices for
-it, the same way it keys an open streaming record by `agent.StreamID`. This
-removes the need to rely on session's internal locking order, which is not
-part of the event contract.
+Room does not need to own every piece of transcript-adjacent presentation
+metadata. In particular, the user-input routing footer is a UI signal: it tells
+the user who a submitted message was intended for, but it is not part of the
+canonical runtime message state that room maintains. That footer can therefore
+be derived by the UI at submission time and stored as UI-owned presentation
+metadata rather than reconstructed from later session events.
 
 ---
 
@@ -279,8 +298,6 @@ Likely metadata includes:
 - record identity
 - record kind
 - alias / author
-- room-visible participant recipients for routed messages, keyed by `SendID`
-  while the record is still accepting `KindSharedNotice` events
 - source turn ID or stream identity when relevant
 - full text payload
 - optional neutral preview / summary text when the product needs a canonical
@@ -290,8 +307,9 @@ Likely metadata includes:
 This matters for future commands such as handoff, copy, inspect, or summarize.
 
 The canonical record content should live in `room.Record`. Any UI-specific
-derived state such as "collapsed" should be maintained separately by the UI and
-keyed by room ID + record ID.
+derived state such as "collapsed" or "routing footer shown to the user" should
+be maintained separately by the UI and keyed by room ID + record ID when
+needed.
 
 ---
 
@@ -343,6 +361,37 @@ legibility today. If a future feature needs strict ordering across the two
 paths, that's a new requirement to solve explicitly then, not something
 this split already guarantees.
 
+There is a second, separate ordering asymmetry inside Room itself, distinct
+from the one above: `OnEvent` (agent messages, lifecycle events) only
+queues, with `run()` applying it to `r.records` later, on Room's own
+goroutine; `AppendRecord` (and `AppendSystemRecord`/`AppendUserInputRecord`/
+`AppendLogRecord`, used for local, non-session records) takes `r.mu` and
+applies immediately, synchronously, on the caller's goroutine. If another
+agent's event is already queued but not yet applied at the moment a local
+record is appended, the local record can land in `r.records` ahead of it,
+even though the agent's event was queued first. `AppendRecord` is
+synchronous on purpose — so a user's own submitted message renders without
+waiting on a queue round-trip — and that's also exactly what makes this
+race possible.
+
+For replies specifically, staged dispatch substantially narrows this: a
+reply can't be submitted until the targeted agent reports idle, so by the
+time a human perceives that and reacts, Room's queue has almost always
+already drained whatever trivial backlog was left. But that idle
+determination comes from the UI's own separate `session.Observer`
+registration, not from Room's queue being empty, so it's a practical
+mitigant, not a structural guarantee. It also doesn't apply to
+`AppendSystemRecord`/`AppendLogRecord` at all — compose errors, validation
+errors, and log lines can be appended at any time regardless of agent
+state, so the race applies there at full strength.
+
+This is accepted: the impact is display order only inside the record
+list, never data loss, and closing it structurally would mean routing
+local appends through the same queue as `OnEvent`, which would delay the
+user's own message by a scheduling hop and change `AppendRecord` from a
+synchronous call to a queue-and-confirm one — a worse tradeoff than the
+rare, cosmetic reordering it would prevent.
+
 Session remains the source of truth for runtime coordination state. Room keeps a
 projected in-memory model for one room:
 
@@ -386,11 +435,11 @@ type Update struct {
 The UI should treat `Update` as a redraw hint and then call snapshot APIs such
 as `Records()` to obtain the actual data.
 
-`internal/ui/queue.go`'s `eventQueue` already solves exactly this
-decoupling problem (unbounded buffer between a fast producer goroutine and a
-slower consumer pull loop) for the UI's own direct `session.Observer` path.
-Room's buffering should reuse or extract that pattern rather than write a
-second implementation of the same primitive.
+`internal/queue.Queue[T]` already solves exactly this decoupling problem
+(unbounded buffer between a fast producer goroutine and a slower consumer
+pull loop) — it's the same generic primitive the UI's own direct
+`session.Observer` path uses. Room's buffering uses it directly rather than
+duplicating the pattern.
 
 ---
 
@@ -402,7 +451,7 @@ raw `session.Event`.
 That means:
 
 - UI no longer owns record assembly
-- UI renders `room.Room` / `room.Record` for chat/record state
+- `internal/ui/room` renders `room.Room` / `room.Record` for chat/record state
 - UI continues to render participant and approval state from its own
   direct `session.Observer` registration and `session.Roster()`, unchanged
   from today
@@ -414,6 +463,12 @@ That means:
   - collapsed/expanded interaction
 
 The room package should stay presentation-agnostic.
+
+Within the UI stack, `internal/ui/room/history` is presentation-only: it
+renders records and viewport state supplied by `internal/ui/room` and never
+holds or drives a `*room.Room` itself. It may still import `internal/room`
+for the `Record`/`Kind` types it renders — see "Core model" for the
+type-vs-behavior distinction this relies on.
 
 ---
 
@@ -500,19 +555,18 @@ blocking V1:
 - **Whether `session.Event` should move toward one type per `Kind`.**
   `Event` is a flat struct where field meaning depends on `Kind` (`Alias`
   means "addressee" for `KindSharedSend`, "notified listener" for
-  `KindSharedNotice`). The missing `SendID` was a symptom of this, now fixed
-  with a single additive field. Whether the whole struct should become a
-  sealed interface with one concrete type per kind is a separate, much larger
+  `KindSharedNotice`). Whether the whole struct should become a sealed
+  interface with one concrete type per kind is a separate, much larger
   question — it touches every emission site in `session`, every `switch
   e.Kind` in `room` and `ui`, and all event-based test fixtures. Not a
   prerequisite for shipping room; worth its own design doc only if more gaps
-  like the `SendID` one keep showing up. One candidate shape, smaller than
-  full per-kind types: split `Event` into two delivery buckets instead of
-  one — a room-relevant stream (chat/record kinds) and a global stream
-  (approval, participant status) — making the dual-observer split in
-  "Session integration" explicit at the type level instead of by
-  convention. Doesn't by itself resolve the cross-path ordering question
-  raised there; would need its own follow-up either way.
+  around kind-specific field meaning keep showing up. One candidate shape,
+  smaller than full per-kind types: split `Event` into two delivery buckets
+  instead of one — a room-relevant stream (chat/record kinds) and a global
+  stream (approval, participant status) — making the dual-observer split in
+  "Session integration" explicit at the type level instead of by convention.
+  Doesn't by itself resolve the cross-path ordering question raised there;
+  would need its own follow-up either way.
 
 ---
 

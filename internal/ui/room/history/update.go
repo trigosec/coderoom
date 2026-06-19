@@ -33,149 +33,10 @@ func (m Model) RebuildColors() Model {
 	return m.syncViewport()
 }
 
-// AppendRecord adds r to the record list, scrolling to bottom if already there.
-func (m Model) AppendRecord(r rec.Record) Model {
-	wasAtBottom := m.viewport.AtBottom()
-	ctx := m.viewportRenderContext()
-	_, cached := r.RenderCached(ctx)
-	m.records = append(m.records, cached)
-	m = m.syncViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-	return m
-}
-
-// AppendSystemRecord appends a system-notice record with the given body.
-func (m Model) AppendSystemRecord(body string) Model {
-	return m.AppendRecord(rec.Record{Kind: rec.KindSystem, Text: body})
-}
-
-// AppendUserInputRecord appends a user-input record with optional routing footer.
-func (m Model) AppendUserInputRecord(body string, routing []string) Model {
-	return m.AppendRecord(rec.Record{Kind: rec.KindUserInput, Text: body, Routing: routing})
-}
-
-// AppendLogRecord appends a diagnostic log line from alias.
-func (m Model) AppendLogRecord(alias, body string) Model {
-	return m.AppendRecord(rec.Record{Kind: rec.KindLog, Alias: alias, Text: body})
-}
-
-// HandleAgentMessage appends or extends a streaming record based on msg.
-// Output+ModeFlush seals the matching output stream.
-// Reasoning+ModeFlush clears only the matching reasoning stream.
-// Command+ModeFlush seals the stream; the exit code was accumulated via the
-// preceding Command+ModeStream from item/completed.
-func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
-	switch msg.Content.(type) {
-	case agent.Output:
-		if msg.Mode == agent.ModeFlush {
-			return m.sealOutputStream(msg.StreamID)
-		}
-		return m.appendOrExtend(alias, msg)
-	case agent.Reasoning:
-		if msg.Mode == agent.ModeFlush {
-			delete(m.streaming, msg.StreamID)
-			return m
-		}
-		return m.appendOrExtend(alias, msg)
-	case agent.Command:
-		if msg.Mode == agent.ModeFlush {
-			return m.sealCommandStream(msg.StreamID)
-		}
-		return m.appendOrExtend(alias, msg)
-	case agent.FileChangeSet:
-		if msg.Mode == agent.ModeFlush {
-			return m.sealFileChangeStream(msg.StreamID)
-		}
-		return m.appendOrExtend(alias, msg)
-	}
-	return m
-}
-
-func (m Model) appendOrExtend(alias string, msg agent.Message) Model {
-	wasAtBottom := m.viewport.AtBottom()
-	if slot, ok := m.streaming[msg.StreamID]; ok {
-		if updated, err := m.records[slot.recordIdx].Accumulate(msg); err == nil {
-			_, cached := updated.RenderCached(m.viewportRenderContext())
-			m.records[slot.recordIdx] = cached
-		} else {
-			// Content-type mismatch on a live stream: preserve the existing record
-			// and open a fresh one rather than wiping the accumulated body.
-			m = m.openRecord(alias, msg)
-		}
-	} else {
-		m = m.openRecord(alias, msg)
-	}
-	m = m.syncViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-	return m
-}
-
-func (m Model) openRecord(alias string, msg agent.Message) Model {
-	idx := len(m.records)
-	r := rec.NewAgent(alias, msg)
-	_, cached := r.RenderCached(m.viewportRenderContext())
-	m.records = append(m.records, cached)
-	m.streaming[msg.StreamID] = streamSlot{recordIdx: idx}
-	return m
-}
-
-func (m Model) sealCommandStream(streamID agent.StreamID) Model {
-	return m.sealStream(streamID)
-}
-
-func (m Model) sealOutputStream(streamID agent.StreamID) Model {
-	return m.sealStream(streamID)
-}
-
-func (m Model) sealFileChangeStream(streamID agent.StreamID) Model {
-	return m.sealStream(streamID)
-}
-
-func (m Model) sealStream(streamID agent.StreamID) Model {
-	slot, ok := m.streaming[streamID]
-	if !ok {
-		return m
-	}
-	wasAtBottom := m.viewport.AtBottom()
-	_, cached := m.records[slot.recordIdx].RenderCached(m.viewportRenderContext())
-	m.records[slot.recordIdx] = cached
-	delete(m.streaming, streamID)
-	m = m.syncViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-	return m
-}
-
-// MarkDeparted records alias as departed and re-renders its affected records.
-func (m Model) MarkDeparted(alias string) Model {
-	m.departed[alias] = true
-	m.colorVersion++
-	return m.syncViewport()
-}
-
-// ClearStreaming removes all open streams for alias (e.g., on agent departure).
-func (m Model) ClearStreaming(alias string) Model {
-	return m.clearStreamsForAlias(alias)
-}
-
-func (m Model) clearStreamsForAlias(alias string) Model {
-	for streamID, slot := range m.streaming {
-		if m.records[slot.recordIdx].Alias == alias {
-			delete(m.streaming, streamID)
-		}
-	}
-	return m
-}
-
 // IsReasoningStreaming reports whether alias has an open reasoning stream.
 func (m Model) IsReasoningStreaming(alias string) bool {
 	for _, slot := range m.streaming {
-		r := m.records[slot.recordIdx]
+		r := m.records[slot.recordIdx].record
 		if r.Alias != alias || r.Msg == nil {
 			continue
 		}
@@ -224,7 +85,7 @@ func (m Model) syncViewport() Model {
 	ctx := m.viewportRenderContext()
 	rendered := make([]string, 0, len(m.records))
 	for i := range m.records {
-		out, cached := m.records[i].RenderCached(ctx)
+		out, cached := renderRecordCached(m.records[i], ctx)
 		m.records[i] = cached
 		rendered = append(rendered, out)
 	}
@@ -234,7 +95,7 @@ func (m Model) syncViewport() Model {
 	return m
 }
 
-func joinRenderedForViewport(records []rec.Record, rendered []string) string {
+func joinRenderedForViewport(records []viewRecord, rendered []string) string {
 	if len(rendered) == 0 {
 		return ""
 	}
@@ -248,7 +109,7 @@ func joinRenderedForViewport(records []rec.Record, rendered []string) string {
 	for i, renderedRec := range rendered {
 		if i > 0 {
 			sep := "\n\n"
-			if i < len(records) && records[i].Kind == rec.KindSystem {
+			if i < len(records) && records[i].record.Kind == rec.KindSystem {
 				sep = "\n"
 			}
 			b.WriteString(sep)

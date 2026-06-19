@@ -7,48 +7,35 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent"
+	roomstate "github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/ui/inlinefmt"
 )
 
-// Kind identifies the source and display style of a record.
-type Kind int
+// Kind is an alias for room.Kind: room.Record stays the canonical record
+// model, this package renders it rather than redefining it.
+type Kind = roomstate.Kind
 
-// Record kind constants ordered from most to least common.
+// Record is an alias for room.Record; see Kind.
+type Record = roomstate.Record
+
+// Record kind values, re-exported from room for callers that only import
+// this package.
 const (
-	KindUserInput   Kind = iota // text the user typed
-	KindAgentOutput             // streaming response from an agent
-	KindSystem                  // lifecycle and routing notices
-	KindLog                     // agent diagnostic line (stderr)
-	KindReasoning               // streaming internal reasoning trace from an agent
-	KindCommand                 // shell command execution item from an agent
-	KindFileChange              // file patch/diff item from an agent
+	KindUserInput   = roomstate.KindUserInput
+	KindAgentOutput = roomstate.KindAgentOutput
+	KindSystem      = roomstate.KindSystem
+	KindLog         = roomstate.KindLog
+	KindReasoning   = roomstate.KindReasoning
+	KindCommand     = roomstate.KindCommand
+	KindFileChange  = roomstate.KindFileChange
 )
 
-// Record is a single displayable entry in the conversation history.
-//
-// Text is used both for non-agent records (user/system/log) and as a cached body
-// for agent-backed records (Msg != nil).
-type Record struct {
-	Kind    Kind
-	Alias   string   // agent alias; empty for user input and system records
-	Routing []string // aliases shown in the footer (broadcast / direct send)
-	Text    string   // body text or cached body derived from Msg
-	Msg     *agent.Message
-
-	renderCache struct {
-		key      RenderKey
-		rendered string
-		valid    bool
-	}
-}
-
-// RenderMode controls how Record.Render formats output.
+// RenderMode controls how Record renders for UI consumers.
 type RenderMode int
 
+// Render mode values.
 const (
-	// RenderViewport wraps and truncates based on viewport width.
 	RenderViewport RenderMode = iota
-	// RenderTranscript disables wrapping and emits full content.
 	RenderTranscript
 )
 
@@ -60,8 +47,6 @@ type RenderContext struct {
 }
 
 // RenderKey is the comparable subset of RenderContext that affects output.
-// Callers should bump ColorVersion whenever color resolution may change (theme
-// changes, agent departed) to invalidate per-record cached rendering.
 type RenderKey struct {
 	Mode         RenderMode
 	Width        int
@@ -82,38 +67,16 @@ const (
 	commandBullet    = "$ "
 	fileChangeBullet = "✎ "
 	routingArrow     = "→ "
+	agentBodyIndent  = "  "
 )
 
-// NewAgent constructs a record backed by an agent.Message. It caches the record
-// body in Text for efficient re-rendering.
+// NewAgent constructs a record backed by an agent message.
 func NewAgent(alias string, msg agent.Message) Record {
-	msgCopy := msg
-	return Record{
-		Kind:  kindFor(msg),
-		Alias: alias,
-		Msg:   &msgCopy,
-		Text:  bodyFrom(msg),
-	}
+	return roomstate.NewAgentRecord(alias, msg)
 }
 
-// Accumulate merges next into r.Msg and returns the updated record.
-func (r Record) Accumulate(next agent.Message) (Record, error) {
-	if r.Msg == nil {
-		return Record{}, fmt.Errorf("record has no message")
-	}
-	accumulated, err := r.Msg.Accumulate(next)
-	if err != nil {
-		return Record{}, fmt.Errorf("accumulate message: %w", err)
-	}
-	accumulatedCopy := accumulated
-	r.Msg = &accumulatedCopy
-	r.Text = bodyFrom(accumulated)
-	r.renderCache.valid = false
-	return r, nil
-}
-
-// Render returns the record rendered for the given context.
-func (r Record) Render(ctx RenderContext) string {
+// Render returns r rendered for the given context.
+func Render(r Record, ctx RenderContext) string {
 	width := ctx.Key.Width
 	if ctx.Key.Mode == RenderTranscript {
 		width = 0
@@ -129,24 +92,6 @@ func (r Record) Render(ctx RenderContext) string {
 	default:
 		return renderViewport(r, width, colors)
 	}
-}
-
-// RenderCached returns the rendered string and an updated Record containing a
-// cached render result. Callers should store the returned Record if they want
-// caching to persist across renders.
-func (r Record) RenderCached(ctx RenderContext) (string, Record) {
-	key := ctx.Key
-	if key.Mode == RenderTranscript {
-		key.Width = 0
-	}
-	if r.renderCache.valid && r.renderCache.key == key {
-		return r.renderCache.rendered, r
-	}
-	rendered := r.Render(ctx)
-	r.renderCache.key = key
-	r.renderCache.rendered = rendered
-	r.renderCache.valid = true
-	return rendered, r
 }
 
 func renderViewport(r Record, width int, colors func(string) string) string {
@@ -186,8 +131,6 @@ func renderLogBody(body string, width int) string {
 	parts := strings.Split(body, "\n")
 	out := make([]string, 0, len(parts))
 	for i, line := range parts {
-		// strings.Split("x\n", "\n") includes a final empty element; skip it so we
-		// don't render a dangling prefixed line for trailing newlines.
 		if i == len(parts)-1 && line == "" {
 			continue
 		}
@@ -207,8 +150,6 @@ func renderUserInput(r Record, width int, colors func(string) string) string {
 	}
 	return wrapped
 }
-
-const agentBodyIndent = "  "
 
 func renderAgentOutput(r Record, width int, colors func(string) string) string {
 	color := colors(r.Alias)
@@ -247,8 +188,6 @@ func renderReasoning(r Record, width int, colors func(string) string) string {
 	}
 	bodyText := body
 	if color != "" {
-		// Keep base text aligned with system messages; use participant color only
-		// for inline emphasis.
 		bodyText = inlinefmt.FormatWithStyles(bodyText, systemStyle, lipgloss.NewStyle().Foreground(lipgloss.Color(color)))
 	} else {
 		bodyText = systemStyle.Render(bodyText)
@@ -257,40 +196,11 @@ func renderReasoning(r Record, width int, colors func(string) string) string {
 	return header + "\n\n" + wrapped
 }
 
-func bodyFrom(msg agent.Message) string {
-	switch c := msg.Content.(type) {
-	case agent.Output:
-		return c.Text
-	case agent.Reasoning:
-		return c.Text
-	case agent.Command:
-		return c.Output
-	case agent.FileChangeSet:
-		return FormatFileChangeBody(c.Changes)
-	}
-	return ""
-}
-
-func kindFor(msg agent.Message) Kind {
-	switch msg.Content.(type) {
-	case agent.Reasoning:
-		return KindReasoning
-	case agent.Command:
-		return KindCommand
-	case agent.FileChangeSet:
-		return KindFileChange
-	}
-	return KindAgentOutput
-}
-
 func bodyFromRecord(r Record) string {
 	if r.Msg == nil {
 		return ""
 	}
-	if r.Text != "" {
-		return r.Text
-	}
-	return bodyFrom(*r.Msg)
+	return r.Text
 }
 
 func commandFieldsFromRecord(r Record) (cmd string, output string, exitCode *int) {
@@ -524,26 +434,9 @@ func renderCommandLine(prefix string, cmd string, width int) string {
 	return prefix + strings.Join(parts, "\n")
 }
 
-func wrapLine(line string, width int, prefix string) string {
+func wrapLine(text string, width int, prefix string) string {
 	if width <= 0 {
-		return line
+		return text
 	}
-	if prefix == "" {
-		return ansi.Wrap(line, width, "")
-	}
-	// Contract: callers must include the prefix at the start of the line when
-	// prefix is non-empty, otherwise the wrapped output cannot preserve prefix
-	// alignment.
-	if !strings.HasPrefix(line, prefix) {
-		return ansi.Wrap(line, width, "")
-	}
-	displayWidth := ansi.StringWidth(prefix)
-	indent := strings.Repeat(" ", displayWidth)
-	contentWidth := max(width-displayWidth, 1)
-	wrapped := ansi.Wrap(line[len(prefix):], contentWidth, "")
-	parts := strings.Split(wrapped, "\n")
-	for i := 1; i < len(parts); i++ {
-		parts[i] = indent + parts[i]
-	}
-	return prefix + strings.Join(parts, "\n")
+	return renderCommandLine(prefix, strings.TrimPrefix(text, prefix), width)
 }

@@ -149,7 +149,6 @@ type Event struct {
     Alias  string          // participant alias the event relates to
     Text   string          // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
     Msg    *agent.Message  // for KindAgentMessage; nil for all other kinds
-    SendID int64           // for KindSharedSend, KindSharedNotice; see below
 
     ApprovalID  int64                  // for KindApprovalRequested, KindApprovalCleared
     ApprovalReq *agent.ApprovalRequest // for KindApprovalRequested
@@ -163,8 +162,6 @@ type Event struct {
 `KindAgentMessage` carries the full `agent.Message` value without translation. Observers type-switch on `event.Msg.Content` to handle specific content types (`Output`, `Reasoning`, `Command`, `FileChangeSet`, etc.). See [`pkg-agent-messages.md`](pkg-agent-messages.md) for the message model.
 
 `KindAgentLog` is kept as a dedicated kind with `Text` set directly. This lets observers handle diagnostic lines without inspecting message content.
-
-`SendID` correlates a `KindSharedNotice` event back to the `KindSharedSend` it followed. `Event.Alias` means something different per kind (addressee for `KindSharedSend`, notified listener for `KindSharedNotice`), so there is otherwise no way for an observer to tell which send a given notice belongs to except by assuming event order. `SharedSendCommand` generates one `SendID` per invocation and stamps it on the `KindSharedSend` event and on every `KindSharedNotice` event it produces, so observers (room) don't have to infer the relationship from session's locking behavior.
 
 `KindParticipantStatusChanged` is emitted for every `participant.Status` transition the session drives, including the idle transition after a turn ends — there is no separate "idle" kind. `StatusFrom`, `StatusTo`, and `Since` are sufficient for an observer that only needs to track status; full participant identity (role, initiative, color) is read from `session.Roster()`, not reconstructed from events.
 
@@ -202,7 +199,7 @@ When `Read()` returns an error, the goroutine checks whether shutdown was reques
 | Command | Routing |
 |---|---|
 | `BroadcastCommand` | Emits `KindBroadcast`; sends text to all agents regardless of initiative |
-| `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `KindSharedSend` event (addressed agent) and one `KindSharedNotice` event per notified listener, all sharing one `SendID` |
+| `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `KindSharedSend` event (addressed agent) and one `KindSharedNotice` event per notified listener |
 | `PrivateSendCommand` | Sends text to the addressed agent only; no shared room event; no other agents notified |
 
 Shared room visibility is a property of the event kind, but the session does

@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent"
+	roomstate "github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/ui/editor"
 	"github.com/trigosec/coderoom/internal/ui/room/approval"
 )
@@ -18,6 +19,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
+	case roomUpdateMsg:
+		return m.applyRoomUpdate(roomstate.Update(msg)), awaitRoomUpdate(m.roomQueue)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.WindowSizeMsg:
@@ -200,7 +203,7 @@ func (m Model) startEditorCompose() (Model, tea.Cmd) {
 		TrimFinalNewline: true,
 	})
 	if err != nil {
-		m.history = m.history.AppendSystemRecord("error: " + err.Error())
+		m = m.AppendSystem("error: " + err.Error())
 		return m, nil
 	}
 	return m, cmd
@@ -264,7 +267,7 @@ func (m Model) openEditorWithTranscript() (Model, tea.Cmd) {
 		ReadOnly:    true,
 	})
 	if err != nil {
-		m.history = m.history.AppendSystemRecord("error: " + err.Error())
+		m = m.AppendSystem("error: " + err.Error())
 		return m, nil
 	}
 	return m, cmd

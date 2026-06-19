@@ -6,9 +6,14 @@
 package room
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/queue"
+	roomstate "github.com/trigosec/coderoom/internal/room"
+	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/approval"
 	"github.com/trigosec/coderoom/internal/ui/room/compose"
 	"github.com/trigosec/coderoom/internal/ui/room/history"
@@ -79,6 +84,8 @@ type ApprovalDecisionMsg struct {
 // Model is the Bubble Tea component for a single room: history + composer.
 type Model struct {
 	history      history.Model
+	chat         *roomstate.Room
+	roomQueue    *queue.Queue[roomstate.Update]
 	input        inputModel
 	approvalPrev inputKind
 	focus        roomFocus
@@ -92,8 +99,12 @@ type Model struct {
 // departedColor is used for departed agents.
 func New(colorByAlias func(string) string, departedColor string) Model {
 	compose := compose.New()
+	roomQ := queue.New[roomstate.Update]()
+	chat := roomstate.New(roomstate.WithObserver(roomUpdateObserver{queue: roomQ}))
 	return Model{
-		history: history.New(colorByAlias, departedColor),
+		history:   history.New(colorByAlias, departedColor),
+		chat:      chat,
+		roomQueue: roomQ,
 		input: inputModel{
 			kind:     inputCompose,
 			compose:  compose,
@@ -105,7 +116,12 @@ func New(colorByAlias func(string) string, departedColor string) Model {
 }
 
 // Init returns the initial command for the component.
-func (m Model) Init() tea.Cmd { return m.input.compose.Init() }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.input.compose.Init(), awaitRoomUpdate(m.roomQueue))
+}
+
+// SessionObserver returns the canonical room projection observer.
+func (m Model) SessionObserver() session.Observer { return m.chat }
 
 // Ready reports whether HandleResize has been called at least once.
 func (m Model) Ready() bool { return m.history.Ready() }
@@ -127,6 +143,48 @@ func (m Model) HistoryPlainText() string { return m.history.PlainText() }
 
 // HistoryHeight returns the history viewport height.
 func (m Model) HistoryHeight() int { return m.history.Height() }
+
+// SetHistorySnapshot replaces the rendered transcript state from the room package.
+func (m Model) SetHistorySnapshot(snapshot roomstate.Snapshot) Model {
+	state := history.State{
+		Records:    snapshot.Records,
+		Departed:   snapshot.Departed,
+		OpenStream: make(map[agent.StreamID]int, len(snapshot.OpenStreams)),
+	}
+	for _, stream := range snapshot.OpenStreams {
+		state.OpenStream[stream.StreamID] = stream.RecordIdx
+	}
+	m.history = m.history.ReplaceState(state)
+	return m
+}
+
+// DrainObserverUpdates applies any room updates already queued, without
+// waiting on the async awaitRoomUpdate Cmd to deliver them. Room and the
+// UI's own session.Observer registration are independently paced (see
+// pkg-room.md's "Session integration"), so a chat record and a
+// participant/approval change for the same underlying session event can
+// otherwise be applied a tick apart. This is a best-effort tightening of
+// that gap for the common case where Room has already processed the event
+// by the time this is called — not a correctness requirement. awaitRoomUpdate
+// remains the only guaranteed delivery path; this just reduces visible lag.
+func (m Model) DrainObserverUpdates() Model {
+	for {
+		update, ok := m.roomQueue.TryPull()
+		if !ok {
+			return m
+		}
+		m = m.applyRoomUpdate(update)
+	}
+}
+
+// WaitObserverUpdateTimeout waits up to timeout for the next queued room update.
+func (m Model) WaitObserverUpdateTimeout(timeout time.Duration) (Model, bool) {
+	update, ok := m.roomQueue.PullTimeout(timeout)
+	if !ok {
+		return m, false
+	}
+	return m.applyRoomUpdate(update), true
+}
 
 // IsStreaming reports whether alias currently has an open turn.
 func (m Model) IsStreaming(alias string) bool { return m.history.IsStreaming(alias) }
@@ -406,33 +464,23 @@ func (m Model) HandleResize(innerW, totalH int) Model {
 
 // AppendUserInput appends a user input record to history.
 func (m Model) AppendUserInput(body string, routing []string) Model {
-	m.history = m.history.AppendUserInputRecord(body, routing)
-	return m
+	m.chat.AppendUserInputRecord(body, routing)
+	return m.refreshFromChat()
 }
 
 // AppendSystem appends a system record to history.
 func (m Model) AppendSystem(text string) Model {
-	m.history = m.history.AppendSystemRecord(text)
-	return m
+	m.chat.AppendSystemRecord(text)
+	return m.refreshFromChat()
 }
 
-// AppendLog appends a log record to history.
-func (m Model) AppendLog(alias, text string) Model {
-	m.history = m.history.AppendLogRecord(alias, text)
-	return m
-}
-
-// HandleAgentMessage routes an agent message to history for streaming record management.
-func (m Model) HandleAgentMessage(alias string, msg agent.Message) Model {
-	m.history = m.history.HandleAgentMessage(alias, msg)
-	return m
-}
-
-// MarkDeparted marks alias as departed and recolors its affected records.
-func (m Model) MarkDeparted(alias string) Model {
-	m.history = m.history.ClearStreaming(alias)
-	m.history = m.history.MarkDeparted(alias)
-	return m
+// refreshFromChat re-reads the current chat snapshot into history. Used
+// right after a synchronous local append: AppendRecord already mutated
+// room state and queued an Update for it before returning, so this fresh
+// snapshot already reflects that change — draining the queue afterward
+// would just redundantly re-apply the same state.
+func (m Model) refreshFromChat() Model {
+	return m.SetHistorySnapshot(m.chat.Snapshot())
 }
 
 // GotoBottom scrolls history to the bottom.

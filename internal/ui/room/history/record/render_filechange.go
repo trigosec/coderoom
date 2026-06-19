@@ -10,33 +10,6 @@ import (
 	"github.com/trigosec/coderoom/internal/ui/palette"
 )
 
-// FormatFileChangeBody renders a stable plain-text representation of a file
-// change set for history records and transcript exports.
-func FormatFileChangeBody(changes []agent.FileChange) string {
-	if len(changes) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	for i, ch := range changes {
-		if i > 0 {
-			sb.WriteString("\n")
-		}
-		sb.WriteString("=== ")
-		sb.WriteString(ch.Path)
-		if ch.ChangeKind != "" {
-			sb.WriteString(" (")
-			sb.WriteString(ch.ChangeKind)
-			sb.WriteString(")")
-		}
-		sb.WriteString("\n")
-		sb.WriteString(ch.Diff)
-		if !strings.HasSuffix(ch.Diff, "\n") {
-			sb.WriteString("\n")
-		}
-	}
-	return sb.String()
-}
-
 func fileChangeFieldsFromRecord(r Record) (status agent.ToolStatus, changes []agent.FileChange, body string) {
 	if r.Msg == nil {
 		return "", nil, ""
@@ -45,10 +18,7 @@ func fileChangeFieldsFromRecord(r Record) (status agent.ToolStatus, changes []ag
 	if !ok {
 		return "", nil, ""
 	}
-	if r.Text != "" {
-		return c.Status, c.Changes, r.Text
-	}
-	return c.Status, c.Changes, FormatFileChangeBody(c.Changes)
+	return c.Status, c.Changes, r.Text
 }
 
 const fileChangePreviewLines = 8

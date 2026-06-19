@@ -39,7 +39,7 @@ func (m Model) RenderedContent() string {
 	ctx := m.viewportRenderContext()
 	parts := make([]string, 0, len(m.records))
 	for i := range m.records {
-		out, cached := m.records[i].RenderCached(ctx)
+		out, cached := renderRecordCached(m.records[i], ctx)
 		m.records[i] = cached
 		parts = append(parts, out)
 	}
@@ -55,7 +55,7 @@ func (m Model) PlainText() string {
 		ColorForAlias: m.resolveColor,
 	}
 	for _, r := range m.records {
-		parts = append(parts, r.Render(ctx))
+		parts = append(parts, rec.Render(r.record, ctx))
 	}
 	return strings.Join(parts, "\n\n")
 }

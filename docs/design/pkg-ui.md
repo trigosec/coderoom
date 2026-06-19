@@ -4,11 +4,13 @@
 
 The TUI is the user-facing layer for Phase 1: a single-agent terminal interface that resembles the Codex / Claude Code experience. It owns:
 
-- Rendering session events to a scrollable output area
+- Rendering room state to a scrollable output area
 - Accepting user input and parsing it into session commands
 - Bridging the session observer (called from agent goroutines) into the Bubble Tea update loop
 
 It is **not** responsible for session logic, message routing, or agent lifecycle — those remain in `internal/session`.
+It is also not the owner of canonical room/chat state — that belongs to
+`internal/room`.
 
 ---
 
@@ -65,6 +67,8 @@ type Model struct {
 
 The room component owns all content rendering and the two separator lines that
 frame the compose area. The toolbox is a sibling, not a child, of the room.
+The room component is also the UI adapter boundary for `internal/room`. The
+top-level `internal/ui` package should not depend on `internal/room` directly.
 
 ---
 
@@ -112,21 +116,20 @@ No fixed-size buffers. No dropped events. If the UI falls behind, the internal s
 | `KindAgentStopped` | `[ada left]` |
 | `KindAgentCrashed` | `[ada crashed]` |
 | `KindAgentLog`     | `▸ <line>` in grey (lipgloss); de-emphasised diagnostic output; does not participate in streaming state; appended as a standalone line like any other event |
-| `KindBroadcast` | `[all] <text>` |
-| `KindSharedSend` | `[→ ada] <text>` |
-| `KindSharedNotice` | no standalone record; listener routing is implied by the sender record footer (for example `→ ada  → tim`) |
 | `KindDelta` | streamed inline: `ada> <fragment>` on first delta, subsequent fragments appended to the same line |
 | `KindDone` | closes the current streaming line |
 
-Streaming state: when a `KindDelta` arrives for an alias not currently streaming,
-a new agent-output record is appended to the history and marked as in-progress.
-Subsequent deltas for the same alias update that record in place. `KindDone`
-closes the record and clears the streaming flag for that alias.
+Streaming state and record accumulation are owned by `internal/room`, not by
+the TUI. The room component reads canonical room records and adapts them into
+UI-local viewport state. `history.Model` wraps a `bubbles/viewport` and
+re-renders content on every change, but it should not be the source of truth
+for chat semantics.
 
-Records are owned by `history.Model`, which wraps a `bubbles/viewport` and
-re-renders content on every change. Line wrapping is handled by the viewport
-itself; `inlinefmt` applies ANSI-aware styling (colours, hanging indents) per
-record kind before the content reaches the viewport.
+User-authored routing footers are a UI concern, not a room-projected event
+concern. The UI knows the intended routing at submission time and may render
+that as a footer on the echoed user-input record without requiring room to
+project `KindBroadcast`, `KindSharedSend`, or `KindSharedNotice` into canonical
+message state.
 
 ---
 
@@ -180,7 +183,14 @@ The session and agent packages are unchanged.
 The TUI owns:
 - Bubble Tea model, update, and view
 - Observer channel and `awaitEvent` wiring
-- Rendering session events as styled text
+- Rendering room state as styled text
 - Parsing user input into session commands
 
 The session controller owns everything else. The TUI never reads session internals directly — it only calls `Execute` and receives events through the observer channel.
+
+More specifically:
+
+- `internal/ui` coordinates top-level components and session commands
+- `internal/ui/room` adapts canonical room state into presentation state
+- `internal/ui/room/history` is presentation-only and should not depend on
+  `internal/room`

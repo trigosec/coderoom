@@ -133,8 +133,7 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 }
 
 // routingFor returns the aliases that will receive the action, used to
-// populate the routing footer on the user input record. Aliases are sorted
-// for a stable display order.
+// populate the routing footer on the echoed user-input record.
 func routingFor(a Action, ps []participant.Participant) []string {
 	if _, ok := a.(Broadcast); ok {
 		aliases := make([]string, len(ps))
@@ -145,7 +144,15 @@ func routingFor(a Action, ps []participant.Participant) []string {
 		return aliases
 	}
 	if s, ok := a.(Send); ok {
-		return []string{s.Alias}
+		listeners := make([]string, 0, len(ps))
+		for _, p := range ps {
+			if p.Alias == s.Alias {
+				continue
+			}
+			listeners = append(listeners, p.Alias)
+		}
+		slices.Sort(listeners)
+		return append([]string{s.Alias}, listeners...)
 	}
 	return nil
 }
@@ -191,40 +198,13 @@ func (m Model) dispatchRoomStagedBatch() Model {
 }
 
 func (m Model) handleEvent(e session.Event) (Model, tea.Cmd) {
-	var next Model
-	if out, ok := m.handleAgentLifecycleEvent(e); ok {
-		next = out
-	} else {
-		next = m.handleMessageEvent(e)
-	}
+	next := m.handleMessageEvent(e)
+	// Best-effort only — see DrainObserverUpdates' doc comment.
+	next.room = next.room.DrainObserverUpdates()
 	next = next.maybeAdvanceStagedBatch(e)
 	var cmd tea.Cmd
 	next.toolbox, cmd = next.toolbox.SetParticipants(next.sess.Roster())
 	return next, cmd
-}
-
-func (m Model) handleAgentLifecycleEvent(e session.Event) (Model, bool) {
-	switch e.Kind {
-	case session.KindAgentStarting:
-		m.room = m.room.AppendSystem("[" + e.Alias + " starting]")
-		return m, true
-	case session.KindAgentStarted:
-		m.room = m.room.AppendSystem("[" + e.Alias + " joined]")
-		return m, true
-	case session.KindParticipantStatusChanged:
-		// No transcript entry for status; used to drive staged dispatch.
-		return m, true
-	case session.KindAgentStopped:
-		m.room = m.room.MarkDeparted(e.Alias)
-		m.room = m.room.AppendSystem("[" + e.Alias + " left]")
-		return m, true
-	case session.KindAgentCrashed:
-		m.room = m.room.MarkDeparted(e.Alias)
-		m.room = m.room.AppendSystem("[" + e.Alias + " crashed]")
-		return m, true
-	default:
-		return m, false
-	}
 }
 
 func (m Model) handleMessageEvent(e session.Event) Model {
@@ -233,13 +213,6 @@ func (m Model) handleMessageEvent(e session.Event) Model {
 		m = m.handleApprovalRequested(e)
 	case session.KindApprovalCleared:
 		m = m.handleApprovalCleared(e)
-	case session.KindSharedNotice:
-	case session.KindAgentLog:
-		m.room = m.room.AppendLog(e.Alias, e.Text)
-	case session.KindAgentMessage:
-		if e.Msg != nil {
-			m.room = m.room.HandleAgentMessage(e.Alias, *e.Msg)
-		}
 	default:
 	}
 	return m

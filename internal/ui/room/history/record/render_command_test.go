@@ -20,7 +20,7 @@ func TestRenderCommand_headerOnly(t *testing.T) {
 			Content:  agent.Command{Command: "ls", Cwd: "/tmp"},
 		},
 	}
-	out := ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}}))
+	out := ansi.Strip(Render(r, RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}}))
 	if !strings.HasPrefix(out, "● bot:\n\n  $ ls") {
 		t.Errorf("expected header starting with participant prefix and command line, got %q", out)
 	}
@@ -36,7 +36,7 @@ func TestRenderCommand_withOutputAndExitCode(t *testing.T) {
 			Content:  agent.Command{Command: "echo hi", Cwd: "/", Output: "hi\n", ExitCode: ptr(0)},
 		},
 	}
-	out := ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}}))
+	out := ansi.Strip(Render(r, RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}}))
 	if !strings.Contains(out, "echo hi") {
 		t.Errorf("expected command in output, got %q", out)
 	}
@@ -61,7 +61,7 @@ func TestRenderCommand_outputPreview_showsTopThreeLinesAndHint(t *testing.T) {
 			Content:  agent.Command{Command: "echo stuff", Cwd: "/", Output: "a\nb\nc\nd\n", ExitCode: ptr(0)},
 		},
 	}
-	out := ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}}))
+	out := ansi.Strip(Render(r, RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 80}}))
 	if !strings.Contains(out, "\n\n  a\n  b\n  c") {
 		t.Errorf("expected top 3 output lines in preview, got %q", out)
 	}
@@ -83,7 +83,7 @@ func TestRenderCommand_longCmd_truncatesToSingleLine(t *testing.T) {
 			Content:  agent.Command{Command: "abcdefghij", Cwd: "/tmp"},
 		},
 	}
-	out := ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 10}}))
+	out := ansi.Strip(Render(r, RenderContext{Key: RenderKey{Mode: RenderViewport, Width: 10}}))
 	lines := strings.Split(out, "\n")
 	if len(lines) < 3 {
 		t.Fatalf("expected header + blank + command line, got %q", out)
@@ -106,7 +106,7 @@ func TestRenderCommandTranscript_indentsAllOutputLines(t *testing.T) {
 			Content:  agent.Command{Command: "echo hi", Cwd: "/", Output: "line1\nline2\nline3\n", ExitCode: ptr(0)},
 		},
 	}
-	out := ansi.Strip(r.Render(RenderContext{Key: RenderKey{Mode: RenderTranscript}}))
+	out := ansi.Strip(Render(r, RenderContext{Key: RenderKey{Mode: RenderTranscript}}))
 	if !strings.Contains(out, "\n\n  line1\n  line2\n  line3") {
 		t.Errorf("expected all output lines to be indented, got %q", out)
 	}

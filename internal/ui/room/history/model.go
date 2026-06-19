@@ -13,10 +13,21 @@ type streamSlot struct {
 	recordIdx int
 }
 
+type renderCache struct {
+	valid    bool
+	key      rec.RenderKey
+	rendered string
+}
+
+type viewRecord struct {
+	record rec.Record
+	cache  renderCache
+}
+
 // Model holds the conversation record list and its viewport.
 type Model struct {
 	viewport      viewport.Model
-	records       []rec.Record
+	records       []viewRecord
 	contentLines  int
 	streaming     map[agent.StreamID]streamSlot // streamID → open record slot
 	departed      map[string]bool
@@ -36,12 +47,20 @@ type ScrollStats struct {
 	AtBottom     bool
 }
 
+// State is the canonical transcript state a Model renders, supplied by the
+// room package via a Snapshot.
+type State struct {
+	Records    []rec.Record
+	Departed   map[string]bool
+	OpenStream map[agent.StreamID]int
+}
+
 // New returns an uninitialised Model; call SetSize before first use.
 // colorByAlias resolves an active agent alias to its colour; it may be nil.
 // departedColor is applied to records belonging to agents that have left.
 func New(colorByAlias func(string) string, departedColor string) Model {
 	return Model{
-		records:       []rec.Record{},
+		records:       []viewRecord{},
 		streaming:     make(map[agent.StreamID]streamSlot),
 		departed:      make(map[string]bool),
 		colorByAlias:  colorByAlias,
@@ -119,12 +138,18 @@ func (m Model) viewportRenderContext() rec.RenderContext {
 func (m Model) Ready() bool { return m.ready }
 
 // Records returns the current record slice.
-func (m Model) Records() []rec.Record { return m.records }
+func (m Model) Records() []rec.Record {
+	records := make([]rec.Record, len(m.records))
+	for i, r := range m.records {
+		records[i] = r.record
+	}
+	return records
+}
 
 // IsStreaming reports whether alias currently has any open stream.
 func (m Model) IsStreaming(alias string) bool {
 	for _, slot := range m.streaming {
-		if m.records[slot.recordIdx].Alias == alias {
+		if m.records[slot.recordIdx].record.Alias == alias {
 			return true
 		}
 	}
@@ -134,7 +159,7 @@ func (m Model) IsStreaming(alias string) bool {
 // StreamingIdx returns the record index for the open output stream of alias.
 func (m Model) StreamingIdx(alias string) (int, bool) {
 	for _, slot := range m.streaming {
-		r := m.records[slot.recordIdx]
+		r := m.records[slot.recordIdx].record
 		if r.Alias != alias || r.Msg == nil {
 			continue
 		}
@@ -157,5 +182,34 @@ func (m Model) Width() int { return m.viewport.Width() }
 // ToggleDebugRowNums flips the row-number overlay.
 func (m Model) ToggleDebugRowNums() Model {
 	m.debugRowNums = !m.debugRowNums
+	return m
+}
+
+// ReplaceState swaps the history state with a canonical transcript state.
+// If the viewport was scrolled to the bottom before the swap, it stays
+// pinned to the bottom afterward; otherwise the scroll position is left
+// alone so reading scrolled-up history isn't interrupted by new content.
+func (m Model) ReplaceState(state State) Model {
+	wasAtBottom := m.viewport.AtBottom()
+
+	m.records = make([]viewRecord, len(state.Records))
+	for i, r := range state.Records {
+		m.records[i] = viewRecord{record: r}
+	}
+
+	m.departed = make(map[string]bool, len(state.Departed))
+	for alias, isDeparted := range state.Departed {
+		m.departed[alias] = isDeparted
+	}
+
+	m.streaming = make(map[agent.StreamID]streamSlot, len(state.OpenStream))
+	for streamID, recordIdx := range state.OpenStream {
+		m.streaming[streamID] = streamSlot{recordIdx: recordIdx}
+	}
+
+	m = m.syncViewport()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 	return m
 }

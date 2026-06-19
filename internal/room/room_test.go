@@ -1,0 +1,376 @@
+package room
+
+import (
+	"testing"
+	"time"
+
+	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/session"
+)
+
+type updateListener struct {
+	ch chan Update
+}
+
+func (l updateListener) OnRoomUpdate(update Update) {
+	l.ch <- update
+}
+
+func newTestRoom(t *testing.T) (*Room, <-chan Update) {
+	t.Helper()
+	ch := make(chan Update, 16)
+	room := New(WithObserver(updateListener{ch: ch}))
+	t.Cleanup(room.Close)
+	return room, ch
+}
+
+func waitUpdate(t *testing.T, ch <-chan Update) Update {
+	t.Helper()
+	select {
+	case update := <-ch:
+		return update
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for room update")
+		return Update{}
+	}
+}
+
+func TestOnEvent_agentLifecycleAppendsSystemRecords(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{Kind: session.KindAgentStarting, Alias: "ada"})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if len(snapshot.Records) != 3 {
+		t.Fatalf("expected 3 records, got %d", len(snapshot.Records))
+	}
+	if snapshot.Records[0].Kind != KindSystem || snapshot.Records[0].Text != "[ada starting]" {
+		t.Fatalf("unexpected first record: %#v", snapshot.Records[0])
+	}
+	if snapshot.Records[1].Text != "[ada joined]" {
+		t.Fatalf("unexpected second record: %#v", snapshot.Records[1])
+	}
+	if snapshot.Records[2].Text != "[ada left]" {
+		t.Fatalf("unexpected third record: %#v", snapshot.Records[2])
+	}
+	if !snapshot.Departed["ada"] {
+		t.Fatal("expected ada to be marked departed")
+	}
+}
+
+func TestOnEvent_agentMessageStreamsIntoSingleRecord(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}},
+	})
+	waitUpdate(t, updates)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: " world"}},
+	})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if len(snapshot.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(snapshot.Records))
+	}
+	if len(snapshot.OpenStreams) != 1 {
+		t.Fatalf("expected 1 open stream, got %d", len(snapshot.OpenStreams))
+	}
+	if snapshot.Records[0].Msg == nil {
+		t.Fatal("expected message payload")
+	}
+	output, ok := snapshot.Records[0].Msg.Content.(agent.Output)
+	if !ok {
+		t.Fatalf("expected Output content, got %T", snapshot.Records[0].Msg.Content)
+	}
+	if output.Text != "hello world" {
+		t.Fatalf("expected accumulated output, got %q", output.Text)
+	}
+}
+
+func TestOnEvent_outputFlushClosesStreamAndPreservesAccumulatedRecord(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}},
+	})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if len(snapshot.OpenStreams) != 0 {
+		t.Fatalf("expected no open streams after flush, got %d", len(snapshot.OpenStreams))
+	}
+	if len(snapshot.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(snapshot.Records))
+	}
+	output, ok := snapshot.Records[0].Msg.Content.(agent.Output)
+	if !ok {
+		t.Fatalf("expected Output content, got %T", snapshot.Records[0].Msg.Content)
+	}
+	if output.Text != "hello" {
+		t.Fatalf("expected preserved output, got %q", output.Text)
+	}
+}
+
+func TestOnEvent_reasoningFlushClearsOnlyMatchingReasoningStream(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: "think"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "say"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "reason1", Mode: agent.ModeFlush, Content: agent.Reasoning{}},
+	})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if len(snapshot.OpenStreams) != 1 {
+		t.Fatalf("expected 1 remaining open stream, got %d", len(snapshot.OpenStreams))
+	}
+	if snapshot.OpenStreams[0].StreamID != "out1" {
+		t.Fatalf("expected output stream to remain open, got %#v", snapshot.OpenStreams[0])
+	}
+}
+
+func TestOnEvent_commandFlushPreservesExitCodeAndClosesStream(t *testing.T) {
+	room, updates := newTestRoom(t)
+	exitCode := 0
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "cmd1", Mode: agent.ModeStream, Content: agent.Command{Command: "true", Cwd: "/tmp"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "cmd1", Mode: agent.ModeStream, Content: agent.Command{Output: "ok\n", ExitCode: &exitCode}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "cmd1", Mode: agent.ModeFlush, Content: agent.Command{}},
+	})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if len(snapshot.OpenStreams) != 0 {
+		t.Fatalf("expected command stream to be closed, got %d open streams", len(snapshot.OpenStreams))
+	}
+	cmd, ok := snapshot.Records[0].Msg.Content.(agent.Command)
+	if !ok {
+		t.Fatalf("expected Command content, got %T", snapshot.Records[0].Msg.Content)
+	}
+	if cmd.ExitCode == nil || *cmd.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %v", cmd.ExitCode)
+	}
+	if cmd.Output != "ok\n" {
+		t.Fatalf("expected accumulated command output, got %q", cmd.Output)
+	}
+}
+
+func TestOnEvent_fileChangeFlushPreservesChangesAndClosesStream(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg: &agent.Message{StreamID: "fc1", Mode: agent.ModeStream, Content: agent.FileChangeSet{
+			Changes: []agent.FileChange{{Path: "a.txt", Diff: "+one\n", ChangeKind: "update"}},
+		}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg: &agent.Message{StreamID: "fc1", Mode: agent.ModeStream, Content: agent.FileChangeSet{
+			Status:  agent.ToolStatusCompleted,
+			Changes: []agent.FileChange{{Path: "b.txt", Diff: "+two\n", ChangeKind: "add"}},
+		}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "fc1", Mode: agent.ModeFlush, Content: agent.FileChangeSet{}},
+	})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if len(snapshot.OpenStreams) != 0 {
+		t.Fatalf("expected file-change stream to be closed, got %d open streams", len(snapshot.OpenStreams))
+	}
+	got, ok := snapshot.Records[0].Msg.Content.(agent.FileChangeSet)
+	if !ok {
+		t.Fatalf("expected FileChangeSet content, got %T", snapshot.Records[0].Msg.Content)
+	}
+	if got.Status != agent.ToolStatusCompleted {
+		t.Fatalf("expected completed status, got %q", got.Status)
+	}
+	if len(got.Changes) != 2 {
+		t.Fatalf("expected 2 accumulated changes, got %d", len(got.Changes))
+	}
+}
+
+func TestOnEvent_agentStoppedClearsOnlyStoppedAliasStreams(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "ada-out", Mode: agent.ModeStream, Content: agent.Output{Text: "a"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "bob",
+		Msg:   &agent.Message{StreamID: "bob-out", Mode: agent.ModeStream, Content: agent.Output{Text: "b"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if len(snapshot.OpenStreams) != 1 {
+		t.Fatalf("expected 1 remaining open stream, got %d", len(snapshot.OpenStreams))
+	}
+	if snapshot.OpenStreams[0].Alias != "bob" {
+		t.Fatalf("expected bob stream to remain, got %#v", snapshot.OpenStreams[0])
+	}
+}
+
+func TestAppendSystemRecordNotifiesObserverAndAdvancesVersion(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.AppendSystemRecord("[system]")
+	update := waitUpdate(t, updates)
+	if update.Version != 1 {
+		t.Fatalf("unexpected update version: %#v", update)
+	}
+
+	snapshot := room.Snapshot()
+	if len(snapshot.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(snapshot.Records))
+	}
+	if snapshot.Records[0].Kind != KindSystem || snapshot.Records[0].Text != "[system]" {
+		t.Fatalf("unexpected system record: %#v", snapshot.Records[0])
+	}
+}
+
+func TestAppendUserInputRecordNotifiesObserverAndAdvancesVersion(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.AppendUserInputRecord("hello", []string{"ada"})
+	update := waitUpdate(t, updates)
+	if update.Version != 1 {
+		t.Fatalf("unexpected update version: %#v", update)
+	}
+
+	snapshot := room.Snapshot()
+	if len(snapshot.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(snapshot.Records))
+	}
+	r := snapshot.Records[0]
+	if r.Kind != KindUserInput || len(r.Routing) != 1 || r.Routing[0] != "ada" {
+		t.Fatalf("unexpected user input record: %#v", r)
+	}
+}
+
+func TestAppendLogRecordNotifiesObserverAndAdvancesVersion(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.AppendLogRecord("ada", "warn")
+	update := waitUpdate(t, updates)
+	if update.Version != 1 {
+		t.Fatalf("unexpected update version: %#v", update)
+	}
+
+	snapshot := room.Snapshot()
+	if len(snapshot.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(snapshot.Records))
+	}
+	r := snapshot.Records[0]
+	if r.Kind != KindLog || r.Alias != "ada" || r.Text != "warn" {
+		t.Fatalf("unexpected log record: %#v", r)
+	}
+}
+
+func TestSnapshotClonesRecordsAndState(t *testing.T) {
+	room, updates := newTestRoom(t)
+	exitCode := 7
+
+	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	waitUpdate(t, updates)
+	room.AppendUserInputRecord("hello", []string{"ada"})
+	waitUpdate(t, updates)
+	room.AppendRecord(Record{
+		Kind:  KindCommand,
+		Alias: "ada",
+		Text:  "out",
+		Msg: &agent.Message{
+			StreamID: "cmd1",
+			Mode:     agent.ModeSingle,
+			Content:  agent.Command{Command: "pwd", Cwd: "/tmp", Output: "out", ExitCode: &exitCode},
+		},
+	})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	snapshot.Members[0] = "mutated"
+	snapshot.Departed["ada"] = true
+	snapshot.Records[0].Text = "changed"
+	snapshot.Records[1].Routing[0] = "mutated"
+	cmd := snapshot.Records[2].Msg.Content.(agent.Command)
+	cmd.Output = "mutated"
+	snapshot.Records[2].Msg.Content = cmd
+
+	next := room.Snapshot()
+	if next.Members[0] != "ada" {
+		t.Fatalf("expected members to be cloned, got %v", next.Members)
+	}
+	if next.Departed["ada"] {
+		t.Fatalf("expected departed map to be cloned, got %v", next.Departed)
+	}
+	if next.Records[0].Text != "[ada joined]" {
+		t.Fatalf("expected record text to be preserved, got %#v", next.Records[0])
+	}
+	if next.Records[1].Routing[0] != "ada" {
+		t.Fatalf("expected routing to be cloned, got %#v", next.Records[1])
+	}
+	nextCmd := next.Records[2].Msg.Content.(agent.Command)
+	if nextCmd.Output != "out" {
+		t.Fatalf("expected message content to be cloned, got %#v", nextCmd)
+	}
+}

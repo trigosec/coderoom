@@ -577,7 +577,7 @@ func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindSharedSend)
+	_ = mustReceive(t, obs.ch, session.KindSharedSend)
 	ev := mustReceive(t, obs.ch, session.KindSharedNotice)
 	if ev.Alias != "turing" {
 		t.Errorf("expected notice for turing, got %q", ev.Alias)
