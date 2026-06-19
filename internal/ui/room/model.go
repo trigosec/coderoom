@@ -6,6 +6,7 @@
 package room
 
 import (
+	"errors"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -86,6 +87,7 @@ type Model struct {
 	history      history.Model
 	chat         *roomstate.Room
 	roomQueue    *queue.Queue[roomstate.Update]
+	roomVersion  uint64
 	input        inputModel
 	approvalPrev inputKind
 	focus        roomFocus
@@ -146,15 +148,8 @@ func (m Model) HistoryHeight() int { return m.history.Height() }
 
 // SetHistorySnapshot replaces the rendered transcript state from the room package.
 func (m Model) SetHistorySnapshot(snapshot roomstate.Snapshot) Model {
-	state := history.State{
-		Records:    snapshot.Records,
-		Departed:   snapshot.Departed,
-		OpenStream: make(map[agent.StreamID]int, len(snapshot.OpenStreams)),
-	}
-	for _, stream := range snapshot.OpenStreams {
-		state.OpenStream[stream.StreamID] = stream.RecordIdx
-	}
-	m.history = m.history.ReplaceState(state)
+	m.history = m.history.ReplaceSnapshot(snapshot)
+	m.roomVersion = snapshot.Version
 	return m
 }
 
@@ -480,6 +475,26 @@ func (m Model) AppendSystem(text string) Model {
 // snapshot already reflects that change — draining the queue afterward
 // would just redundantly re-apply the same state.
 func (m Model) refreshFromChat() Model {
+	return m.applyChatSnapshot()
+}
+
+func (m Model) applyChatDelta() Model {
+	delta, err := m.chat.Delta(m.roomVersion)
+	if err != nil {
+		if errors.Is(err, roomstate.ErrResyncRequired) {
+			return m.applyChatSnapshot()
+		}
+		return m
+	}
+	if delta.Version == m.roomVersion {
+		return m
+	}
+	m.history = m.history.ApplyRoomDelta(delta)
+	m.roomVersion = delta.Version
+	return m
+}
+
+func (m Model) applyChatSnapshot() Model {
 	return m.SetHistorySnapshot(m.chat.Snapshot())
 }
 

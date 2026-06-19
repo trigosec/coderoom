@@ -15,7 +15,8 @@ func New(opts ...Option) *Room {
 		id:        SharedRoomID,
 		members:   make(map[string]struct{}),
 		departed:  make(map[string]bool),
-		streaming: make(map[agent.StreamID]streamSlot),
+		streaming: make(map[agent.StreamID]OpenStream),
+		dirty:     make(map[uint64][]int),
 		queue:     queue.New[session.Event](),
 	}
 	for _, opt := range opts {
@@ -61,8 +62,9 @@ func (r *Room) appendRecord(record Record) (Update, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	idx := len(r.records)
 	r.records = append(r.records, cloneRecord(record))
-	return r.bumpVersionLocked(), true
+	return r.bumpVersionLocked(idx), true
 }
 
 // Close stops the room's background event-processing goroutine. Production

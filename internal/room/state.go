@@ -66,22 +66,6 @@ type OpenStream struct {
 	Kind      OpenStreamKind
 }
 
-// Snapshot is a detached, point-in-time copy of a room's full state.
-type Snapshot struct {
-	RoomID      ID
-	Version     uint64
-	Members     []string
-	Departed    map[string]bool
-	Records     []Record
-	OpenStreams []OpenStream
-}
-
-type streamSlot struct {
-	recordIdx int
-	alias     string
-	kind      OpenStreamKind
-}
-
 // Room holds the canonical chat-visible state for one room, projected from
 // session events and local, non-session appends.
 type Room struct {
@@ -91,7 +75,8 @@ type Room struct {
 	members   map[string]struct{}
 	departed  map[string]bool
 	records   []Record
-	streaming map[agent.StreamID]streamSlot
+	streaming map[agent.StreamID]OpenStream
+	dirty     map[uint64][]int
 	observer  Observer
 	queue     *queue.Queue[session.Event]
 }

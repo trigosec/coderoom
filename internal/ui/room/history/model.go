@@ -5,6 +5,7 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	"github.com/trigosec/coderoom/internal/agent"
+	roomstate "github.com/trigosec/coderoom/internal/room"
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
@@ -45,14 +46,6 @@ type ScrollStats struct {
 	ViewportRows int
 	ContentRows  int
 	AtBottom     bool
-}
-
-// State is the canonical transcript state a Model renders, supplied by the
-// room package via a Snapshot.
-type State struct {
-	Records    []rec.Record
-	Departed   map[string]bool
-	OpenStream map[agent.StreamID]int
 }
 
 // New returns an uninitialised Model; call SetSize before first use.
@@ -185,26 +178,26 @@ func (m Model) ToggleDebugRowNums() Model {
 	return m
 }
 
-// ReplaceState swaps the history state with a canonical transcript state.
+// ReplaceSnapshot swaps the history state with a canonical room snapshot.
 // If the viewport was scrolled to the bottom before the swap, it stays
 // pinned to the bottom afterward; otherwise the scroll position is left
 // alone so reading scrolled-up history isn't interrupted by new content.
-func (m Model) ReplaceState(state State) Model {
+func (m Model) ReplaceSnapshot(snapshot roomstate.Snapshot) Model {
 	wasAtBottom := m.viewport.AtBottom()
 
-	m.records = make([]viewRecord, len(state.Records))
-	for i, r := range state.Records {
+	m.records = make([]viewRecord, len(snapshot.Records))
+	for i, r := range snapshot.Records {
 		m.records[i] = viewRecord{record: r}
 	}
 
-	m.departed = make(map[string]bool, len(state.Departed))
-	for alias, isDeparted := range state.Departed {
+	m.departed = make(map[string]bool, len(snapshot.Departed))
+	for alias, isDeparted := range snapshot.Departed {
 		m.departed[alias] = isDeparted
 	}
 
-	m.streaming = make(map[agent.StreamID]streamSlot, len(state.OpenStream))
-	for streamID, recordIdx := range state.OpenStream {
-		m.streaming[streamID] = streamSlot{recordIdx: recordIdx}
+	m.streaming = make(map[agent.StreamID]streamSlot, len(snapshot.OpenStreams))
+	for _, stream := range snapshot.OpenStreams {
+		m.streaming[stream.StreamID] = streamSlot{recordIdx: stream.RecordIdx}
 	}
 
 	m = m.syncViewport()
@@ -212,4 +205,54 @@ func (m Model) ReplaceState(state State) Model {
 		m.viewport.GotoBottom()
 	}
 	return m
+}
+
+// ApplyRoomDelta updates the history from an incremental room delta.
+func (m Model) ApplyRoomDelta(delta roomstate.Delta) Model {
+	wasAtBottom := m.viewport.AtBottom()
+
+	for _, update := range delta.RecordUpdates {
+		if update.Index < 0 {
+			continue
+		}
+		if update.Index >= len(m.records) {
+			expanded := make([]viewRecord, update.Index+1)
+			copy(expanded, m.records)
+			m.records = expanded
+		}
+		m.records[update.Index].record = update.Record
+		m.records[update.Index].cache = renderCache{}
+	}
+
+	departedChanged := !sameDeparted(m.departed, delta.Meta.Departed)
+	m.departed = make(map[string]bool, len(delta.Meta.Departed))
+	for alias, isDeparted := range delta.Meta.Departed {
+		m.departed[alias] = isDeparted
+	}
+	if departedChanged {
+		m.colorVersion++
+	}
+
+	m.streaming = make(map[agent.StreamID]streamSlot, len(delta.Meta.OpenStreams))
+	for _, stream := range delta.Meta.OpenStreams {
+		m.streaming[stream.StreamID] = streamSlot{recordIdx: stream.RecordIdx}
+	}
+
+	m = m.syncViewport()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
+func sameDeparted(left, right map[string]bool) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for alias, isDeparted := range left {
+		if right[alias] != isDeparted {
+			return false
+		}
+	}
+	return true
 }

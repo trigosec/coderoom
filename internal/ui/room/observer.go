@@ -30,5 +30,8 @@ func (m Model) applyRoomUpdate(update roomstate.Update) Model {
 	if update.RoomID != roomstate.SharedRoomID {
 		return m
 	}
-	return m.SetHistorySnapshot(m.chat.Snapshot())
+	if update.Version <= m.roomVersion {
+		return m
+	}
+	return m.applyChatDelta()
 }

@@ -3,6 +3,7 @@ package history
 import (
 	"testing"
 
+	roomstate "github.com/trigosec/coderoom/internal/room"
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
@@ -18,14 +19,14 @@ func TestReplaceState_whenAtBottom_keepsViewportAtBottom(t *testing.T) {
 	m := New(nil, "")
 	m = m.SetSize(80, 10)
 	records := systemRecords(25)
-	m = m.ReplaceState(State{Records: records})
+	m = m.ReplaceSnapshot(roomstate.Snapshot{Records: records})
 	m = m.GotoBottom()
 	if !m.AtBottom() {
 		t.Fatal("expected viewport at bottom before new state")
 	}
 
 	records = append(records, rec.Record{Kind: rec.KindAgentOutput, Alias: "ada", Text: "hello"})
-	m = m.ReplaceState(State{Records: records})
+	m = m.ReplaceSnapshot(roomstate.Snapshot{Records: records})
 	if !m.AtBottom() {
 		t.Fatal("expected new state to keep viewport at bottom when already at bottom")
 	}
@@ -35,7 +36,7 @@ func TestReplaceState_whenScrolledUp_doesNotForceViewportToBottom(t *testing.T) 
 	m := New(nil, "")
 	m = m.SetSize(80, 10)
 	records := systemRecords(25)
-	m = m.ReplaceState(State{Records: records})
+	m = m.ReplaceSnapshot(roomstate.Snapshot{Records: records})
 	m = m.GotoBottom()
 	m = m.ScrollUp(3)
 	if m.AtBottom() {
@@ -44,7 +45,7 @@ func TestReplaceState_whenScrolledUp_doesNotForceViewportToBottom(t *testing.T) 
 	y := m.YOffset()
 
 	records = append(records, rec.Record{Kind: rec.KindAgentOutput, Alias: "ada", Text: "hello"})
-	m = m.ReplaceState(State{Records: records})
+	m = m.ReplaceSnapshot(roomstate.Snapshot{Records: records})
 	if m.YOffset() != y {
 		t.Fatalf("expected new state not to force viewport to bottom when scrolled up; yOffset changed from %d to %d", y, m.YOffset())
 	}

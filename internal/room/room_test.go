@@ -1,6 +1,7 @@
 package room
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -324,6 +325,99 @@ func TestAppendLogRecordNotifiesObserverAndAdvancesVersion(t *testing.T) {
 	r := snapshot.Records[0]
 	if r.Kind != KindLog || r.Alias != "ada" || r.Text != "warn" {
 		t.Fatalf("unexpected log record: %#v", r)
+	}
+}
+
+func TestDelta_fromZeroRequiresResync(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.AppendSystemRecord("[system]")
+	waitUpdate(t, updates)
+	room.AppendUserInputRecord("hello", []string{"ada"})
+	waitUpdate(t, updates)
+
+	_, err := room.Delta(0)
+	if !errors.Is(err, ErrResyncRequired) {
+		t.Fatalf("expected ErrResyncRequired, got %v", err)
+	}
+}
+
+func TestDelta_incrementalCoalescesRepeatedRecordUpdates(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}},
+	})
+	update1 := waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: " world"}},
+	})
+	update2 := waitUpdate(t, updates)
+
+	delta, err := room.Delta(update1.Version)
+	if err != nil {
+		t.Fatalf("Delta() error = %v", err)
+	}
+	if delta.Version != update2.Version {
+		t.Fatalf("expected version %d, got %d", update2.Version, delta.Version)
+	}
+	if len(delta.RecordUpdates) != 1 {
+		t.Fatalf("expected 1 coalesced record update, got %d", len(delta.RecordUpdates))
+	}
+	if delta.RecordUpdates[0].Index != 0 {
+		t.Fatalf("expected record index 0, got %d", delta.RecordUpdates[0].Index)
+	}
+	output, ok := delta.RecordUpdates[0].Record.Msg.Content.(agent.Output)
+	if !ok {
+		t.Fatalf("expected Output content, got %T", delta.RecordUpdates[0].Record.Msg.Content)
+	}
+	if output.Text != "hello world" {
+		t.Fatalf("expected accumulated output, got %q", output.Text)
+	}
+}
+
+func TestDelta_currentVersionReturnsEmptyDelta(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.AppendSystemRecord("[system]")
+	update := waitUpdate(t, updates)
+
+	delta, err := room.Delta(update.Version)
+	if err != nil {
+		t.Fatalf("Delta() error = %v", err)
+	}
+	if len(delta.RecordUpdates) != 0 {
+		t.Fatalf("expected no incremental records, got %#v", delta.RecordUpdates)
+	}
+}
+
+func TestDelta_futureVersionRequiresResync(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.AppendSystemRecord("[system]")
+	waitUpdate(t, updates)
+
+	_, err := room.Delta(99)
+	if !errors.Is(err, ErrResyncRequired) {
+		t.Fatalf("expected ErrResyncRequired, got %v", err)
+	}
+}
+
+func TestDelta_prunedVersionRequiresResync(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	for i := 0; i < deltaHistoryLimit+2; i++ {
+		room.AppendSystemRecord("[system]")
+		waitUpdate(t, updates)
+	}
+
+	_, err := room.Delta(1)
+	if !errors.Is(err, ErrResyncRequired) {
+		t.Fatalf("expected ErrResyncRequired after pruning, got %v", err)
 	}
 }
 
