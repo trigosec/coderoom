@@ -69,10 +69,11 @@ Command:
 
 Meaning:
 
-1. Resolve the latest eligible completed output event for `<from>`.
-2. Build a context payload with provenance.
-3. Deliver that payload to `<to>` through a context-transfer path.
-4. Emit a handoff event that the UI renders in the shared room.
+1. Resolve the latest eligible completed output for `<from>`.
+2. If any participant is still in flight, stage the command and wait.
+3. Build a context payload with provenance.
+4. Deliver that payload to `<to>` through a context-transfer path.
+5. Emit a handoff event that the UI renders in the shared room.
 
 The handoff itself carries no new tasking. It only transfers context.
 
@@ -81,6 +82,13 @@ If the human wants the receiving agent to act on it, they send a follow-up:
 ```text
 @<to> ...
 ```
+
+Version 1 should match the current message-delivery model:
+
+- `/handoff` is not rejected merely because participants are busy
+- it waits until all participants are idle, then executes
+- it resolves the source output when the command executes, not when it is first
+  typed
 
 ---
 
@@ -109,38 +117,18 @@ representation.
 
 ---
 
-## Event-backed ownership
+## Canonical source ownership
 
-### Problem
+`/handoff` must resolve its source from canonical runtime state owned below the
+UI, not from rendered viewport history.
 
-Right now the UI owns the assembly of visible history from streaming session
-events, while the session owns routing and lifecycle. That is sufficient for
-rendering, but underspecified for commands that need to refer back to prior
-agent output.
+For version 1, the only requirement is:
 
-### Decision
+- session must be able to resolve the latest completed eligible output for a
+  given alias
 
-We should start treating the event log / event model as the durable ownership
-boundary for “what happened in the room.”
-
-That implies:
-
-- session interacts with the pool of structured events
-- UI represents those events as records
-- `/handoff` resolves from those structured events, not by querying rendered UI
-  history
-
-### Consequence
-
-The design needs a stable event-level notion of:
-
-- completed user-visible output
-- source identity
-- source turn identity
-- payload text
-
-This is the missing runtime unit that both chat rendering and handoff should
-share.
+The UI may project that state as room/history records, but it should not be the
+source of truth for handoff resolution.
 
 ---
 
@@ -153,7 +141,7 @@ At the design level, the handoff event should capture:
 
 - source alias
 - destination alias
-- source turn ID or source output record ID
+- the implicit “latest completed eligible output” selection rule used
 - transferred payload text
 - preview text for room rendering
 - timestamp
@@ -171,55 +159,20 @@ distinct semantic event, not merely an implementation detail of notice sends.
 
 ---
 
-## Policy ownership
+## Idleness rule
 
-`/handoff` should be governed by policy, not encoded ad hoc inside the command.
+Version 1 should use one explicit idleness rule:
 
-The policy package is the right place to start expressing room-level decisions
-such as:
-
-- whether user-to-one-agent sends notify the rest
-- which participant-idleness rule applies to handoff
-
-Version 1 should define a handoff policy with explicit modes:
-
-- `all-idle`
-- `to-idle`
-- `from-and-to-idle`
-
-### Version 1 default
-
-Use:
-
-- `all-idle`
+- execute `/handoff` only when all participants are idle
 
 Rationale:
 
-- simplest to reason about in a shared-room product
-- matches current synchronized-room expectations better than mutating context
-  while some agents are still mid-turn
-- easiest to explain and audit
+- it matches current message staging behavior
+- it avoids mutating context while any participant is mid-turn
+- it is the simplest rule to explain and audit in a shared-room product
 
-This is stricter than necessary, but safer for the first release.
-
----
-
-## Recipient state semantics
-
-Version 1 should not mutate an in-flight recipient turn.
-
-Rule:
-
-- if handoff policy is not satisfied, reject the command before sending any
-  context
-
-For the default `all-idle` policy, that means:
-
-- if any participant is not idle, `/handoff` is rejected
-
-This is intentionally conservative. A future version may stage handoff behind
-the barrier model or allow narrower policies, but version 1 should optimize for
-predictability over throughput.
+This rule should be implemented directly for version 1. A later change may move
+it behind policy once policy semantics for notices and handoff are defined.
 
 ---
 
@@ -251,12 +204,11 @@ A simple version is enough:
 
 ```text
 [HANDOFF from tim]
-[SOURCE TURN <id>]
 
 <full transferred output>
 ```
 
-Version 1 should not summarize or transform the source output.
+Version 1 should not summarize or transform the source output before transfer.
 
 ---
 
@@ -270,12 +222,12 @@ marker.
 
 ### Shared room rendering
 
-Default room rendering should show a concise handoff record with preview, for
-example:
+Default room rendering should show the command plus a collapsed preview of the
+transferred content, for example:
 
 ```text
-[handoff tim → ada]
-<preview of transferred content>
+/handoff tim ada
+  > first line of handed-off output...
 ```
 
 The full transferred content should remain inspectable from the history UI
@@ -288,7 +240,7 @@ The human needs to be able to answer:
 - what was handed off
 - from whom
 - to whom
-- from which source turn / output
+- which implicit source output was used
 
 Without that, the feature becomes opaque and weakens the “human validates the
 signal” workflow.
@@ -303,8 +255,8 @@ The command should fail before any send when:
 - `<to>` does not exist
 - `<from> == <to>` (version 1 should reject for clarity)
 - no eligible completed output exists for `<from>`
-- the active handoff policy is not satisfied
-- destination is not ready to receive context
+- destination cannot receive context once the command reaches the front of the
+  queue
 
 Open implementation question for later:
 
@@ -348,7 +300,7 @@ event-backed source model rather than creating a second handoff path.
 
 Possible later work:
 
-- configurable handoff policy beyond `all-idle`
+- configurable handoff policy beyond “wait until all idle”
 - `/handoff <from> <to> --last N`
 - `/handoff <from> <to> --all-since-last`
 - `/handoff <from> <to> --summary`
@@ -365,11 +317,12 @@ These are out of scope for version 1.
 Version 1 should implement:
 
 - `/handoff <from> <to>`
-- source resolution from event-backed completed output state
+- source resolution from canonical completed output state below the UI
 - transfer unit = latest completed user-visible output from `<from>`
+- execution only when all participants are idle, with staging while busy
 - distinct handoff semantics, even if notice transport is reused internally
-- policy-owned idleness rule, defaulting to `all-idle`
-- auditable room record with preview and inspectable full payload
+- auditable room record showing the command and a collapsed preview, with
+  inspectable full payload
 
 This keeps the first handoff feature explicit, predictable, and aligned with a
 future event-centered architecture.
