@@ -25,15 +25,13 @@ Example:
 
 ## Core decision
 
-`/handoff` should not be modeled as “UI history lookup plus a notice send.”
+`/handoff` should not be modeled as “look up text in the UI, then send a notice.”
 
-Instead, it should push the design toward the event model that already exists
-conceptually in the repo:
+Instead:
 
-- the session owns structured events and appends them to the event log
-- the UI renders those events as chat/history records
-- handoff resolves its source from event-backed output state, not from the
-  viewport's rendered history
+- the room owns the chat-visible output state
+- the UI renders room state as chat/history records
+- handoff resolves its source from room state, not from rendered history
 
 This avoids making the UI the source of truth for coordination features.
 
@@ -52,10 +50,10 @@ That means `/handoff` needs:
 - explicit source and destination
 - predictable idleness rules
 - strong auditability
-- a stable runtime representation that session and UI can both project
+- a stable room-level representation that session and UI can both project
 
-Those needs line up naturally with introducing a first-class room/record model
-between session runtime notifications and the UI's rendering layer.
+Those needs line up naturally with using room state as the shared runtime view
+between session notifications and UI rendering.
 
 ---
 
@@ -117,17 +115,17 @@ representation.
 
 ---
 
-## Canonical source ownership
+## Source resolution
 
-`/handoff` must resolve its source from canonical runtime state owned below the
-UI, not from rendered viewport history.
+`/handoff` must resolve its source from room state, not from rendered UI
+history.
 
 For version 1, the only requirement is:
 
-- session must be able to resolve the latest completed eligible output for a
-  given alias
+- room state must make the latest completed eligible output for a given alias
+  available to session
 
-The UI may project that state as room/history records, but it should not be the
+The UI may render that state as history records, but it should not be the
 source of truth for handoff resolution.
 
 ---
@@ -146,8 +144,8 @@ At the design level, the handoff event should capture:
 - preview text for room rendering
 - timestamp
 
-The canonical runtime event model should remain in the session package, with
-room/record projection layered on top of it.
+The event model should remain in the session package, with room projection
+layered on top of it.
 
 Possible event taxonomy extension:
 
@@ -165,7 +163,7 @@ Version 1 should use one explicit idleness rule:
 
 - execute `/handoff` only when all participants are idle
 
-Rationale:
+Why:
 
 - it matches current message staging behavior
 - it avoids mutating context while any participant is mid-turn
@@ -178,7 +176,7 @@ it behind policy once policy semantics for notices and handoff are defined.
 
 ## Transport semantics
 
-At the semantic layer, `/handoff` is **context transfer**, not a generic notice.
+Semantically, `/handoff` is **context transfer**, not a generic notice.
 
 That suggests a distinct concept such as:
 
@@ -197,8 +195,7 @@ Implementation reuse under the hood is acceptable; semantic reuse is not.
 
 ## Payload shape
 
-The transferred payload sent to `<to>` should preserve provenance and be stable
-enough to debug.
+The payload sent to `<to>` should preserve provenance and be easy to inspect.
 
 A simple version is enough:
 
@@ -214,8 +211,8 @@ Version 1 should not summarize or transform the source output before transfer.
 
 ## Auditability
 
-Auditability is a hard requirement in the current product because the UI is
-still a single shared room.
+Auditability is a hard requirement because the product is still a single shared
+room.
 
 So `/handoff` should create a real history record in the room, not just a thin
 marker.
