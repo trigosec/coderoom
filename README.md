@@ -28,7 +28,29 @@ Roadmap: see `docs/roadmap.md`.
 
 ---
 
-## Quick start
+## Install
+
+### Download a release
+
+Prebuilt archives are published on the [GitHub Releases](https://github.com/trigosec/coderoom/releases/latest) page.
+
+Choose the archive that matches your platform:
+
+- `coderoom_<version>_darwin_arm64.tar.gz`
+- `coderoom_<version>_darwin_amd64.tar.gz`
+- `coderoom_<version>_linux_arm64.tar.gz`
+- `coderoom_<version>_linux_amd64.tar.gz`
+
+Extract the archive and run the binary:
+
+```bash
+tar -xzf coderoom_<version>_<os>_<arch>.tar.gz
+./coderoom
+```
+
+Checksums are published with each release as `checksums.txt`.
+
+### Build from source
 
 Prerequisites:
 
@@ -38,18 +60,18 @@ Prerequisites:
 
 Build and run:
 
-```
+```bash
 make build
 ./bin/coderoom
 ```
 
 ---
 
-## Using Code Room (today)
+## Quick start
 
 Start one agent:
 
-```
+```text
 /invite ada
 ```
 
@@ -59,13 +81,17 @@ specify both.
 
 Send a message:
 
-```
+```text
 @ada implement a small change: ...
 ```
 
+---
+
+## Using Code Room (today)
+
 Useful commands:
 
-```
+```text
 /who            # show roster
 /help           # show commands
 /cancel <alias> # interrupt current work (best-effort)
