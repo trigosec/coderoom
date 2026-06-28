@@ -11,11 +11,10 @@ import (
 
 func TestApprovalEvents_ClearActivePrompt(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{
-		Kind:       session.KindApprovalRequested,
-		Alias:      "ada",
-		ApprovalID: 7,
-		ApprovalReq: &agent.ApprovalRequest{
+	m = pushEvent(m, session.ApprovalRequested{
+		Alias: "ada",
+		ID:    7,
+		Req: agent.ApprovalRequest{
 			Ask:     "approve?",
 			Options: []agent.ApprovalOption{agent.OptionAccept, agent.OptionDecline},
 		},
@@ -25,7 +24,7 @@ func TestApprovalEvents_ClearActivePrompt(t *testing.T) {
 		t.Fatalf("expected approval prompt in room view, got:\n%s", m.room.View())
 	}
 
-	m = pushEvent(m, session.Event{Kind: session.KindApprovalCleared, ApprovalID: 7})
+	m = pushEvent(m, session.ApprovalCleared{ID: 7})
 
 	if strings.Contains(m.room.View(), "approve?") {
 		t.Fatalf("expected cleared approval prompt to disappear, got:\n%s", m.room.View())
@@ -37,17 +36,16 @@ func TestApprovalEvents_ClearActivePrompt(t *testing.T) {
 
 func TestApprovalEvents_IgnoreClearForDifferentApproval(t *testing.T) {
 	m := makeReadyModel(t)
-	m = pushEvent(m, session.Event{
-		Kind:       session.KindApprovalRequested,
-		Alias:      "ada",
-		ApprovalID: 7,
-		ApprovalReq: &agent.ApprovalRequest{
+	m = pushEvent(m, session.ApprovalRequested{
+		Alias: "ada",
+		ID:    7,
+		Req: agent.ApprovalRequest{
 			Ask:     "approve?",
 			Options: []agent.ApprovalOption{agent.OptionAccept, agent.OptionDecline},
 		},
 	})
 
-	m = pushEvent(m, session.Event{Kind: session.KindApprovalCleared, ApprovalID: 8})
+	m = pushEvent(m, session.ApprovalCleared{ID: 8})
 
 	if !strings.Contains(m.room.View(), "approve?") {
 		t.Fatalf("expected mismatched clear event to preserve the visible prompt, got:\n%s", m.room.View())
@@ -70,16 +68,15 @@ func TestApprovalEvents_ClearRestoresStagedComposer(t *testing.T) {
 		t.Fatal("expected staged composer before approval prompt")
 	}
 
-	m = pushEvent(m, session.Event{
-		Kind:       session.KindApprovalRequested,
-		Alias:      "ada",
-		ApprovalID: 7,
-		ApprovalReq: &agent.ApprovalRequest{
+	m = pushEvent(m, session.ApprovalRequested{
+		Alias: "ada",
+		ID:    7,
+		Req: agent.ApprovalRequest{
 			Ask:     "approve?",
 			Options: []agent.ApprovalOption{agent.OptionAccept, agent.OptionDecline},
 		},
 	})
-	m = pushEvent(m, session.Event{Kind: session.KindApprovalCleared, ApprovalID: 7})
+	m = pushEvent(m, session.ApprovalCleared{ID: 7})
 
 	if !m.room.IsComposerStaged() {
 		t.Fatal("expected staged composer to be restored after approval clear")

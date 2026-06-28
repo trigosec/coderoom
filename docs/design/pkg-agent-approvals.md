@@ -169,13 +169,13 @@ the root UI model by managing approvals inside the Session Controller.
 2. The listener (implemented by session) allocates an internal `approvalID`,
    stores a pending entry keyed by `approvalID`, and publishes a session event:
 
-   - `KindApprovalRequested` (payload includes `approvalID`, agent alias, and
+   - `ApprovalRequested` (payload includes `ID`, agent alias, and
      `ApprovalRequest`).
 
    This publish must be concurrency-safe and must not call `Session.Execute`
    (which is single-goroutine by contract).
-3. Session only publishes the head of the queue as `KindApprovalRequested`.
-4. UI observes `KindApprovalRequested` and displays that one approval prompt in
+3. Session only publishes the head of the queue as `ApprovalRequested`.
+4. UI observes `ApprovalRequested` and displays that one approval prompt in
    the shared room via `room.ShowApproval(req)`.
 5. When the user confirms an option, UI issues a session command:
 
@@ -185,7 +185,7 @@ the root UI model by managing approvals inside the Session Controller.
    session, not the UI.
 6. Session resolves the active entry, unblocks the listener's `Decide` call,
    and, if another approval is queued, immediately publishes the next
-   `KindApprovalRequested` event.
+   `ApprovalRequested` event.
 
 ### Why session (not UI) owns correlation
 

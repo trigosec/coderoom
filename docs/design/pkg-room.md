@@ -105,10 +105,10 @@ which aliases belong to it — not a mirrored snapshot of their status, role,
 or approval state.
 
 For V1, membership comes from the same agent-lifecycle events Room already
-consumes for system records: `KindAgentStarted` adds an alias,
-`KindAgentStopped`/`KindAgentCrashed` remove it. No new event is needed for
+consumes for system records: `AgentStarted` adds an alias,
+`AgentStopped`/`AgentCrashed` remove it. No new event is needed for
 the shared room, where membership is simply every participant that has
-joined and not since departed. `KindAgentStarting` still produces its own
+joined and not since departed. `AgentStarting` still produces its own
 "starting" system record but does not add membership — an alias is a member
 once it has actually joined, not while it's still coming up.
 
@@ -120,7 +120,7 @@ solved it.
 
 Room does not project participant or approval state. Both already have a
 direct, working path from session to UI today (`session.Roster()` for
-participant display, `KindApprovalRequested`/`KindApprovalCleared` consumed
+participant display, `ApprovalRequested`/`ApprovalCleared` consumed
 directly by the UI for approval prompts), and neither needs Room's
 involvement. Routing this through Room as well would mean inventing new
 `session.Event` fields purely to make event-only reconstruction possible
@@ -246,7 +246,7 @@ represents session/runtime behavior, it should reach room through
 
 Example:
 
-- several `KindAgentMessage` streaming events may contribute to one completed
+- several `AgentMessage` streaming events may contribute to one completed
   agent-output record
 
 That accumulation belongs in room, not in UI.
@@ -345,7 +345,7 @@ Room is a session observer for chat/record projection:
 
 Room is not the only observer. The UI keeps its own, separate
 `session.Observer` registration for participant and approval state —
-`session.Roster()` and direct `KindApprovalRequested`/`KindApprovalCleared`
+`session.Roster()` and direct `ApprovalRequested`/`ApprovalCleared`
 handling are unchanged by introducing room. `pkg-session.md` already
 documents multiple observers as supported; this is that pattern in use, not
 an exception to it.
@@ -551,22 +551,6 @@ The exact names may change, but the architectural constraint should hold:
 
 These are known gaps in this design, deliberately deferred rather than
 blocking V1:
-
-- **Whether `session.Event` should move toward one type per `Kind`.**
-  `Event` is a flat struct where field meaning depends on `Kind` (`Alias`
-  means "addressee" for `KindSharedSend`, "notified listener" for
-  `KindSharedNotice`). Whether the whole struct should become a sealed
-  interface with one concrete type per kind is a separate, much larger
-  question — it touches every emission site in `session`, every `switch
-  e.Kind` in `room` and `ui`, and all event-based test fixtures. Not a
-  prerequisite for shipping room; worth its own design doc only if more gaps
-  around kind-specific field meaning keep showing up. One candidate shape,
-  smaller than full per-kind types: split `Event` into two delivery buckets
-  instead of one — a room-relevant stream (chat/record kinds) and a global
-  stream (approval, participant status) — making the dual-observer split in
-  "Session integration" explicit at the type level instead of by convention.
-  Doesn't by itself resolve the cross-path ordering question raised there;
-  would need its own follow-up either way.
 
 ---
 

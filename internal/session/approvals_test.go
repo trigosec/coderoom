@@ -22,7 +22,7 @@ func TestApprovalHub_RequestEmitsEventAndBlocksUntilResolved(t *testing.T) {
 	ev := mustApprovalEvent(ctx, t, events)
 	assertApprovalRequestEvent(t, ev, "alice", "approve?")
 
-	if !h.resolve(ev.ApprovalID, agent.OptionAccept) {
+	if !h.resolve(ev.ID, agent.OptionAccept) {
 		t.Fatal("expected resolve to succeed")
 	}
 
@@ -44,14 +44,14 @@ func TestApprovalHub_QueuesRequestsFIFO(t *testing.T) {
 	secondDecision := startApprovalDecision(ctx, t, listener, "second?")
 	assertNoApprovalEvent(t, events, 100*time.Millisecond)
 
-	if !h.resolve(first.ApprovalID, agent.OptionAccept) {
+	if !h.resolve(first.ID, agent.OptionAccept) {
 		t.Fatal("expected first resolve to succeed")
 	}
 
 	second := mustApprovalEvent(ctx, t, events)
 	assertApprovalAsk(t, second, "second?")
 
-	if !h.resolve(second.ApprovalID, agent.OptionDecline) {
+	if !h.resolve(second.ID, agent.OptionDecline) {
 		t.Fatal("expected second resolve to succeed")
 	}
 
@@ -96,9 +96,9 @@ func TestApprovalHub_CancelActiveRequestPublishesClearedEvent(t *testing.T) {
 		t.Fatal("timed out waiting for canceled approval to return")
 	}
 
-	cleared := mustEventKind(waitCtx, t, events, KindApprovalCleared)
-	if cleared.ApprovalID != ev.ApprovalID {
-		t.Fatalf("cleared approval id = %d, want %d", cleared.ApprovalID, ev.ApprovalID)
+	cleared := mustApprovalClearedEvent(waitCtx, t, events)
+	if cleared.ID != ev.ID {
+		t.Fatalf("cleared approval id = %d, want %d", cleared.ID, ev.ID)
 	}
 }
 
@@ -121,11 +121,11 @@ func TestApprovalHub_CancelActiveRequestPublishesNextQueuedApproval(t *testing.T
 
 	second := mustApprovalEvent(secondCtx, t, events)
 	assertApprovalRequestEvent(t, second, "alice", "second?")
-	if second.ApprovalID == first.ApprovalID {
+	if second.ID == first.ID {
 		t.Fatal("expected queued approval to have a different approval id")
 	}
 
-	if !h.resolve(second.ApprovalID, agent.OptionAccept) {
+	if !h.resolve(second.ID, agent.OptionAccept) {
 		t.Fatal("expected second resolve to succeed")
 	}
 
@@ -160,9 +160,9 @@ func TestApprovalHub_ConcurrentRequestsPublishIncreasingApprovalIDs(t *testing.T
 	var gotIDs []int64
 	for i := 0; i < total; i++ {
 		ev := mustApprovalEvent(ctx, t, events)
-		gotIDs = append(gotIDs, ev.ApprovalID)
-		if !h.resolve(ev.ApprovalID, agent.OptionDecline) {
-			t.Fatalf("expected resolve(%d) to succeed", ev.ApprovalID)
+		gotIDs = append(gotIDs, ev.ID)
+		if !h.resolve(ev.ID, agent.OptionDecline) {
+			t.Fatalf("expected resolve(%d) to succeed", ev.ID)
 		}
 	}
 
@@ -202,24 +202,21 @@ func approvalRequest(ask string) agent.ApprovalRequest {
 	}
 }
 
-func assertApprovalRequestEvent(t *testing.T, ev Event, wantAlias, wantAsk string) {
+func assertApprovalRequestEvent(t *testing.T, ev ApprovalRequested, wantAlias, wantAsk string) {
 	t.Helper()
-	if ev.Kind != KindApprovalRequested {
-		t.Fatalf("event kind = %q, want %q", ev.Kind, KindApprovalRequested)
-	}
 	if ev.Alias != wantAlias {
 		t.Fatalf("event alias = %q, want %q", ev.Alias, wantAlias)
 	}
-	if ev.ApprovalID == 0 {
+	if ev.ID == 0 {
 		t.Fatal("expected non-zero approval id")
 	}
 	assertApprovalAsk(t, ev, wantAsk)
 }
 
-func assertApprovalAsk(t *testing.T, ev Event, want string) {
+func assertApprovalAsk(t *testing.T, ev ApprovalRequested, want string) {
 	t.Helper()
-	if ev.ApprovalReq == nil || ev.ApprovalReq.Ask != want {
-		t.Fatalf("approval req = %#v, want ask %q", ev.ApprovalReq, want)
+	if ev.Req.Ask != want {
+		t.Fatalf("approval req = %#v, want ask %q", ev.Req, want)
 	}
 }
 
@@ -230,24 +227,34 @@ func assertDecisionChoice(t *testing.T, got agent.ApprovalDecision, want agent.A
 	}
 }
 
-func mustApprovalEvent(ctx context.Context, t *testing.T, events <-chan Event) Event {
+func mustApprovalEvent(ctx context.Context, t *testing.T, events <-chan Event) ApprovalRequested {
 	t.Helper()
 	select {
 	case ev := <-events:
-		return ev
+		req, ok := ev.(ApprovalRequested)
+		if !ok {
+			t.Fatalf("expected ApprovalRequested, got %T", ev)
+		}
+		return req
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for approval requested event")
-		return Event{}
+		return ApprovalRequested{}
 	}
 }
 
-func mustEventKind(ctx context.Context, t *testing.T, events <-chan Event, want Kind) Event {
+func mustApprovalClearedEvent(ctx context.Context, t *testing.T, events <-chan Event) ApprovalCleared {
 	t.Helper()
-	ev := mustApprovalEvent(ctx, t, events)
-	if ev.Kind != want {
-		t.Fatalf("event kind = %q, want %q", ev.Kind, want)
+	select {
+	case ev := <-events:
+		cleared, ok := ev.(ApprovalCleared)
+		if !ok {
+			t.Fatalf("expected ApprovalCleared, got %T", ev)
+		}
+		return cleared
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for approval cleared event")
+		return ApprovalCleared{}
 	}
-	return ev
 }
 
 func assertNoApprovalEvent(t *testing.T, events <-chan Event, wait time.Duration) {

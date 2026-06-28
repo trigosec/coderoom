@@ -36,7 +36,7 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("invite: %v", err)
 	}
-	drainUntil(t, events, session.KindAgentStarted, 10*time.Second)
+	drainUntilType[session.AgentStarted](t, events, 10*time.Second)
 
 	if err := s.Execute(session.SharedSendCommand{
 		Alias:      "ada",
@@ -49,7 +49,7 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	if err := s.Execute(session.RemoveCommand{Alias: "ada"}); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	drainUntil(t, events, session.KindAgentStopped, 10*time.Second)
+	drainUntilType[session.AgentStopped](t, events, 10*time.Second)
 
 	if _, err := a.Send("hello after stop"); err == nil {
 		t.Error("expected Send to fail after Stop, got nil")

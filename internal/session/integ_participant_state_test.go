@@ -152,17 +152,16 @@ func waitForIdleThenFlush(t *testing.T, b *eventBuf, alias string, timeout time.
 	t.Helper()
 	var seenIdle bool
 	b.waitFor(t, timeout, func(ev session.Event) bool {
-		if ev.Alias != alias {
-			return false
-		}
-		if ev.Kind == session.KindParticipantStatusChanged && ev.StatusTo == participant.StatusIdle {
+		status, ok := ev.(session.ParticipantStatusChanged)
+		if ok && status.Alias == alias && status.To == participant.StatusIdle {
 			seenIdle = true
 			return false
 		}
-		if ev.Kind != session.KindAgentMessage || ev.Msg == nil {
+		msg, ok := ev.(session.AgentMessage)
+		if !ok || msg.Alias != alias {
 			return false
 		}
-		if _, ok := ev.Msg.Content.(agent.Output); ok && ev.Msg.Mode == agent.ModeFlush {
+		if _, ok := msg.Msg.Content.(agent.Output); ok && msg.Msg.Mode == agent.ModeFlush {
 			// Per-item flushes can arrive before idle; only the anchor flush
 			// (which triggers idle) is the definitive turn-end signal.
 			if !seenIdle {

@@ -121,74 +121,127 @@ projection of `session.Event`, not as a competing source of truth. See
 [`pkg-room.md`](pkg-room.md) for the room/record projection layer that sits
 between session events and the UI.
 
-`Event` is defined in the session package:
+`Event` is defined in the session package as a sealed interface implemented by
+concrete event structs:
 
 ```go
-type Kind string
+type Event interface {
+    sessionEvent()
+}
 
-const (
-    KindAgentStarting Kind = "agent.starting"   // agent process is being started
-    KindAgentStarted  Kind = "agent.started"    // agent is ready to receive messages
-    KindAgentStopped  Kind = "agent.stopped"    // agent was cleanly removed
-    KindAgentCrashed  Kind = "agent.crashed"    // agent exited unexpectedly
-    KindAgentLog      Kind = "agent.log"        // diagnostic line from the agent (e.g. stderr); always forwarded, rendering is the observer's choice
-    KindAgentMessage  Kind = "agent.message"    // typed agent output; see Msg field
+type AgentStarting struct{ Alias string }
+type AgentStarted struct{ Alias string }
+type AgentStopped struct{ Alias string }
+type AgentCrashed struct{ Alias string }
 
-    KindParticipantStatusChanged Kind = "participant.status" // any participant.Status transition, including idle; see StatusFrom/StatusTo
+type AgentLog struct {
+    Alias string
+    Text  string
+}
 
-    KindBroadcast    Kind = "message.broadcast" // message sent to all agents
-    KindSharedSend   Kind = "message.shared"    // instruction to one agent, visible to all
-    KindSharedNotice Kind = "message.notice"    // context notice forwarded to a listener
+type AgentMessage struct {
+    Alias string
+    Msg   agent.Message
+}
 
-    KindApprovalRequested Kind = "approval.requested" // approval request requiring user decision
-    KindApprovalCleared   Kind = "approval.cleared"   // active approval prompt should be dismissed
-)
+type ParticipantStatusChanged struct {
+    Alias string
+    From  participant.Status
+    To    participant.Status
+    Since time.Time
+}
 
-type Event struct {
-    Kind   Kind
-    Alias  string          // participant alias the event relates to
-    Text   string          // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
-    Msg    *agent.Message  // for KindAgentMessage; nil for all other kinds
+type Broadcast struct{ Text string }
 
-    ApprovalID  int64                  // for KindApprovalRequested, KindApprovalCleared
-    ApprovalReq *agent.ApprovalRequest // for KindApprovalRequested
+type SharedSend struct {
+    Alias string
+    Text  string
+}
 
-    StatusFrom participant.Status // for KindParticipantStatusChanged
-    StatusTo   participant.Status // for KindParticipantStatusChanged
-    Since      time.Time          // for KindParticipantStatusChanged; equals participant.Since after the transition
+type SharedNotice struct {
+    Alias string
+    Text  string
+}
+
+type ContextHandoff struct {
+    FromAlias string
+    ToAlias   string
+    Text      string
+    Preview   string
+
+    SourceRecordIndex int
+    BarrierAliases    []string
+    IdleAliases       []string
+    BusyAliases       []string
+    RejectionReason   string
+}
+
+type ApprovalRequested struct {
+    Alias string
+    ID    int64
+    Req   agent.ApprovalRequest
+}
+
+type ApprovalCleared struct {
+    Alias string
+    ID    int64
 }
 ```
 
-`KindAgentMessage` carries the full `agent.Message` value without translation. Observers type-switch on `event.Msg.Content` to handle specific content types (`Output`, `Reasoning`, `Command`, `FileChangeSet`, etc.). See [`pkg-agent-messages.md`](pkg-agent-messages.md) for the message model.
+Observers branch on concrete event type, then on message content when handling
+`AgentMessage`. `AgentMessage` carries the full `agent.Message` value without
+translation. Consumers type-switch on `event.Msg.Content` to handle specific
+content types (`Output`, `Reasoning`, `Command`, `FileChangeSet`, etc.). See
+[`pkg-agent-messages.md`](pkg-agent-messages.md) for the message model.
 
-`KindAgentLog` is kept as a dedicated kind with `Text` set directly. This lets observers handle diagnostic lines without inspecting message content.
+`AgentLog` remains a dedicated event type with `Text` set directly. This lets
+observers handle diagnostic lines without inspecting message content.
 
-`KindParticipantStatusChanged` is emitted for every `participant.Status` transition the session drives, including the idle transition after a turn ends — there is no separate "idle" kind. `StatusFrom`, `StatusTo`, and `Since` are sufficient for an observer that only needs to track status; full participant identity (role, initiative, color) is read from `session.Roster()`, not reconstructed from events.
+`ParticipantStatusChanged` is emitted for every `participant.Status`
+transition the session drives, including the idle transition after a turn
+ends. `From`, `To`, and `Since` are sufficient for an observer that only needs
+to track status; full participant identity (role, initiative, color) is read
+from `session.Roster()`, not reconstructed from events.
 
-`KindApprovalRequested` carries `ApprovalID` and `ApprovalReq` (the `agent.ApprovalRequest` payload); `Alias` identifies the participant the approval is for. `KindApprovalCleared` carries only `ApprovalID`, identifying which active prompt should be dismissed.
+`ApprovalRequested` carries the queue-managed approval `ID`, the participant
+`Alias`, and the `agent.ApprovalRequest` payload. `ApprovalCleared` carries the
+same `ID` plus the cleared alias so consumers can dismiss the active prompt
+without re-reading session state.
 
 ---
 
 ## Agent lifecycle
 
-`InviteCommand` calls `registry.Add` then `agent.Start`. On success, it emits `KindAgentStarted` and launches a reader goroutine for that agent.
+`InviteCommand` calls `registry.Add` then `agent.Start`. On success, it emits
+`AgentStarted` and launches a reader goroutine for that agent.
 
-The reader goroutine loops on `agent.Read()`, forwarding each message to observers as a `KindAgentMessage` event (or `KindAgentLog` for `Log` content). The session also inspects messages for participant state management — it does not accumulate or translate content. Open-stream tracking lives on the participant itself, and the session is the sole mutator of that runtime state. The session drives participant transitions; the participant validates whether they are legal:
+The reader goroutine loops on `agent.Read()`, forwarding each message to
+observers as an `AgentMessage` event (or `AgentLog` for `Log` content). The
+session also inspects messages for participant state management — it does not
+accumulate or translate content. Open-stream tracking lives on the participant
+itself, and the session is the sole mutator of that runtime state. The session
+drives participant transitions; the participant validates whether they are
+legal:
 
 - Successful `Send` / `SendNotice` calls first commit the participant to the
   turn (`PrepareForWork`), then transition it to `working` once the adapter
   returns the turn anchor
 - First `Output`, `Reasoning`, `Command`, or `FileChangeSet` fragment (`ModeStream`) → open a tracked stream for that participant
 - Matching `ModeFlush` for one of those streams → close the tracked stream
-- Anchor flush for the participant's active turn → `MarkIdle`, which emits `KindParticipantStatusChanged` (`StatusTo: participant.StatusIdle`)
+- Anchor flush for the participant's active turn → `MarkIdle`, which emits
+  `ParticipantStatusChanged` (`To: participant.StatusIdle`)
 
 Notice turns are the special case: `SendNotice` may be fully silent, so the
 session primes a synthetic `codex:notice-turn` stream on send and closes it when
 the adapter emits the matching flush.
 
-When `Read()` returns an error, the goroutine checks whether shutdown was requested (via a per-agent stop channel) to emit `KindAgentStopped` vs `KindAgentCrashed`, then exits.
+When `Read()` returns an error, the goroutine checks whether shutdown was
+requested (via a per-agent stop channel) to emit `AgentStopped` vs
+`AgentCrashed`, then exits.
 
-`RemoveCommand` removes the participant from the registry, cancels the reader goroutine's context (so it will emit `KindAgentStopped` rather than `KindAgentCrashed` when it exits), then calls `agent.Stop`.
+`RemoveCommand` removes the participant from the registry, cancels the reader
+goroutine's context (so it will emit `AgentStopped` rather than `AgentCrashed`
+when it exits), then calls `agent.Stop`.
 
 `CancelCommand` looks up the participant and rejects it if the agent is still starting or has crashed. It calls `agent.Interrupt()`, which is best-effort — the call returns nil for all no-op cases (no active turn, or the backend does not support cancellation). The agent remains in the registry and its reader goroutine continues running.
 
@@ -198,8 +251,8 @@ When `Read()` returns an error, the goroutine checks whether shutdown was reques
 
 | Command | Routing |
 |---|---|
-| `BroadcastCommand` | Emits `KindBroadcast`; sends text to all agents regardless of initiative |
-| `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `KindSharedSend` event (addressed agent) and one `KindSharedNotice` event per notified listener |
+| `BroadcastCommand` | Emits `Broadcast`; sends text to all agents regardless of initiative |
+| `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `SharedSend` event (addressed agent) and one `SharedNotice` event per notified listener |
 | `PrivateSendCommand` | Sends text to the addressed agent only; no shared room event; no other agents notified |
 
 Shared room visibility is a property of the event kind, but the session does

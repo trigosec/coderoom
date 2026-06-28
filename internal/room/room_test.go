@@ -39,11 +39,11 @@ func waitUpdate(t *testing.T, ch <-chan Update) Update {
 func TestOnEvent_agentLifecycleAppendsSystemRecords(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{Kind: session.KindAgentStarting, Alias: "ada"})
+	room.OnEvent(session.AgentStarting{Alias: "ada"})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	room.OnEvent(session.AgentStarted{Alias: "ada"})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
+	room.OnEvent(session.AgentStopped{Alias: "ada"})
 	waitUpdate(t, updates)
 
 	snapshot := room.Snapshot()
@@ -67,18 +67,10 @@ func TestOnEvent_agentLifecycleAppendsSystemRecords(t *testing.T) {
 func TestOnEvent_agentMessageStreamsIntoSingleRecord(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}}})
 	waitUpdate(t, updates)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: " world"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: " world"}}})
 	waitUpdate(t, updates)
 
 	snapshot := room.Snapshot()
@@ -103,17 +95,9 @@ func TestOnEvent_agentMessageStreamsIntoSingleRecord(t *testing.T) {
 func TestOnEvent_outputFlushClosesStreamAndPreservesAccumulatedRecord(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}}})
 	waitUpdate(t, updates)
 
 	snapshot := room.Snapshot()
@@ -135,12 +119,10 @@ func TestOnEvent_outputFlushClosesStreamAndPreservesAccumulatedRecord(t *testing
 func TestOnEvent_contextHandoffAppendsAuditRecord(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{
-		Kind:      session.KindContextHandoff,
-		FromAlias: "ada",
-		ToAlias:   "turing",
-		Text:      "ship it",
-		Preview:   "[handoff ada -> turing]\n  ↦ source: ada latest output\n  > ship it",
+	room.OnEvent(session.ContextHandoff{FromAlias: "ada",
+		ToAlias: "turing",
+		Text:    "ship it",
+		Preview: "[handoff ada -> turing]\n  ↦ source: ada latest output\n  > ship it",
 	})
 	waitUpdate(t, updates)
 
@@ -159,26 +141,14 @@ func TestOnEvent_contextHandoffAppendsAuditRecord(t *testing.T) {
 func TestLatestCompletedOutput(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	room.OnEvent(session.AgentStarted{Alias: "ada"})
 	waitUpdate(t, updates)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "partial"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "partial"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "reason1", Mode: agent.ModeSingle, Content: agent.Reasoning{Text: "skip"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "reason1", Mode: agent.ModeSingle, Content: agent.Reasoning{Text: "skip"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out2", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out2", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}}})
 	waitUpdate(t, updates)
 
 	got, ok := room.LatestCompletedOutput("ada")
@@ -201,20 +171,12 @@ func TestLatestCompletedOutput(t *testing.T) {
 func TestLatestCompletedOutput_returnsFlushedStreamOutput(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	room.OnEvent(session.AgentStarted{Alias: "ada"})
 	waitUpdate(t, updates)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "done"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "done"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}}})
 	waitUpdate(t, updates)
 
 	got, ok := room.LatestCompletedOutput("ada")
@@ -237,19 +199,11 @@ func TestLatestCompletedOutput_returnsFlushedStreamOutput(t *testing.T) {
 func TestLatestHandoffSource_movesToNewestCompletedOutput(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	room.OnEvent(session.AgentStarted{Alias: "ada"})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "first"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "first"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out2", Mode: agent.ModeSingle, Content: agent.Output{Text: "second"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out2", Mode: agent.ModeSingle, Content: agent.Output{Text: "second"}}})
 	waitUpdate(t, updates)
 
 	snapshot := room.Snapshot()
@@ -264,15 +218,11 @@ func TestLatestHandoffSource_movesToNewestCompletedOutput(t *testing.T) {
 func TestLatestHandoffSource_clearsOnDeparture(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	room.OnEvent(session.AgentStarted{Alias: "ada"})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
+	room.OnEvent(session.AgentStopped{Alias: "ada"})
 	waitUpdate(t, updates)
 
 	if _, ok := room.LatestHandoffSource("ada"); ok {
@@ -287,17 +237,13 @@ func TestLatestHandoffSource_clearsOnDeparture(t *testing.T) {
 func TestLatestHandoffSource_restoredOnRejoin(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	room.OnEvent(session.AgentStarted{Alias: "ada"})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
+	room.OnEvent(session.AgentStopped{Alias: "ada"})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	room.OnEvent(session.AgentStarted{Alias: "ada"})
 	waitUpdate(t, updates)
 
 	source, ok := room.LatestHandoffSource("ada")
@@ -313,23 +259,11 @@ func TestLatestHandoffSource_restoredOnRejoin(t *testing.T) {
 func TestOnEvent_reasoningFlushClearsOnlyMatchingReasoningStream(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: "think"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: "think"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "say"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "say"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "reason1", Mode: agent.ModeFlush, Content: agent.Reasoning{}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "reason1", Mode: agent.ModeFlush, Content: agent.Reasoning{}}})
 	waitUpdate(t, updates)
 
 	snapshot := room.Snapshot()
@@ -345,23 +279,11 @@ func TestOnEvent_commandFlushPreservesExitCodeAndClosesStream(t *testing.T) {
 	room, updates := newTestRoom(t)
 	exitCode := 0
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "cmd1", Mode: agent.ModeStream, Content: agent.Command{Command: "true", Cwd: "/tmp"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "cmd1", Mode: agent.ModeStream, Content: agent.Command{Command: "true", Cwd: "/tmp"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "cmd1", Mode: agent.ModeStream, Content: agent.Command{Output: "ok\n", ExitCode: &exitCode}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "cmd1", Mode: agent.ModeStream, Content: agent.Command{Output: "ok\n", ExitCode: &exitCode}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "cmd1", Mode: agent.ModeFlush, Content: agent.Command{}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "cmd1", Mode: agent.ModeFlush, Content: agent.Command{}}})
 	waitUpdate(t, updates)
 
 	snapshot := room.Snapshot()
@@ -383,28 +305,18 @@ func TestOnEvent_commandFlushPreservesExitCodeAndClosesStream(t *testing.T) {
 func TestOnEvent_fileChangeFlushPreservesChangesAndClosesStream(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg: &agent.Message{StreamID: "fc1", Mode: agent.ModeStream, Content: agent.FileChangeSet{
-			Changes: []agent.FileChange{{Path: "a.txt", Diff: "+one\n", ChangeKind: "update"}},
-		}},
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "fc1", Mode: agent.ModeStream, Content: agent.FileChangeSet{
+		Changes: []agent.FileChange{{Path: "a.txt", Diff: "+one\n", ChangeKind: "update"}},
+	}},
 	})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg: &agent.Message{StreamID: "fc1", Mode: agent.ModeStream, Content: agent.FileChangeSet{
-			Status:  agent.ToolStatusCompleted,
-			Changes: []agent.FileChange{{Path: "b.txt", Diff: "+two\n", ChangeKind: "add"}},
-		}},
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "fc1", Mode: agent.ModeStream, Content: agent.FileChangeSet{
+		Status:  agent.ToolStatusCompleted,
+		Changes: []agent.FileChange{{Path: "b.txt", Diff: "+two\n", ChangeKind: "add"}},
+	}},
 	})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "fc1", Mode: agent.ModeFlush, Content: agent.FileChangeSet{}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "fc1", Mode: agent.ModeFlush, Content: agent.FileChangeSet{}}})
 	waitUpdate(t, updates)
 
 	snapshot := room.Snapshot()
@@ -426,19 +338,11 @@ func TestOnEvent_fileChangeFlushPreservesChangesAndClosesStream(t *testing.T) {
 func TestOnEvent_agentStoppedClearsOnlyStoppedAliasStreams(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "ada-out", Mode: agent.ModeStream, Content: agent.Output{Text: "a"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "ada-out", Mode: agent.ModeStream, Content: agent.Output{Text: "a"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "bob",
-		Msg:   &agent.Message{StreamID: "bob-out", Mode: agent.ModeStream, Content: agent.Output{Text: "b"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "bob", Msg: agent.Message{StreamID: "bob-out", Mode: agent.ModeStream, Content: agent.Output{Text: "b"}}})
 	waitUpdate(t, updates)
-	room.OnEvent(session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
+	room.OnEvent(session.AgentStopped{Alias: "ada"})
 	waitUpdate(t, updates)
 
 	snapshot := room.Snapshot()
@@ -523,17 +427,9 @@ func TestDelta_fromZeroRequiresResync(t *testing.T) {
 func TestDelta_incrementalCoalescesRepeatedRecordUpdates(t *testing.T) {
 	room, updates := newTestRoom(t)
 
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}}})
 	update1 := waitUpdate(t, updates)
-	room.OnEvent(session.Event{
-		Kind:  session.KindAgentMessage,
-		Alias: "ada",
-		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: " world"}},
-	})
+	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: " world"}}})
 	update2 := waitUpdate(t, updates)
 
 	delta, err := room.Delta(update1.Version)
@@ -603,7 +499,7 @@ func TestSnapshotClonesRecordsAndState(t *testing.T) {
 	room, updates := newTestRoom(t)
 	exitCode := 7
 
-	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	room.OnEvent(session.AgentStarted{Alias: "ada"})
 	waitUpdate(t, updates)
 	room.AppendUserInputRecord("hello", []string{"ada"})
 	waitUpdate(t, updates)

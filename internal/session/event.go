@@ -7,52 +7,99 @@ import (
 	"github.com/trigosec/coderoom/internal/participant"
 )
 
-// Kind identifies the type of a session event.
-type Kind string
-
-// Session event kinds.
-const (
-	KindAgentStarting Kind = "agent.starting"
-	KindAgentStarted  Kind = "agent.started"
-	KindAgentStopped  Kind = "agent.stopped"
-	KindAgentCrashed  Kind = "agent.crashed"
-	KindAgentLog      Kind = "agent.log"     // diagnostic line from the agent process (e.g. stderr)
-	KindAgentMessage  Kind = "agent.message" // typed agent output; see Msg field
-
-	KindParticipantStatusChanged Kind = "participant.status"
-
-	KindBroadcast      Kind = "message.broadcast" // message sent to all agents
-	KindSharedSend     Kind = "message.shared"    // instruction to one agent, visible to all
-	KindSharedNotice   Kind = "message.notice"    // context notice forwarded to a listener
-	KindContextHandoff Kind = "context.handoff"   // explicit context transfer from one agent output to another agent
-
-	KindApprovalRequested Kind = "approval.requested" // approval request requiring user decision
-	KindApprovalCleared   Kind = "approval.cleared"   // active approval prompt should be dismissed
-)
-
 // Event is a runtime notification emitted by the session controller.
-type Event struct {
-	Kind      Kind
-	Alias     string         // participant alias the event relates to
-	Text      string         // for KindBroadcast, KindSharedSend, KindSharedNotice, KindAgentLog
-	Msg       *agent.Message // for KindAgentMessage; nil for all other kinds
-	FromAlias string         // for KindContextHandoff
-	ToAlias   string         // for KindContextHandoff
-	Preview   string         // for KindContextHandoff room rendering
-
-	SourceRecordIndex int      // for KindContextHandoff; -1 when no source record was selected
-	BarrierAliases    []string // for handoff diagnostics
-	IdleAliases       []string // for handoff diagnostics
-	BusyAliases       []string // for handoff diagnostics
-	RejectionReason   string   // for handoff diagnostics
-
-	ApprovalID  int64                  // for KindApprovalRequested, KindApprovalCleared
-	ApprovalReq *agent.ApprovalRequest // for KindApprovalRequested
-
-	StatusFrom participant.Status // for KindParticipantStatusChanged
-	StatusTo   participant.Status // for KindParticipantStatusChanged
-	Since      time.Time          // for KindParticipantStatusChanged; equals participant.Since after the transition
+// Only concrete event types in this package implement it.
+type Event interface {
+	sessionEvent()
 }
+
+// AgentStarting reports that the session has begun starting an agent process.
+type AgentStarting struct{ Alias string }
+
+// AgentStarted reports that an agent is ready to receive messages.
+type AgentStarted struct{ Alias string }
+
+// AgentStopped reports that an agent exited during an intentional shutdown path.
+type AgentStopped struct{ Alias string }
+
+// AgentCrashed reports that an agent exited unexpectedly.
+type AgentCrashed struct{ Alias string }
+
+// AgentLog carries a diagnostic line associated with an agent.
+type AgentLog struct {
+	Alias string
+	Text  string
+}
+
+// AgentMessage carries a typed agent message without translation.
+type AgentMessage struct {
+	Alias string
+	Msg   agent.Message
+}
+
+// ParticipantStatusChanged reports a session-driven participant status transition.
+type ParticipantStatusChanged struct {
+	Alias string
+	From  participant.Status
+	To    participant.Status
+	Since time.Time
+}
+
+// Broadcast reports a shared-room broadcast command.
+type Broadcast struct{ Text string }
+
+// SharedSend reports a shared-room direct send to one addressed alias.
+type SharedSend struct {
+	Alias string
+	Text  string
+}
+
+// SharedNotice reports a shared-room listener notice sent to one alias.
+type SharedNotice struct {
+	Alias string
+	Text  string
+}
+
+// ContextHandoff reports a delivered handoff plus its audit metadata.
+type ContextHandoff struct {
+	FromAlias string
+	ToAlias   string
+	Text      string
+	Preview   string
+
+	SourceRecordIndex int
+	BarrierAliases    []string
+	IdleAliases       []string
+	BusyAliases       []string
+	RejectionReason   string
+}
+
+// ApprovalRequested reports that a new approval prompt became active.
+type ApprovalRequested struct {
+	Alias string
+	ID    int64
+	Req   agent.ApprovalRequest
+}
+
+// ApprovalCleared reports that an active approval prompt should be dismissed.
+type ApprovalCleared struct {
+	Alias string
+	ID    int64
+}
+
+func (AgentStarting) sessionEvent()            {}
+func (AgentStarted) sessionEvent()             {}
+func (AgentStopped) sessionEvent()             {}
+func (AgentCrashed) sessionEvent()             {}
+func (AgentLog) sessionEvent()                 {}
+func (AgentMessage) sessionEvent()             {}
+func (ParticipantStatusChanged) sessionEvent() {}
+func (Broadcast) sessionEvent()                {}
+func (SharedSend) sessionEvent()               {}
+func (SharedNotice) sessionEvent()             {}
+func (ContextHandoff) sessionEvent()           {}
+func (ApprovalRequested) sessionEvent()        {}
+func (ApprovalCleared) sessionEvent()          {}
 
 // HandoffSource describes the room-owned source record selected for a handoff.
 type HandoffSource struct {

@@ -12,11 +12,8 @@ func (r *Room) applyEvent(e session.Event) (Update, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if e.Kind == session.KindAgentMessage {
-		if e.Msg == nil {
-			return Update{}, false
-		}
-		dirty := r.handleAgentMessageLocked(e.Alias, *e.Msg)
+	if msg, ok := e.(session.AgentMessage); ok {
+		dirty := r.handleAgentMessageLocked(msg.Alias, msg.Msg)
 		return r.bumpVersionLocked(dirty...), true
 	}
 
@@ -28,27 +25,27 @@ func (r *Room) applyEvent(e session.Event) (Update, bool) {
 }
 
 func (r *Room) handleLifecycleEventLocked(e session.Event) ([]int, bool) {
-	switch e.Kind {
-	case session.KindAgentStarting:
+	switch e := e.(type) {
+	case session.AgentStarting:
 		return r.appendSystemRecordLocked("[" + e.Alias + " starting]"), true
-	case session.KindAgentStarted:
+	case session.AgentStarted:
 		r.members[e.Alias] = struct{}{}
 		delete(r.departed, e.Alias)
 		dirty := r.refreshLatestHandoffSourceLocked(e.Alias)
 		dirty = append(dirty, r.appendSystemRecordLocked("["+e.Alias+" joined]")...)
 		slices.Sort(dirty)
 		return slices.Compact(dirty), true
-	case session.KindAgentStopped:
+	case session.AgentStopped:
 		dirty := r.handleDepartureLocked(e.Alias)
 		dirty = append(dirty, r.appendSystemRecordLocked("["+e.Alias+" left]")...)
 		return slices.Compact(dirty), true
-	case session.KindAgentCrashed:
+	case session.AgentCrashed:
 		dirty := r.handleDepartureLocked(e.Alias)
 		dirty = append(dirty, r.appendSystemRecordLocked("["+e.Alias+" crashed]")...)
 		return slices.Compact(dirty), true
-	case session.KindAgentLog:
+	case session.AgentLog:
 		return r.appendRecordLocked(Record{Kind: KindLog, Alias: e.Alias, Text: e.Text}), true
-	case session.KindContextHandoff:
+	case session.ContextHandoff:
 		return r.appendSystemRecordLocked(handoffPreview(e)), true
 	default:
 		return nil, false
@@ -72,7 +69,7 @@ func (r *Room) appendRecordLocked(record Record) []int {
 	return []int{idx}
 }
 
-func handoffPreview(e session.Event) string {
+func handoffPreview(e session.ContextHandoff) string {
 	if e.Preview != "" {
 		return e.Preview
 	}

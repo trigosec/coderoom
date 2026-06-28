@@ -34,7 +34,7 @@ func newTestSession() *session.Session {
 // pushEvent sends a session event into the model via Update and returns the result.
 func pushEvent(m Model, e session.Event) Model {
 	m.room.SessionObserver().OnEvent(e)
-	next, _ := m.Update(sessionEventMsg(e))
+	next, _ := m.Update(sessionEventMsg{event: e})
 	out := next.(Model)
 	if roomEventProducesUpdate(e) {
 		if updated, ok := out.room.WaitObserverUpdateTimeout(2 * time.Second); ok {
@@ -45,14 +45,14 @@ func pushEvent(m Model, e session.Event) Model {
 }
 
 func roomEventProducesUpdate(e session.Event) bool {
-	switch e.Kind {
-	case session.KindAgentStarting,
-		session.KindAgentStarted,
-		session.KindAgentStopped,
-		session.KindAgentCrashed,
-		session.KindAgentLog,
-		session.KindContextHandoff,
-		session.KindAgentMessage:
+	switch e.(type) {
+	case session.AgentStarting,
+		session.AgentStarted,
+		session.AgentStopped,
+		session.AgentCrashed,
+		session.AgentLog,
+		session.ContextHandoff,
+		session.AgentMessage:
 		return true
 	default:
 		return false

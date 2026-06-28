@@ -78,7 +78,7 @@ The session observer runs on agent reader goroutines. Bubble Tea's `Update` runs
 
 ```go
 // sessionEventMsg wraps a session.Event as a Bubble Tea message.
-type sessionEventMsg session.Event
+type sessionEventMsg struct{ event session.Event }
 
 // awaitEvent returns a Cmd that blocks until the next event is available.
 // It receives queue.out — the output channel of eventQueue.
@@ -88,7 +88,7 @@ func awaitEvent(ch <-chan session.Event) tea.Cmd {
         if !ok {
             return nil
         }
-        return sessionEventMsg(e)
+        return sessionEventMsg{event: e}
     }
 }
 
@@ -110,14 +110,14 @@ No fixed-size buffers. No dropped events. If the UI falls behind, the internal s
 
 ## Event rendering
 
-| Event kind | Rendered as |
+| Event type | Rendered as |
 |---|---|
-| `KindAgentStarted` | `[ada joined]` |
-| `KindAgentStopped` | `[ada left]` |
-| `KindAgentCrashed` | `[ada crashed]` |
-| `KindAgentLog`     | `▸ <line>` in grey (lipgloss); de-emphasised diagnostic output; does not participate in streaming state; appended as a standalone line like any other event |
-| `KindDelta` | streamed inline: `ada> <fragment>` on first delta, subsequent fragments appended to the same line |
-| `KindDone` | closes the current streaming line |
+| `AgentStarted` | `[ada joined]` |
+| `AgentStopped` | `[ada left]` |
+| `AgentCrashed` | `[ada crashed]` |
+| `AgentLog` | `▸ <line>` in grey (lipgloss); de-emphasised diagnostic output; does not participate in streaming state; appended as a standalone line like any other event |
+| `AgentMessage` with streaming content | projected by `internal/room` into streaming room records |
+| `AgentMessage` with flush content | closes the matching room-owned stream state |
 
 Streaming state and record accumulation are owned by `internal/room`, not by
 the TUI. The room component reads canonical room records and adapts them into
@@ -128,8 +128,8 @@ for chat semantics.
 User-authored routing footers are a UI concern, not a room-projected event
 concern. The UI knows the intended routing at submission time and may render
 that as a footer on the echoed user-input record without requiring room to
-project `KindBroadcast`, `KindSharedSend`, or `KindSharedNotice` into canonical
-message state.
+project `Broadcast`, `SharedSend`, or `SharedNotice` into canonical message
+state.
 
 ---
 

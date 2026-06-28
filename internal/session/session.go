@@ -154,7 +154,7 @@ func (s *Session) notifyParticipantInvariant(alias string, err error, details ..
 			text += " (" + strings.Join(filtered, "; ") + ")"
 		}
 	}
-	s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: text})
+	s.notify(AgentLog{Alias: alias, Text: text})
 }
 
 func summarizeAgentMessage(msg agent.Message) string {
@@ -246,8 +246,8 @@ func (s *Session) lookupParticipant(alias string) (*participant.Participant, boo
 	return s.registry.Get(alias)
 }
 
-func (s *Session) updateParticipant(alias string, fn func(*participant.Participant) (*Event, error)) error {
-	var ev *Event
+func (s *Session) updateParticipant(alias string, fn func(*participant.Participant) (Event, error)) error {
+	var ev Event
 	var err error
 	s.mu.Lock()
 	p, ok := s.registry.Get(alias)
@@ -262,7 +262,7 @@ func (s *Session) updateParticipant(alias string, fn func(*participant.Participa
 		return err
 	}
 	if ev != nil {
-		s.notify(*ev)
+		s.notify(ev)
 	}
 	return nil
 }
@@ -319,8 +319,8 @@ func (s *Session) BarrierParticipants() []participant.Participant {
 }
 
 // readLoop runs in a goroutine per agent, forwarding agent.Message values to the
-// observers. When Read returns an error it emits KindAgentStopped (if the stop
-// channel was closed) or KindAgentCrashed, then exits.
+// observers. When Read returns an error it emits AgentStopped (if the stop
+// channel was closed) or AgentCrashed, then exits.
 func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 	for {
 		msg, err := a.Read()
@@ -333,32 +333,32 @@ func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 }
 
 func (s *Session) handleAgentReadError(stop <-chan struct{}, alias string) {
-	kind := s.kindForReadError(stop)
-	if kind == KindAgentCrashed {
-		err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
+	if isCrashedReadError(stop) {
+		err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 			from := p.Status
 			p.Crash(s.now())
-			return &Event{
-				Kind:       KindParticipantStatusChanged,
-				Alias:      alias,
-				StatusFrom: from,
-				StatusTo:   p.Status,
-				Since:      p.Since,
-			}, nil
+			return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 		})
 		if err != nil && !errors.Is(err, errParticipantNotFound) {
 			s.notifyParticipantInvariant(alias, err)
 		}
 	}
-	s.notify(Event{Kind: kind, Alias: alias})
+	s.notify(readErrorEvent(stop, alias))
 }
 
-func (s *Session) kindForReadError(stop <-chan struct{}) Kind {
+func readErrorEvent(stop <-chan struct{}, alias string) Event {
+	if isCrashedReadError(stop) {
+		return AgentCrashed{Alias: alias}
+	}
+	return AgentStopped{Alias: alias}
+}
+
+func isCrashedReadError(stop <-chan struct{}) bool {
 	select {
 	case <-stop:
-		return KindAgentStopped
+		return false
 	default:
-		return KindAgentCrashed
+		return true
 	}
 }
 
@@ -366,18 +366,12 @@ func (s *Session) kindForReadError(stop <-chan struct{}) Kind {
 // under the session lock. Must be followed by Send then beginParticipantWorking
 // (on success) or abortWork (on Send failure).
 func (s *Session) prepareParticipantForWork(alias string) error {
-	return s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
+	return s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		from := p.Status
 		if err := p.PrepareForWork(s.now()); err != nil {
 			return nil, fmt.Errorf("prepare for work: %w", err)
 		}
-		return &Event{
-			Kind:       KindParticipantStatusChanged,
-			Alias:      alias,
-			StatusFrom: from,
-			StatusTo:   p.Status,
-			Since:      p.Since,
-		}, nil
+		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 }
 
@@ -385,18 +379,12 @@ func (s *Session) prepareParticipantForWork(alias string) error {
 // tracks the turn-lifecycle anchor in OpenStreams. Call this after a successful
 // Send to close the race window between PrepareForWork and anchor tracking.
 func (s *Session) beginParticipantWorking(alias string, anchor agent.StreamID) {
-	err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
+	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		from := p.Status
 		if err := p.BeginWorking(s.now(), anchor); err != nil {
 			return nil, fmt.Errorf("begin working: %w", err)
 		}
-		return &Event{
-			Kind:       KindParticipantStatusChanged,
-			Alias:      alias,
-			StatusFrom: from,
-			StatusTo:   p.Status,
-			Since:      p.Since,
-		}, nil
+		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
@@ -406,7 +394,7 @@ func (s *Session) beginParticipantWorking(alias string, anchor agent.StreamID) {
 // abortWork rolls back a Preparing or Working participant to Idle. Use when
 // Send fails after prepareParticipantForWork, or for error rollback paths.
 func (s *Session) abortWork(alias string) {
-	err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
+	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		if p.Status != participant.StatusWorking && p.Status != participant.StatusPreparing {
 			return nil, nil
 		}
@@ -414,13 +402,7 @@ func (s *Session) abortWork(alias string) {
 		if err := p.AbortWork(s.now()); err != nil {
 			return nil, fmt.Errorf("abort work: %w", err)
 		}
-		return &Event{
-			Kind:       KindParticipantStatusChanged,
-			Alias:      alias,
-			StatusFrom: from,
-			StatusTo:   p.Status,
-			Since:      p.Since,
-		}, nil
+		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
@@ -430,18 +412,12 @@ func (s *Session) abortWork(alias string) {
 // markIdle transitions the participant to Idle via BecomeIdle. Called when the
 // anchor stream flush is received (shouldIdle=true from CloseStream).
 func (s *Session) markIdle(alias string) {
-	err := s.updateParticipant(alias, func(p *participant.Participant) (*Event, error) {
+	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		from := p.Status
 		if err := p.BecomeIdle(s.now()); err != nil {
 			return nil, fmt.Errorf("become idle: %w", err)
 		}
-		return &Event{
-			Kind:       KindParticipantStatusChanged,
-			Alias:      alias,
-			StatusFrom: from,
-			StatusTo:   p.Status,
-			Since:      p.Since,
-		}, nil
+		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
@@ -522,14 +498,14 @@ func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
 
 	if c, ok := msg.Content.(agent.Log); ok {
 		if c.Text != "" {
-			s.notify(Event{Kind: KindAgentLog, Alias: alias, Text: c.Text})
+			s.notify(AgentLog{Alias: alias, Text: c.Text})
 		}
 		return
 	}
 
 	s.applyTurnLifecycle(alias, msg)
 	m := msg
-	s.notify(Event{Kind: KindAgentMessage, Alias: alias, Msg: &m})
+	s.notify(AgentMessage{Alias: alias, Msg: m})
 }
 
 func (s *Session) applyTurnLifecycle(alias string, msg agent.Message) {
@@ -568,8 +544,7 @@ func (s *Session) shouldDropIdleStreamFragment(alias string, msg agent.Message) 
 	}
 	switch msg.Content.(type) {
 	case agent.Output, agent.Reasoning, agent.Command, agent.FileChangeSet:
-		s.notify(Event{
-			Kind:  KindAgentLog,
+		s.notify(AgentLog{
 			Alias: alias,
 			Text:  "protocol: received stream fragment while idle; dropping (try cancel to resync if the agent is stuck; " + summarizeAgentMessage(msg) + ")",
 		})

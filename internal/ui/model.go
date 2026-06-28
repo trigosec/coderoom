@@ -27,7 +27,7 @@ func WithStartupHelpTip(enabled bool) Option {
 }
 
 // sessionEventMsg wraps a session.Event as a Bubble Tea message.
-type sessionEventMsg session.Event
+type sessionEventMsg struct{ event session.Event }
 
 // awaitEvent returns a Cmd that blocks until the next event is available.
 func awaitEvent(q *queue.Queue[session.Event]) tea.Cmd {
@@ -36,7 +36,7 @@ func awaitEvent(q *queue.Queue[session.Event]) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return sessionEventMsg(e)
+		return sessionEventMsg{event: e}
 	}
 }
 

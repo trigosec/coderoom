@@ -36,7 +36,7 @@ func (b *eventBuf) waitFor(t *testing.T, timeout time.Duration, pred func(sessio
 		case ev, ok := <-b.ch:
 			if !ok {
 				t.Fatal("events channel closed while waiting for event")
-				return session.Event{}
+				return nil
 			}
 			if pred(ev) {
 				return ev
@@ -44,7 +44,7 @@ func (b *eventBuf) waitFor(t *testing.T, timeout time.Duration, pred func(sessio
 			b.buf = append(b.buf, ev)
 		case <-deadline:
 			t.Fatalf("timed out after %s waiting for event", timeout)
-			return session.Event{}
+			return nil
 		}
 	}
 }
@@ -61,25 +61,27 @@ func (o chanObserver) OnEvent(e session.Event) {
 	}
 }
 
-// drainUntil reads from ch until an event of the expected kind arrives or the
-// timeout elapses. It discards events of other kinds so callers don't need to
-// drain intermediate deltas before waiting for a lifecycle event.
-func drainUntil(t *testing.T, ch <-chan session.Event, want session.Kind, timeout time.Duration) session.Event {
+// drainUntilType reads from ch until an event of the expected type arrives or
+// the timeout elapses. It discards other events so callers don't need to drain
+// intermediate deltas before waiting for a lifecycle event.
+func drainUntilType[T session.Event](t *testing.T, ch <-chan session.Event, timeout time.Duration) T {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
 		select {
 		case ev, ok := <-ch:
 			if !ok {
-				t.Fatalf("events channel closed while waiting for %q", want)
-				return session.Event{}
+				t.Fatalf("events channel closed while waiting for %T", *new(T))
+				var zero T
+				return zero
 			}
-			if ev.Kind == want {
-				return ev
+			if typed, ok := ev.(T); ok {
+				return typed
 			}
 		case <-deadline:
-			t.Fatalf("timed out after %s waiting for %q event", timeout, want)
-			return session.Event{}
+			t.Fatalf("timed out after %s waiting for %T event", timeout, *new(T))
+			var zero T
+			return zero
 		}
 	}
 }
@@ -95,7 +97,8 @@ func drainUntilIdle(t *testing.T, ch <-chan session.Event, timeout time.Duration
 				t.Fatal("events channel closed while waiting for agent idle")
 				return
 			}
-			if ev.Kind == session.KindParticipantStatusChanged && ev.StatusTo == participant.StatusIdle {
+			status, ok := ev.(session.ParticipantStatusChanged)
+			if ok && status.To == participant.StatusIdle {
 				return
 			}
 		case <-deadline:
@@ -138,19 +141,20 @@ func inviteAndWaitStarted(t *testing.T, s *session.Session, events <-chan sessio
 	}); err != nil {
 		t.Fatalf("invite %s: %v", alias, err)
 	}
-	drainUntil(t, events, session.KindAgentStarted, 10*time.Second)
+	drainUntilType[session.AgentStarted](t, events, 10*time.Second)
 }
 
 func waitForFirstStreamOutput(t *testing.T, b *eventBuf, alias string, timeout time.Duration) {
 	t.Helper()
 	b.waitFor(t, timeout, func(ev session.Event) bool {
-		if ev.Alias != alias || ev.Kind != session.KindAgentMessage || ev.Msg == nil {
+		msg, ok := ev.(session.AgentMessage)
+		if !ok || msg.Alias != alias {
 			return false
 		}
-		if _, ok := ev.Msg.Content.(agent.Output); ok && ev.Msg.Mode == agent.ModeFlush {
+		if _, ok := msg.Msg.Content.(agent.Output); ok && msg.Msg.Mode == agent.ModeFlush {
 			t.Fatalf("%s: turn completed before streaming output observed; cannot assert working state", alias)
 		}
-		if _, ok := ev.Msg.Content.(agent.Output); ok && ev.Msg.Mode == agent.ModeStream {
+		if _, ok := msg.Msg.Content.(agent.Output); ok && msg.Msg.Mode == agent.ModeStream {
 			return true
 		}
 		return false
@@ -160,10 +164,11 @@ func waitForFirstStreamOutput(t *testing.T, b *eventBuf, alias string, timeout t
 func waitForFirstOutputFlush(t *testing.T, b *eventBuf, alias string, timeout time.Duration) {
 	t.Helper()
 	b.waitFor(t, timeout, func(ev session.Event) bool {
-		if ev.Alias != alias || ev.Kind != session.KindAgentMessage || ev.Msg == nil {
+		msg, ok := ev.(session.AgentMessage)
+		if !ok || msg.Alias != alias {
 			return false
 		}
-		if _, ok := ev.Msg.Content.(agent.Output); ok && ev.Msg.Mode == agent.ModeFlush {
+		if _, ok := msg.Msg.Content.(agent.Output); ok && msg.Msg.Mode == agent.ModeFlush {
 			return true
 		}
 		return false

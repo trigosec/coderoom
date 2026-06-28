@@ -60,13 +60,14 @@ func (q *approvalQueue) resolve(id int64) (resolved *pendingApproval, next *pend
 	return resolved, q.active, true
 }
 
-func (q *approvalQueue) cancel(id int64) (*pendingApproval, cancelOutcome) {
+func (q *approvalQueue) cancel(id int64) (cleared *pendingApproval, next *pendingApproval, outcome cancelOutcome) {
 	if q.active != nil && q.active.id == id {
+		cleared = q.active
 		q.active = q.pop()
 		if q.active != nil {
-			return q.active, cancelShowNextApproval
+			return cleared, q.active, cancelShowNextApproval
 		}
-		return nil, cancelClearVisibleApproval
+		return cleared, nil, cancelClearVisibleApproval
 	}
 
 	for i, pending := range q.queue {
@@ -74,9 +75,9 @@ func (q *approvalQueue) cancel(id int64) (*pendingApproval, cancelOutcome) {
 			continue
 		}
 		q.queue = append(q.queue[:i], q.queue[i+1:]...)
-		return nil, cancelNoVisibleChange
+		return pending, nil, cancelNoVisibleChange
 	}
-	return nil, cancelNoVisibleChange
+	return nil, nil, cancelNoVisibleChange
 }
 
 func (q *approvalQueue) pop() *pendingApproval {
@@ -167,12 +168,12 @@ func (h *approvalHub) cancel(id int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	next, outcome := h.queue.cancel(id)
+	cleared, next, outcome := h.queue.cancel(id)
 	switch outcome {
 	case cancelShowNextApproval:
 		h.publish(next)
 	case cancelClearVisibleApproval:
-		h.notify(Event{Kind: KindApprovalCleared, ApprovalID: id})
+		h.notify(ApprovalCleared{Alias: aliasForApproval(cleared), ID: id})
 	case cancelNoVisibleChange:
 	}
 }
@@ -182,10 +183,12 @@ func (h *approvalHub) publish(p *pendingApproval) {
 		return
 	}
 	req := p.req
-	h.notify(Event{
-		Kind:        KindApprovalRequested,
-		Alias:       p.alias,
-		ApprovalID:  p.id,
-		ApprovalReq: &req,
-	})
+	h.notify(ApprovalRequested{Alias: p.alias, ID: p.id, Req: req})
+}
+
+func aliasForApproval(p *pendingApproval) string {
+	if p == nil {
+		return ""
+	}
+	return p.alias
 }

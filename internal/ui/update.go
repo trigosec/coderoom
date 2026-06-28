@@ -35,7 +35,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		return m.handleResize(msg), nil
 	case sessionEventMsg:
-		next, cmd := m.handleEvent(session.Event(msg))
+		next, cmd := m.handleEvent(msg.event)
 		return next, tea.Batch(cmd, awaitEvent(m.queue))
 	default:
 		return m.handleNonSessionMessage(msg)
@@ -248,22 +248,19 @@ func (m Model) handleEvent(e session.Event) (Model, tea.Cmd) {
 }
 
 func (m Model) handleMessageEvent(e session.Event) Model {
-	switch e.Kind {
-	case session.KindApprovalRequested:
+	switch e := e.(type) {
+	case session.ApprovalRequested:
 		m = m.handleApprovalRequested(e)
-	case session.KindApprovalCleared:
+	case session.ApprovalCleared:
 		m = m.handleApprovalCleared(e)
 	default:
 	}
 	return m
 }
 
-func (m Model) handleApprovalRequested(e session.Event) Model {
-	if e.ApprovalReq == nil {
-		return m
-	}
-	m.activeApprovalID = e.ApprovalID
-	req := *e.ApprovalReq
+func (m Model) handleApprovalRequested(e session.ApprovalRequested) Model {
+	m.activeApprovalID = e.ID
+	req := e.Req
 	if strings.TrimSpace(e.Alias) != "" {
 		req.Ask = "[→ " + e.Alias + "] " + req.Ask
 	}
@@ -271,8 +268,8 @@ func (m Model) handleApprovalRequested(e session.Event) Model {
 	return m
 }
 
-func (m Model) handleApprovalCleared(e session.Event) Model {
-	if e.ApprovalID == 0 || e.ApprovalID != m.activeApprovalID {
+func (m Model) handleApprovalCleared(e session.ApprovalCleared) Model {
+	if e.ID == 0 || e.ID != m.activeApprovalID {
 		return m
 	}
 	m.activeApprovalID = 0
@@ -326,12 +323,14 @@ func (m Model) maybeAdvanceStagedBatch(e session.Event) Model {
 	if shouldDeferHandoffDispatch(m.room.StagedBatch(), e) {
 		return m
 	}
-	switch e.Kind {
-	case session.KindAgentStopped, session.KindAgentCrashed:
+	switch e := e.(type) {
+	case session.AgentStopped:
 		m.room = m.room.MarkStagedDiscarded(e.Alias)
-	case session.KindParticipantStatusChanged, session.KindAgentStarted:
+	case session.AgentCrashed:
+		m.room = m.room.MarkStagedDiscarded(e.Alias)
+	case session.ParticipantStatusChanged, session.AgentStarted:
 		// Status changes that may unblock dispatch.
-	case session.KindAgentMessage:
+	case session.AgentMessage:
 		if !shouldRecheckHandoffOnMessage(m.room.StagedBatch(), e) {
 			return m
 		}
@@ -351,16 +350,18 @@ func shouldDeferHandoffDispatch(staged *staging.Batch, e session.Event) bool {
 	if staged == nil || staged.Action.Kind != staging.ActionHandoff {
 		return false
 	}
-	return e.Kind == session.KindParticipantStatusChanged &&
-		e.Alias == staged.Action.FromAlias &&
-		e.StatusTo == participant.StatusIdle
+	status, ok := e.(session.ParticipantStatusChanged)
+	return ok &&
+		status.Alias == staged.Action.FromAlias &&
+		status.To == participant.StatusIdle
 }
 
 func shouldRecheckHandoffOnMessage(staged *staging.Batch, e session.Event) bool {
 	if staged == nil || staged.Action.Kind != staging.ActionHandoff {
 		return false
 	}
-	return e.Alias == staged.Action.FromAlias
+	msg, ok := e.(session.AgentMessage)
+	return ok && msg.Alias == staged.Action.FromAlias
 }
 
 func (m Model) executeAction(a Action) (Model, tea.Cmd) {

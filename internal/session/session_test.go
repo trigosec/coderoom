@@ -140,35 +140,46 @@ func (o *testObserver) OnEvent(e session.Event) {
 	}
 }
 
-func shouldSkipEvent(want session.Kind, ev session.Event) bool {
-	if want == session.KindAgentStarted && ev.Kind == session.KindAgentStarting {
+func shouldSkipEvent[T session.Event](ev session.Event) bool {
+	_, wantStarted := any(*new(T)).(session.AgentStarted)
+	if wantStarted {
+		if _, ok := ev.(session.AgentStarting); ok {
+			return true
+		}
+	}
+	_, isStatus := ev.(session.ParticipantStatusChanged)
+	_, wantStatus := any(*new(T)).(session.ParticipantStatusChanged)
+	if isStatus && !wantStatus {
 		return true
 	}
-	if ev.Kind == session.KindParticipantStatusChanged && want != session.KindParticipantStatusChanged {
-		return true
-	}
-	if want == session.KindAgentCrashed && ev.Kind == session.KindAgentLog {
-		return true
+	_, wantCrash := any(*new(T)).(session.AgentCrashed)
+	if wantCrash {
+		if _, ok := ev.(session.AgentLog); ok {
+			return true
+		}
 	}
 	return false
 }
 
-func mustReceive(t *testing.T, ch <-chan session.Event, want session.Kind) session.Event {
+func mustReceive[T session.Event](t *testing.T, ch <-chan session.Event) T {
 	t.Helper()
 	deadline := time.After(time.Second)
 	for {
 		select {
 		case ev := <-ch:
-			if shouldSkipEvent(want, ev) {
+			if shouldSkipEvent[T](ev) {
 				continue
 			}
-			if ev.Kind != want {
-				t.Fatalf("expected kind %q, got %q", want, ev.Kind)
+			wantZero := *new(T)
+			got, ok := ev.(T)
+			if !ok {
+				t.Fatalf("expected %T, got %T", wantZero, ev)
 			}
-			return ev
+			return got
 		case <-deadline:
-			t.Fatalf("timed out waiting for %q event", want)
-			return session.Event{}
+			t.Fatalf("timed out waiting for %T event", *new(T))
+			var zero T
+			return zero
 		}
 	}
 }
@@ -213,10 +224,10 @@ func awaitIdleWithoutInvariantLog(t *testing.T, obs *testObserver, s *session.Se
 	for {
 		select {
 		case ev := <-obs.ch:
-			if ev.Kind == session.KindAgentLog {
-				t.Errorf("%s: unexpected invariant log: %q", context, ev.Text)
+			if log, ok := ev.(session.AgentLog); ok {
+				t.Errorf("%s: unexpected invariant log: %q", context, log.Text)
 			}
-			if ev.Kind == session.KindParticipantStatusChanged && ev.StatusTo == participant.StatusIdle {
+			if status, ok := ev.(session.ParticipantStatusChanged); ok && status.To == participant.StatusIdle {
 				expectParticipantStatus(t, s, alias, participant.StatusIdle, context)
 				return
 			}
@@ -232,7 +243,7 @@ func sendTurnMessage(a *mockAgent, streamID agent.StreamID, mode agent.Mode, con
 
 func expectTurnMessageForwarded(t *testing.T, obs *testObserver) {
 	t.Helper()
-	mustReceive(t, obs.ch, session.KindAgentMessage)
+	mustReceive[session.AgentMessage](t, obs.ch)
 }
 
 // mappedFactory returns a session option whose factory looks up agents by alias.
@@ -249,8 +260,8 @@ func TestInvite_emitsAgentStarted(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarting)
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarting](t, obs.ch)
+	mustReceive[session.AgentStarted](t, obs.ch)
 }
 
 func TestCancel_interruptsAgent(t *testing.T) {
@@ -260,8 +271,8 @@ func TestCancel_interruptsAgent(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarting)
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarting](t, obs.ch)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.CancelCommand{Alias: "ada"}); err != nil {
 		t.Fatalf("CancelCommand: %v", err)
@@ -282,14 +293,14 @@ func TestCancel_notReadyWhileStarting(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarting)
+	mustReceive[session.AgentStarting](t, obs.ch)
 
 	if err := s.Execute(session.CancelCommand{Alias: "ada"}); err == nil {
 		t.Fatalf("expected error cancelling starting agent")
 	}
 
 	close(g.startGate)
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 }
 
 func TestCancel_notReadyWhenCrashed(t *testing.T) {
@@ -299,8 +310,8 @@ func TestCancel_notReadyWhenCrashed(t *testing.T) {
 	s := session.New(session.WithObserver(obs), fixedFactory(a))
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarting)
-	mustReceive(t, obs.ch, session.KindAgentCrashed)
+	mustReceive[session.AgentStarting](t, obs.ch)
+	mustReceive[session.AgentCrashed](t, obs.ch)
 
 	if err := s.Execute(session.CancelCommand{Alias: "ada"}); err == nil {
 		t.Fatalf("expected error cancelling crashed agent")
@@ -329,8 +340,8 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InviteCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindAgentStarting)
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarting](t, obs.ch)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	p, ok := s.Participant("ada")
 	if !ok {
 		t.Fatal("participant not found after invite")
@@ -357,13 +368,13 @@ func TestRemove_emitsAgentStopped(t *testing.T) {
 	s := session.New(session.WithObserver(obs), fixedFactory(a))
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarting)
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarting](t, obs.ch)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.RemoveCommand{Alias: "ada"}); err != nil {
 		t.Fatalf("RemoveCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindAgentStopped)
+	mustReceive[session.AgentStopped](t, obs.ch)
 }
 
 func TestRemove_notFound(t *testing.T) {
@@ -387,14 +398,14 @@ func TestBroadcast_emitsAndSendsToAllAgents(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.BroadcastCommand{Text: "hello"}); err != nil {
 		t.Fatalf("BroadcastCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindBroadcast)
+	mustReceive[session.Broadcast](t, obs.ch)
 
 	for _, a := range []*mockAgent{a1, a2} {
 		a.mu.Lock()
@@ -430,15 +441,15 @@ func TestBroadcast_sendError_doesNotMarkWorking(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	err := s.Execute(session.BroadcastCommand{Text: "hello"})
 	if err == nil {
 		t.Fatal("expected broadcast error, got nil")
 	}
-	mustReceive(t, obs.ch, session.KindBroadcast)
+	mustReceive[session.Broadcast](t, obs.ch)
 
 	p, ok := s.Participant("ada")
 	if !ok {
@@ -468,7 +479,7 @@ func TestBroadcast_sendErrorDoesNotReviveCrashedParticipant(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	ada.sendHook = func(string) error {
 		_ = ada.Stop()
@@ -510,17 +521,17 @@ func TestReadLoop_dropsStreamFragmentsWhileIdle(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	// Participant should remain idle. The unmatched flush is forwarded as a
 	// message but now also surfaces an invariant log. The subsequent stream
 	// fragment should also be dropped with a protocol log.
-	ev := mustReceive(t, obs.ch, session.KindAgentLog) // unmatched flush invariant
+	ev := mustReceive[session.AgentLog](t, obs.ch) // unmatched flush invariant
 	if ev.Text == "" {
 		t.Fatal("expected invariant log text")
 	}
-	mustReceive(t, obs.ch, session.KindAgentMessage)  // unmatched flush message
-	ev = mustReceive(t, obs.ch, session.KindAgentLog) // dropped stream
+	mustReceive[session.AgentMessage](t, obs.ch)  // unmatched flush message
+	ev = mustReceive[session.AgentLog](t, obs.ch) // dropped stream
 	if ev.Text == "" {
 		t.Fatal("expected protocol log text")
 	}
@@ -542,12 +553,12 @@ func waitForSharedKinds(t *testing.T, ch <-chan session.Event) {
 	for !seenSend || !seenNotice {
 		select {
 		case ev := <-ch:
-			switch ev.Kind {
-			case session.KindSharedSend:
+			switch ev.(type) {
+			case session.SharedSend:
 				seenSend = true
-			case session.KindSharedNotice:
+			case session.SharedNotice:
 				seenNotice = true
-			case session.KindParticipantStatusChanged, session.KindAgentMessage:
+			case session.ParticipantStatusChanged, session.AgentMessage:
 				// ignore noise in this unit test
 			default:
 				// ignore other noise (e.g. logs)
@@ -572,15 +583,15 @@ func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
 	}
-	_ = mustReceive(t, obs.ch, session.KindSharedSend)
-	ev := mustReceive(t, obs.ch, session.KindSharedNotice)
+	_ = mustReceive[session.SharedSend](t, obs.ch)
+	ev := mustReceive[session.SharedNotice](t, obs.ch)
 	if ev.Alias != "turing" {
 		t.Errorf("expected notice for turing, got %q", ev.Alias)
 	}
@@ -616,9 +627,9 @@ func TestSharedSend_noticeMarksListenerWorkingUntilFlush(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do it", TextListeners: "notice"}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
@@ -665,9 +676,9 @@ func TestSharedSend_noticeDoesNotResetWorkingSince(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
 		t.Fatalf("PrivateSendCommand: %v", err)
@@ -712,9 +723,9 @@ func TestSharedSend_sendError_doesNotMarkWorking(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
 	if err == nil {
@@ -756,9 +767,9 @@ func TestSharedSend_noticeErrorReportsDeliveredAlias(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
 	if err == nil {
@@ -783,9 +794,9 @@ func TestSharedSend_noticeErrorDoesNotReviveCrashedListener(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	turing.noticeHook = func(string) error {
 		_ = turing.Stop()
@@ -852,9 +863,9 @@ func newHandoffTestSession(t *testing.T) (*testObserver, *noticeFlushAgent, *ses
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	return obs, turing, s
 }
 
@@ -878,7 +889,7 @@ func executeResolvedHandoff(t *testing.T, s *session.Session, text string, recor
 func assertHandoffEvent(t *testing.T, obs *testObserver, wantText string, wantRecordIndex int) {
 	t.Helper()
 
-	ev := mustReceive(t, obs.ch, session.KindContextHandoff)
+	ev := mustReceive[session.ContextHandoff](t, obs.ch)
 	if ev.FromAlias != "ada" || ev.ToAlias != "turing" {
 		t.Fatalf("unexpected handoff event: %#v", ev)
 	}
@@ -906,7 +917,7 @@ func assertHandoffNoticePayload(t *testing.T, turing *noticeFlushAgent, want str
 func assertHandoffAcceptedLog(t *testing.T, obs *testObserver, wantRecordIndex int) {
 	t.Helper()
 
-	logEv := mustReceive(t, obs.ch, session.KindAgentLog)
+	logEv := mustReceive[session.AgentLog](t, obs.ch)
 	if !strings.Contains(logEv.Text, "handoff accepted: from=ada to=turing") || !strings.Contains(logEv.Text, fmt.Sprintf("source_record=%d", wantRecordIndex)) {
 		t.Fatalf("unexpected accepted handoff log: %q", logEv.Text)
 	}
@@ -929,9 +940,9 @@ func TestHandoff_requiresIdleParticipants(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
 		t.Fatalf("PrivateSendCommand: %v", err)
@@ -950,7 +961,7 @@ func TestHandoff_requiresIdleParticipants(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected busy handoff error")
 	}
-	logEv := mustReceive(t, obs.ch, session.KindAgentLog)
+	logEv := mustReceive[session.AgentLog](t, obs.ch)
 	if !strings.Contains(logEv.Text, "handoff rejected: from=ada to=turing") || !strings.Contains(logEv.Text, "busy=[turing]") {
 		t.Fatalf("unexpected busy handoff log: %q", logEv.Text)
 	}
@@ -973,9 +984,9 @@ func TestHandoff_requiresCompletedSourceOutput(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	err := s.Execute(session.HandoffCommand{
 		FromAlias:     "ada",
@@ -985,7 +996,7 @@ func TestHandoff_requiresCompletedSourceOutput(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing source output error")
 	}
-	logEv := mustReceive(t, obs.ch, session.KindAgentLog)
+	logEv := mustReceive[session.AgentLog](t, obs.ch)
 	if !strings.Contains(logEv.Text, "reason=no completed room-visible output") {
 		t.Fatalf("unexpected missing-source handoff log: %q", logEv.Text)
 	}
@@ -1011,9 +1022,9 @@ func TestHandoff_rejectionLogCompactsMultilineReason(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	err := s.Execute(session.HandoffCommand{
 		FromAlias: "ada",
@@ -1028,7 +1039,7 @@ func TestHandoff_rejectionLogCompactsMultilineReason(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected handoff send error")
 	}
-	logEv := mustReceive(t, obs.ch, session.KindAgentLog)
+	logEv := mustReceive[session.AgentLog](t, obs.ch)
 	if strings.Contains(logEv.Text, "\n") {
 		t.Fatalf("expected compact single-line handoff log, got %q", logEv.Text)
 	}
@@ -1057,9 +1068,9 @@ func TestHandoff_ignoresStartingBystanderOutsideBarrier(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "cat")
 
 	if err := s.Execute(session.HandoffCommand{
@@ -1080,7 +1091,7 @@ func TestHandoff_ignoresStartingBystanderOutsideBarrier(t *testing.T) {
 	for {
 		select {
 		case ev := <-obs.ch:
-			if ev.Kind == session.KindAgentStarted && ev.Alias == "cat" {
+			if started, ok := ev.(session.AgentStarted); ok && started.Alias == "cat" {
 				return
 			}
 		case <-deadline:
@@ -1109,11 +1120,11 @@ func TestHandoff_usesProvidedIdleAliasesInsteadOfLiveBarrier(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "cat")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.PrivateSendCommand{Alias: "cat", Text: "busy"}); err != nil {
 		t.Fatalf("PrivateSendCommand cat: %v", err)
@@ -1148,14 +1159,14 @@ func TestSharedSend_rejectsBusyDirectParticipant(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.BroadcastCommand{Text: "busy"}); err != nil {
 		t.Fatalf("BroadcastCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindBroadcast)
+	mustReceive[session.Broadcast](t, obs.ch)
 
 	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do it", TextListeners: "notice"})
 	if err == nil {
@@ -1186,9 +1197,9 @@ func TestPrivateSend_forwardsToAgentOnly(t *testing.T) {
 	})
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "secret"}); err != nil {
 		t.Fatalf("PrivateSendCommand: %v", err)
@@ -1210,11 +1221,11 @@ func TestPrivateSend_forwardsToAgentOnly(t *testing.T) {
 	for {
 		select {
 		case ev := <-obs.ch:
-			switch ev.Kind {
-			case session.KindParticipantStatusChanged:
+			switch ev.(type) {
+			case session.ParticipantStatusChanged:
 				continue
 			default:
-				t.Errorf("expected no shared room event, got %q", ev.Kind)
+				t.Errorf("expected no shared room event, got %T", ev)
 				return
 			}
 		default:
@@ -1237,12 +1248,12 @@ func TestPrivateSend_rejectsBusyParticipant(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.BroadcastCommand{Text: "busy"}); err != nil {
 		t.Fatalf("BroadcastCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindBroadcast)
+	mustReceive[session.Broadcast](t, obs.ch)
 
 	err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "secret"})
 	if err == nil {
@@ -1263,21 +1274,18 @@ func TestReaderLoop_emitsDelta(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	// Simulate starting a turn so the session considers the agent working; the
 	// following stream delta should be accepted.
 	if err := s.Execute(session.BroadcastCommand{Text: "go"}); err != nil {
 		t.Fatalf("BroadcastCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindBroadcast)
+	mustReceive[session.Broadcast](t, obs.ch)
 
 	a.ch <- agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}}
 
-	ev := mustReceive(t, obs.ch, session.KindAgentMessage)
-	if ev.Msg == nil {
-		t.Fatal("expected Msg to be set on KindAgentMessage event")
-	}
+	ev := mustReceive[session.AgentMessage](t, obs.ch)
 	out, ok := ev.Msg.Content.(agent.Output)
 	if !ok || out.Text != "hello" {
 		t.Errorf("expected Output{hello}, got content=%T", ev.Msg.Content)
@@ -1302,7 +1310,7 @@ func TestReaderLoop_emitsDelta(t *testing.T) {
 //
 // This test uses direct message injection so it does not depend on Codex wire
 // format. Feed the exact same sequence into the session and assert:
-//  1. No KindAgentLog with "stream not tracked" is emitted.
+//  1. No AgentLog with "stream not tracked" is emitted.
 //  2. The participant transitions to Idle after the final output flush.
 func TestReaderLoop_reasoningDoubleCloseDoesNotInvariant(t *testing.T) {
 	obs := newTestObserver()
@@ -1311,12 +1319,12 @@ func TestReaderLoop_reasoningDoubleCloseDoesNotInvariant(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.BroadcastCommand{Text: "go"}); err != nil {
 		t.Fatalf("BroadcastCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindBroadcast)
+	mustReceive[session.Broadcast](t, obs.ch)
 
 	// 1. Reasoning and output streams open.
 	sendTurnMessage(a, "codex:reasoning:r1", agent.ModeStream, agent.Reasoning{Text: "thinking"})
@@ -1394,12 +1402,12 @@ func TestReaderLoop_anchorStreamPreventsEarlyIdle(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.BroadcastCommand{Text: "go"}); err != nil {
 		t.Fatalf("BroadcastCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindBroadcast)
+	mustReceive[session.Broadcast](t, obs.ch)
 
 	// Reasoning opens and then closes — before any output stream appears.
 	// Without the anchor this would set allClosed=true and mark the participant
@@ -1436,27 +1444,27 @@ func TestReaderLoop_marksIdleOnlyAfterAllObservedStreamsFlush(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.BroadcastCommand{Text: "go"}); err != nil {
 		t.Fatalf("BroadcastCommand: %v", err)
 	}
-	mustReceive(t, obs.ch, session.KindBroadcast)
+	mustReceive[session.Broadcast](t, obs.ch)
 
 	a.ch <- agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}}
 	a.ch <- agent.Message{StreamID: "reason1", Mode: agent.ModeStream, Content: agent.Reasoning{Text: "thinking"}}
-	mustReceive(t, obs.ch, session.KindAgentMessage)
-	mustReceive(t, obs.ch, session.KindAgentMessage)
+	mustReceive[session.AgentMessage](t, obs.ch)
+	mustReceive[session.AgentMessage](t, obs.ch)
 
 	a.ch <- agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}}
-	mustReceive(t, obs.ch, session.KindAgentMessage)
+	mustReceive[session.AgentMessage](t, obs.ch)
 	p, _ := s.Participant("ada")
 	if p.Status != participant.StatusWorking {
 		t.Fatalf("expected ada to remain working after out1 flush (reason1 and anchor still open), got %q", p.Status)
 	}
 
 	a.ch <- agent.Message{StreamID: "reason1", Mode: agent.ModeFlush, Content: agent.Reasoning{}}
-	mustReceive(t, obs.ch, session.KindAgentMessage)
+	mustReceive[session.AgentMessage](t, obs.ch)
 	p, _ = s.Participant("ada")
 	if p.Status != participant.StatusWorking {
 		t.Fatalf("expected ada to remain working after reason1 flush (anchor still open), got %q", p.Status)
@@ -1464,8 +1472,8 @@ func TestReaderLoop_marksIdleOnlyAfterAllObservedStreamsFlush(t *testing.T) {
 
 	// Anchor flush — the authoritative turn-end signal.
 	a.ch <- agent.Message{StreamID: mockTurnAnchor, Mode: agent.ModeFlush, Content: agent.Output{}}
-	mustReceive(t, obs.ch, session.KindParticipantStatusChanged)
-	mustReceive(t, obs.ch, session.KindAgentMessage)
+	mustReceive[session.ParticipantStatusChanged](t, obs.ch)
+	mustReceive[session.AgentMessage](t, obs.ch)
 	p, _ = s.Participant("ada")
 	if p.Status != participant.StatusIdle {
 		t.Fatalf("expected ada to become idle after anchor flush, got %q", p.Status)
@@ -1479,10 +1487,10 @@ func TestReaderLoop_emitsDone(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
-	mustReceive(t, obs.ch, session.KindAgentLog) // unmatched flush invariant
-	ev := mustReceive(t, obs.ch, session.KindAgentMessage)
-	if ev.Msg == nil || ev.Msg.Mode != agent.ModeFlush {
+	mustReceive[session.AgentStarted](t, obs.ch)
+	mustReceive[session.AgentLog](t, obs.ch) // unmatched flush invariant
+	ev := mustReceive[session.AgentMessage](t, obs.ch)
+	if ev.Msg.Mode != agent.ModeFlush {
 		t.Errorf("expected ModeFlush message for turn done")
 	}
 }
@@ -1495,8 +1503,8 @@ func TestMultipleObservers_bothNotified(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs1.ch, session.KindAgentStarted)
-	mustReceive(t, obs2.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs1.ch)
+	mustReceive[session.AgentStarted](t, obs2.ch)
 }
 
 func TestReaderLoop_emitsAgentLog(t *testing.T) {
@@ -1506,9 +1514,9 @@ func TestReaderLoop_emitsAgentLog(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
+	mustReceive[session.AgentStarted](t, obs.ch)
 
-	ev := mustReceive(t, obs.ch, session.KindAgentLog)
+	ev := mustReceive[session.AgentLog](t, obs.ch)
 	if ev.Text != "npm warn something" {
 		t.Errorf("expected log text %q, got %q", "npm warn something", ev.Text)
 	}
@@ -1524,6 +1532,6 @@ func TestReaderLoop_agentCrash_emitsCrashed(t *testing.T) {
 	s := session.New(session.WithObserver(obs), fixedFactory(a))
 
 	invite(t, s, "ada")
-	mustReceive(t, obs.ch, session.KindAgentStarted)
-	mustReceive(t, obs.ch, session.KindAgentCrashed)
+	mustReceive[session.AgentStarted](t, obs.ch)
+	mustReceive[session.AgentCrashed](t, obs.ch)
 }

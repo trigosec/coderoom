@@ -80,7 +80,7 @@ func mustPullEvent(t *testing.T, m *Model, timeout time.Duration) session.Event 
 		return ev
 	case <-time.After(timeout):
 		t.Fatal("timed out waiting for session event")
-		return session.Event{}
+		return nil
 	}
 }
 
@@ -89,7 +89,7 @@ func pumpUntil(t *testing.T, m Model, pred func(session.Event) bool) Model {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		ev := mustPullEvent(t, &m, 2*time.Second)
-		next, _ := m.Update(sessionEventMsg(ev))
+		next, _ := m.Update(sessionEventMsg{event: ev})
 		m = next.(Model)
 		if pred(ev) {
 			return m
@@ -119,8 +119,8 @@ func pumpUntilAgentsStarted(t *testing.T, m Model, want ...string) Model {
 		wantSet[alias] = true
 	}
 	return pumpUntil(t, m, func(ev session.Event) bool {
-		if ev.Kind == session.KindAgentStarted {
-			started[ev.Alias] = true
+		if startedEv, ok := ev.(session.AgentStarted); ok {
+			started[startedEv.Alias] = true
 		}
 		for alias := range wantSet {
 			if !started[alias] {
@@ -152,19 +152,21 @@ func assertHistoryContainsUserInput(t *testing.T, m Model, text string) {
 
 func isIdleStatusChange(alias string) func(session.Event) bool {
 	return func(ev session.Event) bool {
-		return ev.Kind == session.KindParticipantStatusChanged &&
-			ev.Alias == alias &&
-			ev.StatusTo == participant.StatusIdle
+		status, ok := ev.(session.ParticipantStatusChanged)
+		return ok &&
+			status.Alias == alias &&
+			status.To == participant.StatusIdle
 	}
 }
 
 func isStreamOutput(alias, text string) func(session.Event) bool {
 	return func(ev session.Event) bool {
-		if ev.Kind != session.KindAgentMessage || ev.Alias != alias || ev.Msg == nil {
+		msg, ok := ev.(session.AgentMessage)
+		if !ok || msg.Alias != alias {
 			return false
 		}
-		out, ok := ev.Msg.Content.(agent.Output)
-		return ok && ev.Msg.Mode == agent.ModeStream && out.Text == text
+		out, ok := msg.Msg.Content.(agent.Output)
+		return ok && msg.Msg.Mode == agent.ModeStream && out.Text == text
 	}
 }
 
@@ -307,7 +309,7 @@ func TestBarrierBatch_failedDispatchDoesNotRetryOnRollbackIdle(t *testing.T) {
 
 	for range 3 {
 		ev := mustPullEvent(t, &m, 2*time.Second)
-		next, _ = m.Update(sessionEventMsg(ev))
+		next, _ = m.Update(sessionEventMsg{event: ev})
 		m = next.(Model)
 	}
 
@@ -376,7 +378,8 @@ func TestBarrierBatch_discardedTargetRestoresDraft(t *testing.T) {
 		t.Fatalf("remove ada: %v", err)
 	}
 	m = pumpUntil(t, m, func(ev session.Event) bool {
-		return ev.Kind == session.KindAgentStopped && ev.Alias == "ada"
+		stopped, ok := ev.(session.AgentStopped)
+		return ok && stopped.Alias == "ada"
 	})
 
 	assertHistoryDoesNotContainUserInput(t, m, "@ada hi")
@@ -410,7 +413,7 @@ func TestBarrierBatch_handoffIgnoresStartingBystanderOutsideBarrier(t *testing.T
 	inviteParticipant(t, s, "cat", "#f59e0b")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
-	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+	m = pushEvent(m, session.AgentMessage{Alias: "ada", Msg: agent.Message{
 		StreamID: "completed-output",
 		Mode:     agent.ModeSingle,
 		Content:  agent.Output{Text: "prior completed output"},
@@ -427,9 +430,10 @@ func TestBarrierBatch_handoffIgnoresStartingBystanderOutsideBarrier(t *testing.T
 
 	ada.push(agent.Message{StreamID: testTurnAnchor, Mode: agent.ModeFlush, Content: agent.Output{}})
 	m = pumpUntil(t, m, func(ev session.Event) bool {
-		return ev.Kind == session.KindContextHandoff &&
-			ev.FromAlias == "ada" &&
-			ev.ToAlias == "turing"
+		handoff, ok := ev.(session.ContextHandoff)
+		return ok &&
+			handoff.FromAlias == "ada" &&
+			handoff.ToAlias == "turing"
 	})
 
 	if m.room.HasStagedBatch() || m.room.IsComposerStaged() {
@@ -450,14 +454,14 @@ func TestBarrierBatch_handoffDispatchRacesSourceFlush(t *testing.T) {
 	// 1. session.handleAgentMessage processes the anchor Output+ModeFlush
 	// 2. applyTurnLifecycle marks the source participant idle
 	// 3. the UI auto-dispatches the staged handoff on that idle event
-	// 4. only after that does the room ingest the final KindAgentMessage update
+	// 4. only after that does the room ingest the final AgentMessage update
 	//
 	// When the source output lives on the anchor stream itself,
 	// LatestCompletedOutput still sees an open ModeStream record at dispatch
 	// time, so /handoff resolves "no completed room-visible output" even though
 	// the source turn has just finished. The fix is to defer handoff dispatch
 	// on the source's idle status event and re-check on the following
-	// KindAgentMessage after the room update has been applied.
+	// AgentMessage after the room update has been applied.
 	agents, s, m := newTwoAgentBarrierBatchModel(t)
 	m = stageBusyHandoff(t, s, m)
 	pushAnchorOutput(agents["ada"], "fresh output")
@@ -513,9 +517,10 @@ func waitForHandoffEvent(t *testing.T, m Model) Model {
 	t.Helper()
 
 	return pumpUntil(t, m, func(ev session.Event) bool {
-		return ev.Kind == session.KindContextHandoff &&
-			ev.FromAlias == "ada" &&
-			ev.ToAlias == "turing"
+		handoff, ok := ev.(session.ContextHandoff)
+		return ok &&
+			handoff.FromAlias == "ada" &&
+			handoff.ToAlias == "turing"
 	})
 }
 
@@ -537,7 +542,9 @@ func assertHandoffRaceResolved(t *testing.T, m Model) {
 	}
 }
 
-func TestBarrierBatch_handoffDiscardedTargetRestoresDraft(t *testing.T) {
+func stageDiscardedTargetHandoff(t *testing.T) (*testAgent, *session.Session, Model) {
+	t.Helper()
+
 	agents := map[string]*testAgent{
 		"ada":    newTestAgent(),
 		"turing": newTestAgent(),
@@ -551,7 +558,7 @@ func TestBarrierBatch_handoffDiscardedTargetRestoresDraft(t *testing.T) {
 	inviteParticipant(t, s, "turing", "#60a5fa")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
-	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+	m = pushEvent(m, session.AgentMessage{Alias: "ada", Msg: agent.Message{
 		StreamID: "completed-output",
 		Mode:     agent.ModeSingle,
 		Content:  agent.Output{Text: "prior completed output"},
@@ -566,15 +573,23 @@ func TestBarrierBatch_handoffDiscardedTargetRestoresDraft(t *testing.T) {
 		t.Fatal("expected staged handoff before target disappears")
 	}
 
+	return agents["ada"], s, m
+}
+
+func TestBarrierBatch_handoffDiscardedTargetRestoresDraft(t *testing.T) {
+	ada, s, m := stageDiscardedTargetHandoff(t)
+
 	if err := s.Execute(session.RemoveCommand{Alias: "turing"}); err != nil {
 		t.Fatalf("remove turing: %v", err)
 	}
 	m = pumpUntil(t, m, func(ev session.Event) bool {
-		return ev.Kind == session.KindAgentStopped && ev.Alias == "turing"
+		stopped, ok := ev.(session.AgentStopped)
+		return ok && stopped.Alias == "turing"
 	})
-	agents["ada"].push(agent.Message{StreamID: testTurnAnchor, Mode: agent.ModeFlush, Content: agent.Output{}})
+	ada.push(agent.Message{StreamID: testTurnAnchor, Mode: agent.ModeFlush, Content: agent.Output{}})
 	m = pumpUntil(t, m, func(ev session.Event) bool {
-		return ev.Kind == session.KindAgentMessage && ev.Alias == "ada"
+		msg, ok := ev.(session.AgentMessage)
+		return ok && msg.Alias == "ada"
 	})
 
 	assertHistoryDoesNotContainUserInput(t, m, "/handoff ada turing")
@@ -605,7 +620,7 @@ func TestBarrierBatch_handoffIgnoresBusyParticipantWhoJoinedAfterStaging(t *test
 	inviteParticipant(t, s, "turing", "#60a5fa")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
-	m = pushEvent(m, session.Event{Kind: session.KindAgentMessage, Alias: "ada", Msg: &agent.Message{
+	m = pushEvent(m, session.AgentMessage{Alias: "ada", Msg: agent.Message{
 		StreamID: "completed-output",
 		Mode:     agent.ModeSingle,
 		Content:  agent.Output{Text: "prior completed output"},
@@ -628,9 +643,10 @@ func TestBarrierBatch_handoffIgnoresBusyParticipantWhoJoinedAfterStaging(t *test
 
 	ada.push(agent.Message{StreamID: testTurnAnchor, Mode: agent.ModeFlush, Content: agent.Output{}})
 	m = pumpUntil(t, m, func(ev session.Event) bool {
-		return ev.Kind == session.KindContextHandoff &&
-			ev.FromAlias == "ada" &&
-			ev.ToAlias == "turing"
+		handoff, ok := ev.(session.ContextHandoff)
+		return ok &&
+			handoff.FromAlias == "ada" &&
+			handoff.ToAlias == "turing"
 	})
 
 	if hasRecord(m, record.KindSystem, `error: handoff "ada" -> "turing"`) {
