@@ -40,12 +40,24 @@ type Event struct {
 	ToAlias   string         // for KindContextHandoff
 	Preview   string         // for KindContextHandoff room rendering
 
+	SourceRecordIndex int      // for KindContextHandoff; -1 when no source record was selected
+	BarrierAliases    []string // for handoff diagnostics
+	IdleAliases       []string // for handoff diagnostics
+	BusyAliases       []string // for handoff diagnostics
+	RejectionReason   string   // for handoff diagnostics
+
 	ApprovalID  int64                  // for KindApprovalRequested, KindApprovalCleared
 	ApprovalReq *agent.ApprovalRequest // for KindApprovalRequested
 
 	StatusFrom participant.Status // for KindParticipantStatusChanged
 	StatusTo   participant.Status // for KindParticipantStatusChanged
 	Since      time.Time          // for KindParticipantStatusChanged; equals participant.Since after the transition
+}
+
+// HandoffSource describes the room-owned source record selected for a handoff.
+type HandoffSource struct {
+	Text        string
+	RecordIndex int
 }
 
 // Observer receives session events. Implementations must be fast; a blocking

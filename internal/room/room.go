@@ -12,12 +12,13 @@ import (
 // already running.
 func New(opts ...Option) *Room {
 	r := &Room{
-		id:        SharedRoomID,
-		members:   make(map[string]struct{}),
-		departed:  make(map[string]bool),
-		streaming: make(map[agent.StreamID]OpenStream),
-		dirty:     make(map[uint64][]int),
-		queue:     queue.New[session.Event](),
+		id:                 SharedRoomID,
+		members:            make(map[string]struct{}),
+		departed:           make(map[string]bool),
+		streaming:          make(map[agent.StreamID]OpenStream),
+		latestHandoffByRef: make(map[string]int),
+		dirty:              make(map[uint64][]int),
+		queue:              queue.New[session.Event](),
 	}
 	for _, opt := range opts {
 		opt(r)

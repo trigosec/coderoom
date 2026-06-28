@@ -63,6 +63,7 @@ const (
 	promptPrefix     = "❯ "
 	logPrefix        = "▸ "
 	agentBullet      = "● "
+	handoffSourceTag = "↦ "
 	reasoningBullet  = "◈ "
 	commandBullet    = "$ "
 	fileChangeBullet = "✎ "
@@ -155,11 +156,15 @@ func renderAgentOutput(r Record, width int, colors func(string) string) string {
 	color := colors(r.Alias)
 	var header string
 	var spanStyle lipgloss.Style
+	bullet := agentBullet
+	if r.HandoffSource {
+		bullet = handoffSourceTag
+	}
 	if color != "" {
 		spanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-		header = spanStyle.Render(agentBullet+r.Alias) + ":"
+		header = spanStyle.Render(bullet+r.Alias) + ":"
 	} else {
-		header = agentBullet + r.Alias + ":"
+		header = bullet + r.Alias + ":"
 	}
 	body := bodyFromRecord(r)
 	if body == "" {

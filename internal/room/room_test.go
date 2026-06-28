@@ -140,7 +140,7 @@ func TestOnEvent_contextHandoffAppendsAuditRecord(t *testing.T) {
 		FromAlias: "ada",
 		ToAlias:   "turing",
 		Text:      "ship it",
-		Preview:   "[handoff ada -> turing]\n\n[HANDOFF from ada]\n\nship it",
+		Preview:   "[handoff ada -> turing]\n  ↦ source: ada latest output\n  > ship it",
 	})
 	waitUpdate(t, updates)
 
@@ -151,13 +151,16 @@ func TestOnEvent_contextHandoffAppendsAuditRecord(t *testing.T) {
 	if snapshot.Records[0].Kind != KindSystem {
 		t.Fatalf("expected system record, got %#v", snapshot.Records[0])
 	}
-	if snapshot.Records[0].Text != "[handoff ada -> turing]\n\n[HANDOFF from ada]\n\nship it" {
+	if snapshot.Records[0].Text != "[handoff ada -> turing]\n  ↦ source: ada latest output\n  > ship it" {
 		t.Fatalf("unexpected handoff record: %#v", snapshot.Records[0])
 	}
 }
 
 func TestLatestCompletedOutput(t *testing.T) {
 	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	waitUpdate(t, updates)
 
 	room.OnEvent(session.Event{
 		Kind:  session.KindAgentMessage,
@@ -185,10 +188,21 @@ func TestLatestCompletedOutput(t *testing.T) {
 	if got != "done" {
 		t.Fatalf("LatestCompletedOutput = %q, want %q", got, "done")
 	}
+	source, ok := room.LatestHandoffSource("ada")
+	if !ok || source.RecordIndex != 3 {
+		t.Fatalf("LatestHandoffSource = %#v, %v; want record 3", source, ok)
+	}
+	snapshot := room.Snapshot()
+	if !snapshot.Records[3].HandoffSource {
+		t.Fatalf("expected latest completed output record to be marked as handoff source: %#v", snapshot.Records[3])
+	}
 }
 
 func TestLatestCompletedOutput_returnsFlushedStreamOutput(t *testing.T) {
 	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	waitUpdate(t, updates)
 
 	room.OnEvent(session.Event{
 		Kind:  session.KindAgentMessage,
@@ -209,6 +223,90 @@ func TestLatestCompletedOutput_returnsFlushedStreamOutput(t *testing.T) {
 	}
 	if got != "done" {
 		t.Fatalf("LatestCompletedOutput = %q, want %q", got, "done")
+	}
+	source, ok := room.LatestHandoffSource("ada")
+	if !ok || source.RecordIndex != 1 {
+		t.Fatalf("LatestHandoffSource = %#v, %v; want record 1", source, ok)
+	}
+	snapshot := room.Snapshot()
+	if !snapshot.Records[1].HandoffSource {
+		t.Fatalf("expected flushed output record to be marked as handoff source: %#v", snapshot.Records[1])
+	}
+}
+
+func TestLatestHandoffSource_movesToNewestCompletedOutput(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "first"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out2", Mode: agent.ModeSingle, Content: agent.Output{Text: "second"}},
+	})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if snapshot.Records[1].HandoffSource {
+		t.Fatalf("expected older output to lose handoff marker: %#v", snapshot.Records[1])
+	}
+	if !snapshot.Records[2].HandoffSource {
+		t.Fatalf("expected newest output to gain handoff marker: %#v", snapshot.Records[2])
+	}
+}
+
+func TestLatestHandoffSource_clearsOnDeparture(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
+	waitUpdate(t, updates)
+
+	if _, ok := room.LatestHandoffSource("ada"); ok {
+		t.Fatal("expected no handoff source after departure")
+	}
+	snapshot := room.Snapshot()
+	if snapshot.Records[1].HandoffSource {
+		t.Fatalf("expected handoff marker cleared on departure: %#v", snapshot.Records[1])
+	}
+}
+
+func TestLatestHandoffSource_restoredOnRejoin(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{Kind: session.KindAgentStopped, Alias: "ada"})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{Kind: session.KindAgentStarted, Alias: "ada"})
+	waitUpdate(t, updates)
+
+	source, ok := room.LatestHandoffSource("ada")
+	if !ok || source.RecordIndex != 1 {
+		t.Fatalf("LatestHandoffSource after rejoin = %#v, %v; want record 1", source, ok)
+	}
+	snapshot := room.Snapshot()
+	if !snapshot.Records[1].HandoffSource {
+		t.Fatalf("expected handoff marker restored on rejoin: %#v", snapshot.Records[1])
 	}
 }
 

@@ -2,6 +2,8 @@ package session_test
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -824,6 +826,16 @@ func TestSharedSend_notFound(t *testing.T) {
 }
 
 func TestHandoff_sendsResolvedOutputAndEmitsEvent(t *testing.T) {
+	obs, turing, s := newHandoffTestSession(t)
+	executeResolvedHandoff(t, s, "final answer", 2)
+	assertHandoffEvent(t, obs, "final answer", 2)
+	assertHandoffNoticePayload(t, turing, "[HANDOFF from ada]\n\nfinal answer")
+	assertHandoffAcceptedLog(t, obs, 2)
+}
+
+func newHandoffTestSession(t *testing.T) (*testObserver, *noticeFlushAgent, *session.Session) {
+	t.Helper()
+
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newNoticeFlushAgent()
@@ -843,32 +855,61 @@ func TestHandoff_sendsResolvedOutputAndEmitsEvent(t *testing.T) {
 	mustReceive(t, obs.ch, session.KindAgentStarted)
 	invite(t, s, "turing")
 	mustReceive(t, obs.ch, session.KindAgentStarted)
+	return obs, turing, s
+}
+
+func executeResolvedHandoff(t *testing.T, s *session.Session, text string, recordIndex int) {
+	t.Helper()
 
 	if err := s.Execute(session.HandoffCommand{
 		FromAlias: "ada",
 		ToAlias:   "turing",
-		ResolveSource: func(alias string) (string, bool) {
+		ResolveSource: func(alias string) (session.HandoffSource, bool) {
 			if alias == "ada" {
-				return "final answer", true
+				return session.HandoffSource{Text: text, RecordIndex: recordIndex}, true
 			}
-			return "", false
+			return session.HandoffSource{}, false
 		},
 	}); err != nil {
 		t.Fatalf("HandoffCommand: %v", err)
 	}
+}
+
+func assertHandoffEvent(t *testing.T, obs *testObserver, wantText string, wantRecordIndex int) {
+	t.Helper()
+
 	ev := mustReceive(t, obs.ch, session.KindContextHandoff)
 	if ev.FromAlias != "ada" || ev.ToAlias != "turing" {
 		t.Fatalf("unexpected handoff event: %#v", ev)
 	}
-	if ev.Text != "final answer" {
+	if ev.Text != wantText {
 		t.Fatalf("unexpected handoff payload text: %q", ev.Text)
 	}
+	if ev.Preview != "[handoff ada -> turing]\n  ↦ source: ada latest output\n  > "+wantText {
+		t.Fatalf("unexpected handoff preview: %q", ev.Preview)
+	}
+	if ev.SourceRecordIndex != wantRecordIndex {
+		t.Fatalf("unexpected handoff source record index: %d", ev.SourceRecordIndex)
+	}
+}
+
+func assertHandoffNoticePayload(t *testing.T, turing *noticeFlushAgent, want string) {
+	t.Helper()
 
 	turing.inner.mu.Lock()
-	if len(turing.inner.sends) == 0 || turing.inner.sends[len(turing.inner.sends)-1] != "[HANDOFF from ada]\n\nfinal answer" {
+	defer turing.inner.mu.Unlock()
+	if len(turing.inner.sends) == 0 || turing.inner.sends[len(turing.inner.sends)-1] != want {
 		t.Fatalf("unexpected handoff notice payload: %v", turing.inner.sends)
 	}
-	turing.inner.mu.Unlock()
+}
+
+func assertHandoffAcceptedLog(t *testing.T, obs *testObserver, wantRecordIndex int) {
+	t.Helper()
+
+	logEv := mustReceive(t, obs.ch, session.KindAgentLog)
+	if !strings.Contains(logEv.Text, "handoff accepted: from=ada to=turing") || !strings.Contains(logEv.Text, fmt.Sprintf("source_record=%d", wantRecordIndex)) {
+		t.Fatalf("unexpected accepted handoff log: %q", logEv.Text)
+	}
 }
 
 func TestHandoff_requiresIdleParticipants(t *testing.T) {
@@ -899,15 +940,19 @@ func TestHandoff_requiresIdleParticipants(t *testing.T) {
 	err := s.Execute(session.HandoffCommand{
 		FromAlias: "ada",
 		ToAlias:   "turing",
-		ResolveSource: func(alias string) (string, bool) {
+		ResolveSource: func(alias string) (session.HandoffSource, bool) {
 			if alias == "ada" {
-				return "final answer", true
+				return session.HandoffSource{Text: "final answer", RecordIndex: 4}, true
 			}
-			return "", false
+			return session.HandoffSource{}, false
 		},
 	})
 	if err == nil {
 		t.Fatal("expected busy handoff error")
+	}
+	logEv := mustReceive(t, obs.ch, session.KindAgentLog)
+	if !strings.Contains(logEv.Text, "handoff rejected: from=ada to=turing") || !strings.Contains(logEv.Text, "busy=[turing]") {
+		t.Fatalf("unexpected busy handoff log: %q", logEv.Text)
 	}
 }
 
@@ -935,10 +980,60 @@ func TestHandoff_requiresCompletedSourceOutput(t *testing.T) {
 	err := s.Execute(session.HandoffCommand{
 		FromAlias:     "ada",
 		ToAlias:       "turing",
-		ResolveSource: func(string) (string, bool) { return "", false },
+		ResolveSource: func(string) (session.HandoffSource, bool) { return session.HandoffSource{}, false },
 	})
 	if err == nil {
 		t.Fatal("expected missing source output error")
+	}
+	logEv := mustReceive(t, obs.ch, session.KindAgentLog)
+	if !strings.Contains(logEv.Text, "reason=no completed room-visible output") {
+		t.Fatalf("unexpected missing-source handoff log: %q", logEv.Text)
+	}
+}
+
+func TestHandoff_rejectionLogCompactsMultilineReason(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newNoticeFlushAgent()
+	turing.inner.noticeHook = func(string) error {
+		return errors.New("line one\nline two\n\nline three")
+	}
+	s := session.New(
+		session.WithObserver(obs),
+		mappedFactory(map[string]agent.Agent{
+			"ada":    ada,
+			"turing": turing,
+		}),
+	)
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	err := s.Execute(session.HandoffCommand{
+		FromAlias: "ada",
+		ToAlias:   "turing",
+		ResolveSource: func(alias string) (session.HandoffSource, bool) {
+			if alias == "ada" {
+				return session.HandoffSource{Text: "final answer", RecordIndex: 2}, true
+			}
+			return session.HandoffSource{}, false
+		},
+	})
+	if err == nil {
+		t.Fatal("expected handoff send error")
+	}
+	logEv := mustReceive(t, obs.ch, session.KindAgentLog)
+	if strings.Contains(logEv.Text, "\n") {
+		t.Fatalf("expected compact single-line handoff log, got %q", logEv.Text)
+	}
+	if !strings.Contains(logEv.Text, "reason=line one | line two | line three") {
+		t.Fatalf("unexpected compacted rejection reason: %q", logEv.Text)
 	}
 }
 
@@ -970,11 +1065,11 @@ func TestHandoff_ignoresStartingBystanderOutsideBarrier(t *testing.T) {
 	if err := s.Execute(session.HandoffCommand{
 		FromAlias: "ada",
 		ToAlias:   "turing",
-		ResolveSource: func(alias string) (string, bool) {
+		ResolveSource: func(alias string) (session.HandoffSource, bool) {
 			if alias == "ada" {
-				return "final answer", true
+				return session.HandoffSource{Text: "final answer", RecordIndex: 1}, true
 			}
-			return "", false
+			return session.HandoffSource{}, false
 		},
 	}); err != nil {
 		t.Fatalf("HandoffCommand with starting bystander: %v", err)
@@ -1028,11 +1123,11 @@ func TestHandoff_usesProvidedIdleAliasesInsteadOfLiveBarrier(t *testing.T) {
 		FromAlias:   "ada",
 		ToAlias:     "turing",
 		IdleAliases: []string{"ada", "turing"},
-		ResolveSource: func(alias string) (string, bool) {
+		ResolveSource: func(alias string) (session.HandoffSource, bool) {
 			if alias == "ada" {
-				return "final answer", true
+				return session.HandoffSource{Text: "final answer", RecordIndex: 7}, true
 			}
-			return "", false
+			return session.HandoffSource{}, false
 		},
 	}); err != nil {
 		t.Fatalf("HandoffCommand with staged idle aliases: %v", err)

@@ -271,52 +271,114 @@ type HandoffCommand struct {
 	FromAlias     string
 	ToAlias       string
 	IdleAliases   []string
-	ResolveSource func(alias string) (string, bool)
+	ResolveSource func(alias string) (HandoffSource, bool)
 }
 
 func (c HandoffCommand) execute(s *Session) error {
-	if strings.TrimSpace(c.FromAlias) == "" || strings.TrimSpace(c.ToAlias) == "" {
-		return fmt.Errorf("usage: /handoff <from> <to>")
-	}
-	if c.FromAlias == c.ToAlias {
-		return fmt.Errorf("handoff requires distinct source and destination aliases")
-	}
-	if busy := handoffBusyParticipants(c.IdleAliases, s); len(busy) > 0 {
-		return fmt.Errorf("handoff requires all participants to be idle: %s", strings.Join(busy, ", "))
-	}
-
-	if c.ResolveSource == nil {
-		return fmt.Errorf("handoff source resolver is required")
-	}
-
-	source, ok := c.ResolveSource(c.FromAlias)
-	if !ok {
-		return fmt.Errorf("handoff source %q has no completed room-visible output", c.FromAlias)
-	}
-
-	a, prepared, err := acquireParticipantForNotice(c.ToAlias, s)
-	if err != nil {
+	attempt := newHandoffAttempt(c, s)
+	if err := c.validate(attempt, s); err != nil {
 		return err
 	}
-	payload := formatHandoffPayload(c.FromAlias, source)
+	if err := c.resolveSource(attempt, s); err != nil {
+		return err
+	}
+	return c.deliver(attempt, s)
+}
+
+type handoffAttempt struct {
+	fromAlias string
+	toAlias   string
+	barrier   []string
+	idle      []string
+	busy      []string
+	source    HandoffSource
+}
+
+func newHandoffAttempt(c HandoffCommand, s *Session) *handoffAttempt {
+	barrier, idle, busy := handoffBarrierState(c.IdleAliases, s)
+	return &handoffAttempt{
+		fromAlias: c.FromAlias,
+		toAlias:   c.ToAlias,
+		barrier:   barrier,
+		idle:      idle,
+		busy:      busy,
+		source:    HandoffSource{RecordIndex: -1},
+	}
+}
+
+func (c HandoffCommand) validate(attempt *handoffAttempt, s *Session) error {
+	if strings.TrimSpace(c.FromAlias) == "" || strings.TrimSpace(c.ToAlias) == "" {
+		return rejectHandoffAttempt(attempt, s, "usage: /handoff <from> <to>", fmt.Errorf("usage: /handoff <from> <to>"))
+	}
+	if c.FromAlias == c.ToAlias {
+		return rejectHandoffAttempt(attempt, s, "distinct aliases required", fmt.Errorf("handoff requires distinct source and destination aliases"))
+	}
+	if len(attempt.busy) > 0 {
+		return rejectHandoffAttempt(
+			attempt,
+			s,
+			"participants busy",
+			fmt.Errorf("handoff requires all participants to be idle: %s", strings.Join(attempt.busy, ", ")),
+		)
+	}
+	if c.ResolveSource == nil {
+		return rejectHandoffAttempt(attempt, s, "source resolver missing", fmt.Errorf("handoff source resolver is required"))
+	}
+	return nil
+}
+
+func (c HandoffCommand) resolveSource(attempt *handoffAttempt, s *Session) error {
+	source, ok := c.ResolveSource(c.FromAlias)
+	if ok {
+		attempt.source = source
+		return nil
+	}
+	return rejectHandoffAttempt(
+		attempt,
+		s,
+		"no completed room-visible output",
+		fmt.Errorf("handoff source %q has no completed room-visible output", c.FromAlias),
+	)
+}
+
+func (c HandoffCommand) deliver(attempt *handoffAttempt, s *Session) error {
+	a, prepared, err := acquireParticipantForNotice(c.ToAlias, s)
+	if err != nil {
+		return rejectHandoffAttempt(attempt, s, err.Error(), err)
+	}
+	payload := formatHandoffPayload(c.FromAlias, attempt.source.Text)
 	anchorID, err := a.SendNotice(payload)
 	if err != nil {
 		s.abortWork(c.ToAlias)
-		return fmt.Errorf("handoff to %q: %w", c.ToAlias, err)
+		return rejectHandoffAttempt(attempt, s, err.Error(), fmt.Errorf("handoff to %q: %w", c.ToAlias, err))
 	}
 	if prepared {
 		s.beginParticipantWorking(c.ToAlias, anchorID)
 	} else {
 		s.trackAnchorStream(c.ToAlias, anchorID)
 	}
-	s.notify(Event{
-		Kind:      KindContextHandoff,
-		FromAlias: c.FromAlias,
-		ToAlias:   c.ToAlias,
-		Text:      source,
-		Preview:   formatHandoffPreview(c.FromAlias, c.ToAlias, source),
-	})
+	notifyHandoffDelivered(c.FromAlias, c.ToAlias, attempt, s)
 	return nil
+}
+
+func rejectHandoffAttempt(attempt *handoffAttempt, s *Session, reason string, err error) error {
+	notifyHandoffRejected(s, attempt.fromAlias, attempt.toAlias, attempt.barrier, attempt.idle, attempt.busy, attempt.source.RecordIndex, reason)
+	return err
+}
+
+func notifyHandoffDelivered(fromAlias, toAlias string, attempt *handoffAttempt, s *Session) {
+	s.notify(Event{
+		Kind:              KindContextHandoff,
+		FromAlias:         fromAlias,
+		ToAlias:           toAlias,
+		Text:              attempt.source.Text,
+		Preview:           formatHandoffPreview(fromAlias, toAlias, attempt.source.Text),
+		SourceRecordIndex: attempt.source.RecordIndex,
+		BarrierAliases:    append([]string(nil), attempt.barrier...),
+		IdleAliases:       append([]string(nil), attempt.idle...),
+		BusyAliases:       append([]string(nil), attempt.busy...),
+	})
+	notifyHandoffAccepted(s, fromAlias, toAlias, attempt.barrier, attempt.idle, attempt.source.RecordIndex)
 }
 
 // acquireParticipantForDirectSend captures the participant's agent and
@@ -353,33 +415,112 @@ func acquireParticipantForDirectSend(alias string, s *Session) (a agent.Agent, e
 	return a, nil
 }
 
-func busyParticipants(ps []participant.Participant) []string {
-	var busy []string
-	for _, p := range ps {
-		if p.Status != participant.StatusIdle {
-			busy = append(busy, p.Alias)
-		}
-	}
-	slices.Sort(busy)
-	return busy
-}
-
-func handoffBusyParticipants(aliases []string, s *Session) []string {
+func handoffBarrierState(aliases []string, s *Session) (barrier []string, idle []string, busy []string) {
 	if len(aliases) == 0 {
-		return busyParticipants(s.BarrierParticipants())
+		for _, p := range s.BarrierParticipants() {
+			barrier = append(barrier, p.Alias)
+		}
+	} else {
+		barrier = append([]string(nil), aliases...)
+		slices.Sort(barrier)
 	}
-	var busy []string
-	for _, alias := range aliases {
+	for _, alias := range barrier {
 		p, ok := s.Participant(alias)
 		if !ok {
 			continue
 		}
-		if p.Status != participant.StatusIdle {
-			busy = append(busy, alias)
+		if p.Status == participant.StatusIdle {
+			idle = append(idle, alias)
+			continue
 		}
+		busy = append(busy, alias)
 	}
-	slices.Sort(busy)
-	return busy
+	return barrier, idle, busy
+}
+
+func notifyHandoffAccepted(s *Session, fromAlias, toAlias string, barrier, idle []string, sourceRecordIndex int) {
+	s.notify(Event{
+		Kind:              KindAgentLog,
+		Text:              formatHandoffAttemptLog("accepted", fromAlias, toAlias, barrier, idle, nil, sourceRecordIndex, ""),
+		FromAlias:         fromAlias,
+		ToAlias:           toAlias,
+		SourceRecordIndex: sourceRecordIndex,
+		BarrierAliases:    append([]string(nil), barrier...),
+		IdleAliases:       append([]string(nil), idle...),
+	})
+}
+
+func notifyHandoffRejected(s *Session, fromAlias, toAlias string, barrier, idle, busy []string, sourceRecordIndex int, reason string) {
+	reason = compactHandoffReason(reason)
+	s.notify(Event{
+		Kind:              KindAgentLog,
+		Text:              formatHandoffAttemptLog("rejected", fromAlias, toAlias, barrier, idle, busy, sourceRecordIndex, reason),
+		FromAlias:         fromAlias,
+		ToAlias:           toAlias,
+		SourceRecordIndex: sourceRecordIndex,
+		BarrierAliases:    append([]string(nil), barrier...),
+		IdleAliases:       append([]string(nil), idle...),
+		BusyAliases:       append([]string(nil), busy...),
+		RejectionReason:   reason,
+	})
+}
+
+func compactHandoffReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ""
+	}
+	lines := strings.FieldsFunc(reason, func(r rune) bool {
+		return r == '\n' || r == '\r'
+	})
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts = append(parts, line)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " | ")
+}
+
+func formatHandoffAttemptLog(status, fromAlias, toAlias string, barrier, idle, busy []string, sourceRecordIndex int, reason string) string {
+	var sb strings.Builder
+	sb.WriteString("handoff ")
+	sb.WriteString(status)
+	sb.WriteString(": from=")
+	sb.WriteString(fromAlias)
+	sb.WriteString(" to=")
+	sb.WriteString(toAlias)
+	sb.WriteString(" barrier=")
+	sb.WriteString(formatHandoffAliasList(barrier))
+	sb.WriteString(" idle=")
+	sb.WriteString(formatHandoffAliasList(idle))
+	if len(busy) > 0 {
+		sb.WriteString(" busy=")
+		sb.WriteString(formatHandoffAliasList(busy))
+	}
+	sb.WriteString(" source_record=")
+	if sourceRecordIndex < 0 {
+		sb.WriteString("none")
+	} else {
+		fmt.Fprintf(&sb, "%d", sourceRecordIndex)
+	}
+	if strings.TrimSpace(reason) != "" {
+		sb.WriteString(" reason=")
+		sb.WriteString(reason)
+	}
+	return sb.String()
+}
+
+func formatHandoffAliasList(aliases []string) string {
+	if len(aliases) == 0 {
+		return "[]"
+	}
+	return "[" + strings.Join(aliases, ",") + "]"
 }
 
 func formatHandoffPayload(fromAlias string, text string) string {
@@ -387,7 +528,49 @@ func formatHandoffPayload(fromAlias string, text string) string {
 }
 
 func formatHandoffPreview(fromAlias, toAlias, text string) string {
-	return fmt.Sprintf("[handoff %s -> %s]\n\n%s", fromAlias, toAlias, formatHandoffPayload(fromAlias, text))
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "[handoff %s -> %s]", fromAlias, toAlias)
+	sb.WriteString("\n  ↦ source: ")
+	sb.WriteString(fromAlias)
+	sb.WriteString(" latest output")
+
+	preview, remaining := handoffBodyPreview(text)
+	if preview != "" {
+		sb.WriteString("\n")
+		sb.WriteString(preview)
+	}
+	if remaining > 0 {
+		fmt.Fprintf(&sb, "\n  (+%d more lines; Ctrl+G open transcript)", remaining)
+	}
+	return sb.String()
+}
+
+const handoffPreviewLines = 3
+const handoffPreviewMaxCols = 120
+
+func handoffBodyPreview(text string) (string, int) {
+	body := strings.TrimRight(text, "\n")
+	if body == "" {
+		return "", 0
+	}
+	lines := strings.Split(body, "\n")
+	previewCount := min(len(lines), handoffPreviewLines)
+	preview := make([]string, 0, previewCount)
+	for i := 0; i < previewCount; i++ {
+		preview = append(preview, "  > "+truncateHandoffPreviewLine(lines[i], handoffPreviewMaxCols))
+	}
+	return strings.Join(preview, "\n"), len(lines) - previewCount
+}
+
+func truncateHandoffPreviewLine(s string, maxCols int) string {
+	runes := []rune(s)
+	if maxCols <= 0 || len(runes) <= maxCols {
+		return s
+	}
+	if maxCols == 1 {
+		return "…"
+	}
+	return string(runes[:maxCols-1]) + "…"
 }
 
 // acquireParticipantForNotice captures the participant's agent and transitions

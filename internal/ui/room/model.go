@@ -146,9 +146,9 @@ func (m Model) HistoryPlainText() string { return m.history.PlainText() }
 // HistoryHeight returns the history viewport height.
 func (m Model) HistoryHeight() int { return m.history.Height() }
 
-// LatestCompletedOutput exposes room-owned source resolution for /handoff.
-func (m Model) LatestCompletedOutput(alias string) (string, bool) {
-	return m.chat.LatestCompletedOutput(alias)
+// LatestHandoffSource exposes room-owned source resolution for /handoff.
+func (m Model) LatestHandoffSource(alias string) (session.HandoffSource, bool) {
+	return m.chat.LatestHandoffSource(alias)
 }
 
 // SetHistorySnapshot replaces the rendered transcript state from the room package.

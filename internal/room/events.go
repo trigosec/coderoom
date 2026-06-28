@@ -2,6 +2,7 @@ package room
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/session"
@@ -33,13 +34,18 @@ func (r *Room) handleLifecycleEventLocked(e session.Event) ([]int, bool) {
 	case session.KindAgentStarted:
 		r.members[e.Alias] = struct{}{}
 		delete(r.departed, e.Alias)
-		return r.appendSystemRecordLocked("[" + e.Alias + " joined]"), true
+		dirty := r.refreshLatestHandoffSourceLocked(e.Alias)
+		dirty = append(dirty, r.appendSystemRecordLocked("["+e.Alias+" joined]")...)
+		slices.Sort(dirty)
+		return slices.Compact(dirty), true
 	case session.KindAgentStopped:
-		r.handleDepartureLocked(e.Alias)
-		return r.appendSystemRecordLocked("[" + e.Alias + " left]"), true
+		dirty := r.handleDepartureLocked(e.Alias)
+		dirty = append(dirty, r.appendSystemRecordLocked("["+e.Alias+" left]")...)
+		return slices.Compact(dirty), true
 	case session.KindAgentCrashed:
-		r.handleDepartureLocked(e.Alias)
-		return r.appendSystemRecordLocked("[" + e.Alias + " crashed]"), true
+		dirty := r.handleDepartureLocked(e.Alias)
+		dirty = append(dirty, r.appendSystemRecordLocked("["+e.Alias+" crashed]")...)
+		return slices.Compact(dirty), true
 	case session.KindAgentLog:
 		return r.appendRecordLocked(Record{Kind: KindLog, Alias: e.Alias, Text: e.Text}), true
 	case session.KindContextHandoff:
@@ -49,10 +55,11 @@ func (r *Room) handleLifecycleEventLocked(e session.Event) ([]int, bool) {
 	}
 }
 
-func (r *Room) handleDepartureLocked(alias string) {
+func (r *Room) handleDepartureLocked(alias string) []int {
 	delete(r.members, alias)
 	r.clearStreamsLocked(alias)
 	r.departed[alias] = true
+	return r.refreshLatestHandoffSourceLocked(alias)
 }
 
 func (r *Room) appendSystemRecordLocked(text string) []int {
@@ -77,7 +84,7 @@ func (r *Room) handleAgentMessageLocked(alias string, msg agent.Message) []int {
 	case agent.Output, agent.Reasoning, agent.Command, agent.FileChangeSet:
 		if msg.Mode == agent.ModeFlush {
 			r.sealStreamLocked(msg.StreamID)
-			return nil
+			return r.refreshHandoffSourceAfterMessageLocked(alias, msg)
 		}
 	}
 
@@ -85,7 +92,10 @@ func (r *Room) handleAgentMessageLocked(alias string, msg agent.Message) []int {
 		updated, err := r.records[slot.RecordIdx].Accumulate(msg)
 		if err == nil {
 			r.records[slot.RecordIdx] = updated
-			return []int{slot.RecordIdx}
+			dirty := []int{slot.RecordIdx}
+			dirty = append(dirty, r.refreshHandoffSourceAfterMessageLocked(alias, msg)...)
+			slices.Sort(dirty)
+			return slices.Compact(dirty)
 		}
 	}
 
@@ -97,7 +107,20 @@ func (r *Room) handleAgentMessageLocked(alias string, msg agent.Message) []int {
 		StreamID:  msg.StreamID,
 		Kind:      openStreamKind(msg),
 	}
-	return []int{idx}
+	dirty := []int{idx}
+	dirty = append(dirty, r.refreshHandoffSourceAfterMessageLocked(alias, msg)...)
+	slices.Sort(dirty)
+	return slices.Compact(dirty)
+}
+
+func (r *Room) refreshHandoffSourceAfterMessageLocked(alias string, msg agent.Message) []int {
+	if _, ok := msg.Content.(agent.Output); !ok {
+		return nil
+	}
+	if msg.Mode == agent.ModeStream {
+		return nil
+	}
+	return r.refreshLatestHandoffSourceLocked(alias)
 }
 
 func openStreamKind(msg agent.Message) OpenStreamKind {

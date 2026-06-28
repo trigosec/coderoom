@@ -463,7 +463,7 @@ func (m Model) executeHandoff(fromAlias, toAlias string, idleAliases []string) (
 		FromAlias:     fromAlias,
 		ToAlias:       toAlias,
 		IdleAliases:   append([]string(nil), idleAliases...),
-		ResolveSource: m.room.LatestCompletedOutput,
+		ResolveSource: m.room.LatestHandoffSource,
 	})
 	if err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: handoff %q -> %q: %v", fromAlias, toAlias, err))

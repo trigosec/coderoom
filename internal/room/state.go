@@ -69,14 +69,15 @@ type OpenStream struct {
 // Room holds the canonical chat-visible state for one room, projected from
 // session events and local, non-session appends.
 type Room struct {
-	mu        sync.RWMutex
-	id        ID
-	version   uint64
-	members   map[string]struct{}
-	departed  map[string]bool
-	records   []Record
-	streaming map[agent.StreamID]OpenStream
-	dirty     map[uint64][]int
-	observer  Observer
-	queue     *queue.Queue[session.Event]
+	mu                 sync.RWMutex
+	id                 ID
+	version            uint64
+	members            map[string]struct{}
+	departed           map[string]bool
+	records            []Record
+	streaming          map[agent.StreamID]OpenStream
+	latestHandoffByRef map[string]int
+	dirty              map[uint64][]int
+	observer           Observer
+	queue              *queue.Queue[session.Event]
 }

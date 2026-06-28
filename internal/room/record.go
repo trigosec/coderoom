@@ -22,11 +22,12 @@ const (
 
 // Record is the canonical chat-visible unit owned by the room package.
 type Record struct {
-	Kind    Kind
-	Alias   string
-	Routing []string
-	Text    string
-	Msg     *agent.Message
+	Kind          Kind
+	Alias         string
+	Routing       []string
+	Text          string
+	Msg           *agent.Message
+	HandoffSource bool
 }
 
 // NewAgentRecord constructs a canonical record backed by an agent message.

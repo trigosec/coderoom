@@ -224,7 +224,9 @@ transferred content, for example:
 
 ```text
 /handoff tim ada
+  ↦ source: tim latest output
   > first line of handed-off output...
+  (+N more lines; open transcript for full handoff body)
 ```
 
 The full transferred content should remain inspectable from the history UI
@@ -238,8 +240,10 @@ shared room and the event log.
 For room UX:
 
 - the transcript should visually mark which completed output record is the
-  current handoff-eligible source for an agent (for example with `⇄`)
+  current handoff-eligible source for an agent (for example with `↦`)
 - the handoff audit record in the room should remain visible after dispatch
+- the chosen source should be identifiable by stable room state, not only by
+  preview text; an append-only record index is sufficient for now
 
 For debugging:
 
@@ -249,6 +253,8 @@ For debugging:
   participants considered for dispatch, which participants were idle or busy,
   the chosen source record, and the rejection reason when no source is
   accepted
+- a compact log-line format is acceptable for now as long as it carries those
+  fields consistently for both accepted and rejected attempts
 
 Goal: if a participant appears idle but `/handoff` is rejected, the operator
 must be able to determine from the room state and logs whether the mismatch was

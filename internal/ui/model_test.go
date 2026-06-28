@@ -99,7 +99,7 @@ func TestHandleEvent_contextHandoffProducesHistoryRecord(t *testing.T) {
 		FromAlias: "ada",
 		ToAlias:   "turing",
 		Text:      "final answer",
-		Preview:   "[handoff ada -> turing]\n\n[HANDOFF from ada]\n\nfinal answer",
+		Preview:   "[handoff ada -> turing]\n  ↦ source: ada latest output\n  > final answer",
 	})
 	if !hasRecord(m, record.KindSystem, "[handoff ada -> turing]") {
 		t.Fatalf("expected handoff history record; records: %v", m.room.HistoryRecords())
