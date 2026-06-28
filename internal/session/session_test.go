@@ -823,6 +823,222 @@ func TestSharedSend_notFound(t *testing.T) {
 	}
 }
 
+func TestHandoff_sendsResolvedOutputAndEmitsEvent(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newNoticeFlushAgent()
+	s := session.New(
+		session.WithObserver(obs),
+		mappedFactory(map[string]agent.Agent{
+			"ada":    ada,
+			"turing": turing,
+		}),
+	)
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.HandoffCommand{
+		FromAlias: "ada",
+		ToAlias:   "turing",
+		ResolveSource: func(alias string) (string, bool) {
+			if alias == "ada" {
+				return "final answer", true
+			}
+			return "", false
+		},
+	}); err != nil {
+		t.Fatalf("HandoffCommand: %v", err)
+	}
+	ev := mustReceive(t, obs.ch, session.KindContextHandoff)
+	if ev.FromAlias != "ada" || ev.ToAlias != "turing" {
+		t.Fatalf("unexpected handoff event: %#v", ev)
+	}
+	if ev.Text != "final answer" {
+		t.Fatalf("unexpected handoff payload text: %q", ev.Text)
+	}
+
+	turing.inner.mu.Lock()
+	if len(turing.inner.sends) == 0 || turing.inner.sends[len(turing.inner.sends)-1] != "[HANDOFF from ada]\n\nfinal answer" {
+		t.Fatalf("unexpected handoff notice payload: %v", turing.inner.sends)
+	}
+	turing.inner.mu.Unlock()
+}
+
+func TestHandoff_requiresIdleParticipants(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newMockAgent()
+	s := session.New(
+		session.WithObserver(obs),
+		mappedFactory(map[string]agent.Agent{
+			"ada":    ada,
+			"turing": turing,
+		}),
+	)
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
+		t.Fatalf("PrivateSendCommand: %v", err)
+	}
+
+	err := s.Execute(session.HandoffCommand{
+		FromAlias: "ada",
+		ToAlias:   "turing",
+		ResolveSource: func(alias string) (string, bool) {
+			if alias == "ada" {
+				return "final answer", true
+			}
+			return "", false
+		},
+	})
+	if err == nil {
+		t.Fatal("expected busy handoff error")
+	}
+}
+
+func TestHandoff_requiresCompletedSourceOutput(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newMockAgent()
+	s := session.New(
+		session.WithObserver(obs),
+		mappedFactory(map[string]agent.Agent{
+			"ada":    ada,
+			"turing": turing,
+		}),
+	)
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	err := s.Execute(session.HandoffCommand{
+		FromAlias:     "ada",
+		ToAlias:       "turing",
+		ResolveSource: func(string) (string, bool) { return "", false },
+	})
+	if err == nil {
+		t.Fatal("expected missing source output error")
+	}
+}
+
+func TestHandoff_ignoresStartingBystanderOutsideBarrier(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newNoticeFlushAgent()
+	cat := &gateAgent{startGate: make(chan struct{}), mockAgent: newMockAgent()}
+	s := session.New(
+		session.WithObserver(obs),
+		mappedFactory(map[string]agent.Agent{
+			"ada":    ada,
+			"turing": turing,
+			"cat":    cat,
+		}),
+	)
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+		_ = s.Execute(session.RemoveCommand{Alias: "cat"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "cat")
+
+	if err := s.Execute(session.HandoffCommand{
+		FromAlias: "ada",
+		ToAlias:   "turing",
+		ResolveSource: func(alias string) (string, bool) {
+			if alias == "ada" {
+				return "final answer", true
+			}
+			return "", false
+		},
+	}); err != nil {
+		t.Fatalf("HandoffCommand with starting bystander: %v", err)
+	}
+
+	close(cat.startGate)
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case ev := <-obs.ch:
+			if ev.Kind == session.KindAgentStarted && ev.Alias == "cat" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for cat to start after releasing gate")
+		}
+	}
+}
+
+func TestHandoff_usesProvidedIdleAliasesInsteadOfLiveBarrier(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newNoticeFlushAgent()
+	cat := newMockAgent()
+	s := session.New(
+		session.WithObserver(obs),
+		mappedFactory(map[string]agent.Agent{
+			"ada":    ada,
+			"turing": turing,
+			"cat":    cat,
+		}),
+	)
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+		_ = s.Execute(session.RemoveCommand{Alias: "cat"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "turing")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+	invite(t, s, "cat")
+	mustReceive(t, obs.ch, session.KindAgentStarted)
+
+	if err := s.Execute(session.PrivateSendCommand{Alias: "cat", Text: "busy"}); err != nil {
+		t.Fatalf("PrivateSendCommand cat: %v", err)
+	}
+
+	if err := s.Execute(session.HandoffCommand{
+		FromAlias:   "ada",
+		ToAlias:     "turing",
+		IdleAliases: []string{"ada", "turing"},
+		ResolveSource: func(alias string) (string, bool) {
+			if alias == "ada" {
+				return "final answer", true
+			}
+			return "", false
+		},
+	}); err != nil {
+		t.Fatalf("HandoffCommand with staged idle aliases: %v", err)
+	}
+}
+
 func TestSharedSend_rejectsBusyDirectParticipant(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()

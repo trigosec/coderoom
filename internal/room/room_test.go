@@ -132,6 +132,86 @@ func TestOnEvent_outputFlushClosesStreamAndPreservesAccumulatedRecord(t *testing
 	}
 }
 
+func TestOnEvent_contextHandoffAppendsAuditRecord(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:      session.KindContextHandoff,
+		FromAlias: "ada",
+		ToAlias:   "turing",
+		Text:      "ship it",
+		Preview:   "[handoff ada -> turing]\n\n[HANDOFF from ada]\n\nship it",
+	})
+	waitUpdate(t, updates)
+
+	snapshot := room.Snapshot()
+	if len(snapshot.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(snapshot.Records))
+	}
+	if snapshot.Records[0].Kind != KindSystem {
+		t.Fatalf("expected system record, got %#v", snapshot.Records[0])
+	}
+	if snapshot.Records[0].Text != "[handoff ada -> turing]\n\n[HANDOFF from ada]\n\nship it" {
+		t.Fatalf("unexpected handoff record: %#v", snapshot.Records[0])
+	}
+}
+
+func TestLatestCompletedOutput(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "partial"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "reason1", Mode: agent.ModeSingle, Content: agent.Reasoning{Text: "skip"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out2", Mode: agent.ModeSingle, Content: agent.Output{Text: "done"}},
+	})
+	waitUpdate(t, updates)
+
+	got, ok := room.LatestCompletedOutput("ada")
+	if !ok {
+		t.Fatal("expected latest completed output")
+	}
+	if got != "done" {
+		t.Fatalf("LatestCompletedOutput = %q, want %q", got, "done")
+	}
+}
+
+func TestLatestCompletedOutput_returnsFlushedStreamOutput(t *testing.T) {
+	room, updates := newTestRoom(t)
+
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "done"}},
+	})
+	waitUpdate(t, updates)
+	room.OnEvent(session.Event{
+		Kind:  session.KindAgentMessage,
+		Alias: "ada",
+		Msg:   &agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}},
+	})
+	waitUpdate(t, updates)
+
+	got, ok := room.LatestCompletedOutput("ada")
+	if !ok {
+		t.Fatal("expected latest completed flushed stream output")
+	}
+	if got != "done" {
+		t.Fatalf("LatestCompletedOutput = %q, want %q", got, "done")
+	}
+}
+
 func TestOnEvent_reasoningFlushClearsOnlyMatchingReasoningStream(t *testing.T) {
 	room, updates := newTestRoom(t)
 

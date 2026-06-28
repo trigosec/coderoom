@@ -119,9 +119,9 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Barrier-batch applies to user-authored Send/Broadcast only.
+	// Barrier-batch applies to user-authored Send/Broadcast/Handoff only.
 	switch action.(type) {
-	case Send, Broadcast:
+	case Send, Broadcast, Handoff:
 		return m.handleBarrierBatchSubmit(raw, action), nil
 	default:
 	}
@@ -154,8 +154,62 @@ func routingFor(a Action, ps []participant.Participant) []string {
 		slices.Sort(listeners)
 		return append([]string{s.Alias}, listeners...)
 	}
+	if h, ok := a.(Handoff); ok {
+		if h.FromAlias == h.ToAlias {
+			return []string{h.FromAlias}
+		}
+		return []string{h.FromAlias, h.ToAlias}
+	}
 	return nil
 }
+
+func missingHandoffTarget(act staging.Action, targets []string) string {
+	if !slices.Contains(targets, act.FromAlias) {
+		return act.FromAlias
+	}
+	if !slices.Contains(targets, act.ToAlias) {
+		return act.ToAlias
+	}
+	return ""
+}
+
+func (m Model) discardStagedBatch(message string) Model {
+	m.room = m.room.ClearComposerStaged()
+	m.room = m.room.AppendSystem(message)
+	return m
+}
+
+func (m Model) executeStagedDispatch(act staging.Action, targets []string) (Model, []string, error) {
+	switch act.Kind {
+	case staging.ActionBroadcast:
+		return m.executeBroadcastAll(act.Text)
+	case staging.ActionSend:
+		return m.executeStagedSend(act, targets)
+	case staging.ActionHandoff:
+		return m.executeStagedHandoff(act, targets)
+	default:
+		m.room = m.room.AppendSystem("error: internal: staged action invalid")
+		return m, nil, errInvalidStagedAction
+	}
+}
+
+func (m Model) executeStagedSend(act staging.Action, targets []string) (Model, []string, error) {
+	if !slices.Contains(targets, act.Alias) {
+		message := fmt.Sprintf("staged message discarded: %q is no longer available", act.Alias)
+		return m.discardStagedBatch(message), nil, nil
+	}
+	return m.executeSendToAgent(act.Alias, act.Text)
+}
+
+func (m Model) executeStagedHandoff(act staging.Action, targets []string) (Model, []string, error) {
+	if missing := missingHandoffTarget(act, targets); missing != "" {
+		message := fmt.Sprintf("staged message discarded: %q is no longer available", missing)
+		return m.discardStagedBatch(message), nil, nil
+	}
+	return m.executeHandoff(act.FromAlias, act.ToAlias, targets)
+}
+
+var errInvalidStagedAction = errors.New("invalid staged action")
 
 func (m Model) dispatchRoomStagedBatch() Model {
 	act, targets, ok := m.room.StagedDispatchCandidate()
@@ -164,25 +218,11 @@ func (m Model) dispatchRoomStagedBatch() Model {
 		return m
 	}
 	if len(targets) == 0 {
-		m.room = m.room.ClearComposerStaged()
-		m.room = m.room.AppendSystem("staged message discarded: no active targets")
-		return m
+		return m.discardStagedBatch("staged message discarded: no active targets")
 	}
 
-	var delivered []string
-	var err error
-	switch act.Kind {
-	case staging.ActionBroadcast:
-		m, delivered, err = m.executeBroadcastAll(act.Text)
-	case staging.ActionSend:
-		if !slices.Contains(targets, act.Alias) {
-			m.room = m.room.ClearComposerStaged()
-			m.room = m.room.AppendSystem(fmt.Sprintf("staged message discarded: %q is no longer available", act.Alias))
-			return m
-		}
-		m, delivered, err = m.executeSendToAgent(act.Alias, act.Text)
-	default:
-		m.room = m.room.AppendSystem("error: internal: staged action invalid")
+	m, delivered, err := m.executeStagedDispatch(act, targets)
+	if errors.Is(err, errInvalidStagedAction) {
 		return m
 	}
 	if err != nil {
@@ -241,7 +281,7 @@ func (m Model) handleApprovalCleared(e session.Event) Model {
 }
 
 func (m Model) handleBarrierBatchSubmit(raw string, action Action) Model {
-	ps := m.sess.RoutableParticipants()
+	ps := m.sess.BarrierParticipants()
 	if len(ps) == 0 {
 		m.room = m.room.AppendSystem("[no agents — use /invite <alias> to start one]")
 		m.room = m.room.SetComposeValue("")
@@ -283,11 +323,18 @@ func (m Model) maybeAdvanceStagedBatch(e session.Event) Model {
 	if !m.room.HasStagedBatch() {
 		return m
 	}
+	if shouldDeferHandoffDispatch(m.room.StagedBatch(), e) {
+		return m
+	}
 	switch e.Kind {
 	case session.KindAgentStopped, session.KindAgentCrashed:
 		m.room = m.room.MarkStagedDiscarded(e.Alias)
 	case session.KindParticipantStatusChanged, session.KindAgentStarted:
 		// Status changes that may unblock dispatch.
+	case session.KindAgentMessage:
+		if !shouldRecheckHandoffOnMessage(m.room.StagedBatch(), e) {
+			return m
+		}
 	default:
 		return m
 	}
@@ -298,6 +345,22 @@ func (m Model) maybeAdvanceStagedBatch(e session.Event) Model {
 		return m.dispatchRoomStagedBatch()
 	}
 	return m
+}
+
+func shouldDeferHandoffDispatch(staged *staging.Batch, e session.Event) bool {
+	if staged == nil || staged.Action.Kind != staging.ActionHandoff {
+		return false
+	}
+	return e.Kind == session.KindParticipantStatusChanged &&
+		e.Alias == staged.Action.FromAlias &&
+		e.StatusTo == participant.StatusIdle
+}
+
+func shouldRecheckHandoffOnMessage(staged *staging.Batch, e session.Event) bool {
+	if staged == nil || staged.Action.Kind != staging.ActionHandoff {
+		return false
+	}
+	return e.Alias == staged.Action.FromAlias
 }
 
 func (m Model) executeAction(a Action) (Model, tea.Cmd) {
@@ -322,6 +385,8 @@ func (m Model) executeAgentAction(a Action) (Model, bool) {
 		return m.sendToAgent(act.Alias, act.Text), true
 	case Broadcast:
 		return m.broadcastAll(act.Text), true
+	case Handoff:
+		return m.handoff(act.FromAlias, act.ToAlias), true
 	default:
 		return m, false
 	}
@@ -393,6 +458,32 @@ func (m Model) cancelAgent(alias string) Model {
 	return m
 }
 
+func (m Model) executeHandoff(fromAlias, toAlias string, idleAliases []string) (Model, []string, error) {
+	err := m.sess.Execute(session.HandoffCommand{
+		FromAlias:     fromAlias,
+		ToAlias:       toAlias,
+		IdleAliases:   append([]string(nil), idleAliases...),
+		ResolveSource: m.room.LatestCompletedOutput,
+	})
+	if err != nil {
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: handoff %q -> %q: %v", fromAlias, toAlias, err))
+		return m, nil, fmt.Errorf("handoff %q -> %q: %w", fromAlias, toAlias, err)
+	}
+	if fromAlias == toAlias {
+		return m, []string{fromAlias}, nil
+	}
+	return m, []string{fromAlias, toAlias}, nil
+}
+
+func (m Model) handoff(fromAlias, toAlias string) Model {
+	var idleAliases []string
+	for _, p := range m.sess.BarrierParticipants() {
+		idleAliases = append(idleAliases, p.Alias)
+	}
+	m, _, _ = m.executeHandoff(fromAlias, toAlias, idleAliases)
+	return m
+}
+
 func (m Model) executeSendToAgent(alias, text string) (Model, []string, error) {
 	err := m.sess.Execute(session.SharedSendCommand{
 		Alias:         alias,
@@ -450,6 +541,7 @@ Commands:
   /invite <alias>      start an agent
   /remove <alias>      remove an agent
   /cancel <alias>      interrupt an agent's current turn
+  /handoff <from> <to> transfer latest output between agents
   /who                 list agents
 %s  /help                show this message
   /quit                exit

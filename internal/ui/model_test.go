@@ -92,6 +92,20 @@ func TestHandleEvent_broadcastAndSharedSendProduceNoSystemRecord(t *testing.T) {
 	}
 }
 
+func TestHandleEvent_contextHandoffProducesHistoryRecord(t *testing.T) {
+	m := makeReadyModel(t)
+	m = pushEvent(m, session.Event{
+		Kind:      session.KindContextHandoff,
+		FromAlias: "ada",
+		ToAlias:   "turing",
+		Text:      "final answer",
+		Preview:   "[handoff ada -> turing]\n\n[HANDOFF from ada]\n\nfinal answer",
+	})
+	if !hasRecord(m, record.KindSystem, "[handoff ada -> turing]") {
+		t.Fatalf("expected handoff history record; records: %v", m.room.HistoryRecords())
+	}
+}
+
 // --- streaming ---
 
 func TestHandleDelta_firstDeltaCreatesRecord(t *testing.T) {
@@ -276,6 +290,9 @@ func TestRoutingFor(t *testing.T) {
 	if got := routingFor(Send{Alias: "nobody", Text: "hi"}, ps); !slices.Equal(got, []string{"nobody", "ada", "bob"}) {
 		t.Errorf("send routing for missing alias: got %v, want [nobody ada bob]", got)
 	}
+	if got := routingFor(Handoff{FromAlias: "ada", ToAlias: "bob"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
+		t.Errorf("handoff routing: got %v, want [ada bob]", got)
+	}
 	if got := routingFor(Help{}, ps); got != nil {
 		t.Errorf("help routing: got %v, want nil", got)
 	}
@@ -304,7 +321,7 @@ func TestShowWho_noAgents(t *testing.T) {
 func TestShowHelp_coversAllCommands(t *testing.T) {
 	m := makeReadyModel(t)
 	m = m.showHelp()
-	for _, cmd := range []string{"/invite", "/remove", "/cancel", "/who", "/help", "@<alias>", "/quit"} {
+	for _, cmd := range []string{"/invite", "/remove", "/cancel", "/handoff", "/who", "/help", "@<alias>", "/quit"} {
 		if !hasRecord(m, record.KindSystem, cmd) {
 			t.Errorf("help output missing %q; records: %v", cmd, m.room.HistoryRecords())
 		}

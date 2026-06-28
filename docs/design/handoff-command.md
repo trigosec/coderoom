@@ -230,6 +230,31 @@ transferred content, for example:
 The full transferred content should remain inspectable from the history UI
 (for example via a focused/detail action such as `ctrl+g`).
 
+### Handoff observability (v2)
+
+Later, `/handoff` should make its source selection more explicit in both the
+shared room and the event log.
+
+For room UX:
+
+- the transcript should visually mark which completed output record is the
+  current handoff-eligible source for an agent (for example with `⇄`)
+- the handoff audit record in the room should remain visible after dispatch
+
+For debugging:
+
+- a handoff attempt should emit enough diagnostic detail to explain acceptance
+  or rejection
+- this should include the source and destination aliases, the barrier
+  participants considered for dispatch, which participants were idle or busy,
+  the chosen source record, and the rejection reason when no source is
+  accepted
+
+Goal: if a participant appears idle but `/handoff` is rejected, the operator
+must be able to determine from the room state and logs whether the mismatch was
+caused by participant status, barrier membership, or source-record
+eligibility.
+
 ### Why this matters
 
 The human needs to be able to answer:

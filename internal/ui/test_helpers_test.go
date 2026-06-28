@@ -51,6 +51,7 @@ func roomEventProducesUpdate(e session.Event) bool {
 		session.KindAgentStopped,
 		session.KindAgentCrashed,
 		session.KindAgentLog,
+		session.KindContextHandoff,
 		session.KindAgentMessage:
 		return true
 	default:

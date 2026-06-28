@@ -15,6 +15,7 @@ func TestParse_slashCommands(t *testing.T) {
 		{"/invite   ada  ", ui.Invite{Alias: "ada"}},
 		{"/remove ada", ui.Remove{Alias: "ada"}},
 		{"/cancel ada", ui.Cancel{Alias: "ada"}},
+		{"/handoff ada turing", ui.Handoff{FromAlias: "ada", ToAlias: "turing"}},
 		{"/who", ui.Who{}},
 		{"/help", ui.Help{}},
 		{"/quit", ui.Quit{}},
@@ -72,6 +73,9 @@ func TestParse_errors(t *testing.T) {
 		{"/remove   "},
 		{"/cancel"},
 		{"/cancel   "},
+		{"/handoff"},
+		{"/handoff ada"},
+		{"/handoff ada turing extra"},
 		{"@ada"},
 		{"@ada   "},
 		{"@ ada hi"}, // space between @ and alias

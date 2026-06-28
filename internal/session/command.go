@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
@@ -264,6 +265,60 @@ func (c SharedSendCommand) execute(s *Session) error {
 	return nil
 }
 
+// HandoffCommand transfers the latest completed room-visible output from one
+// alias to another through a context path and emits a shared-room audit event.
+type HandoffCommand struct {
+	FromAlias     string
+	ToAlias       string
+	IdleAliases   []string
+	ResolveSource func(alias string) (string, bool)
+}
+
+func (c HandoffCommand) execute(s *Session) error {
+	if strings.TrimSpace(c.FromAlias) == "" || strings.TrimSpace(c.ToAlias) == "" {
+		return fmt.Errorf("usage: /handoff <from> <to>")
+	}
+	if c.FromAlias == c.ToAlias {
+		return fmt.Errorf("handoff requires distinct source and destination aliases")
+	}
+	if busy := handoffBusyParticipants(c.IdleAliases, s); len(busy) > 0 {
+		return fmt.Errorf("handoff requires all participants to be idle: %s", strings.Join(busy, ", "))
+	}
+
+	if c.ResolveSource == nil {
+		return fmt.Errorf("handoff source resolver is required")
+	}
+
+	source, ok := c.ResolveSource(c.FromAlias)
+	if !ok {
+		return fmt.Errorf("handoff source %q has no completed room-visible output", c.FromAlias)
+	}
+
+	a, prepared, err := acquireParticipantForNotice(c.ToAlias, s)
+	if err != nil {
+		return err
+	}
+	payload := formatHandoffPayload(c.FromAlias, source)
+	anchorID, err := a.SendNotice(payload)
+	if err != nil {
+		s.abortWork(c.ToAlias)
+		return fmt.Errorf("handoff to %q: %w", c.ToAlias, err)
+	}
+	if prepared {
+		s.beginParticipantWorking(c.ToAlias, anchorID)
+	} else {
+		s.trackAnchorStream(c.ToAlias, anchorID)
+	}
+	s.notify(Event{
+		Kind:      KindContextHandoff,
+		FromAlias: c.FromAlias,
+		ToAlias:   c.ToAlias,
+		Text:      source,
+		Preview:   formatHandoffPreview(c.FromAlias, c.ToAlias, source),
+	})
+	return nil
+}
+
 // acquireParticipantForDirectSend captures the participant's agent and
 // transitions it from Idle to Preparing. Direct sends require exclusivity:
 // an already-working participant rejects the command.
@@ -296,6 +351,43 @@ func acquireParticipantForDirectSend(alias string, s *Session) (a agent.Agent, e
 		return nil, fmt.Errorf("participant %q not ready", alias)
 	}
 	return a, nil
+}
+
+func busyParticipants(ps []participant.Participant) []string {
+	var busy []string
+	for _, p := range ps {
+		if p.Status != participant.StatusIdle {
+			busy = append(busy, p.Alias)
+		}
+	}
+	slices.Sort(busy)
+	return busy
+}
+
+func handoffBusyParticipants(aliases []string, s *Session) []string {
+	if len(aliases) == 0 {
+		return busyParticipants(s.BarrierParticipants())
+	}
+	var busy []string
+	for _, alias := range aliases {
+		p, ok := s.Participant(alias)
+		if !ok {
+			continue
+		}
+		if p.Status != participant.StatusIdle {
+			busy = append(busy, alias)
+		}
+	}
+	slices.Sort(busy)
+	return busy
+}
+
+func formatHandoffPayload(fromAlias string, text string) string {
+	return fmt.Sprintf("[HANDOFF from %s]\n\n%s", fromAlias, text)
+}
+
+func formatHandoffPreview(fromAlias, toAlias, text string) string {
+	return fmt.Sprintf("[handoff %s -> %s]\n\n%s", fromAlias, toAlias, formatHandoffPayload(fromAlias, text))
 }
 
 // acquireParticipantForNotice captures the participant's agent and transitions

@@ -20,6 +20,12 @@ type Remove struct{ Alias string }
 // Cancel requests an agent to interrupt its current work.
 type Cancel struct{ Alias string }
 
+// Handoff transfers one agent's latest completed output to another.
+type Handoff struct {
+	FromAlias string
+	ToAlias   string
+}
+
 // Send sends a message to one agent in the shared room (@alias text).
 type Send struct {
 	Alias string
@@ -59,6 +65,7 @@ func (e UnknownCommandError) Error() string {
 func (Invite) isAction()    {}
 func (Remove) isAction()    {}
 func (Cancel) isAction()    {}
+func (Handoff) isAction()   {}
 func (Send) isAction()      {}
 func (Broadcast) isAction() {}
 func (Who) isAction()       {}
@@ -104,11 +111,26 @@ func parseSlash(line string) (Action, error) {
 		}
 		return Cancel{Alias: rest}, nil
 	}
+	if cmd == "/handoff" {
+		fromAlias, toAlias, err := parseHandoffArgs(rest)
+		if err != nil {
+			return nil, err
+		}
+		return Handoff{FromAlias: fromAlias, ToAlias: toAlias}, nil
+	}
 
 	if a, ok := parseSlashNoArgs(cmd); ok {
 		return a, nil
 	}
 	return nil, UnknownCommandError{Cmd: cmd}
+}
+
+func parseHandoffArgs(rest string) (string, string, error) {
+	parts := strings.Fields(rest)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("usage: /handoff <from> <to>")
+	}
+	return parts[0], parts[1], nil
 }
 
 func parseSlashNoArgs(cmd string) (Action, bool) {

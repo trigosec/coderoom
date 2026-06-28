@@ -301,6 +301,13 @@ func (s *Session) HasAnyActivityParticipants() bool {
 // RoutableParticipants returns a snapshot of participants that are safe to send
 // messages to (agent started and not crashed).
 func (s *Session) RoutableParticipants() []participant.Participant {
+	return s.BarrierParticipants()
+}
+
+// BarrierParticipants returns the canonical shared-room barrier set used by
+// staged sends and handoff idleness checks. A participant is in the barrier
+// only when it is routable for shared-room delivery.
+func (s *Session) BarrierParticipants() []participant.Participant {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ps := s.registry.ListAvailable()
