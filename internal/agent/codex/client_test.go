@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
 )
@@ -35,13 +36,48 @@ func newWithIO(t *testing.T, stdin io.WriteCloser, stdout io.Reader, obs Protoco
 	c := &Client{proc: newProc("test")}
 	c.proc.codexIn = stdin
 	c.proc.codexOut = bufio.NewReader(stdout)
-	c.proc.codexErr = bytes.NewBuffer(nil)
+	c.proc.codexErr = io.NopCloser(bytes.NewBuffer(nil))
 	c.rpc.obs = obs
 	c.initRead()
 	c.lifecycle.ctx, c.lifecycle.cancelFn = context.WithCancel(context.Background()) // #nosec: G118
 	t.Cleanup(c.lifecycle.cancelFn)
 	c.initWorkers()
 	return c
+}
+
+// TestStart_noHangOnProtocolError guards against io.ReadAll(stderr) blocking
+// when the handshake fails for a protocol reason (bad response ID). The
+// subprocess writes a mismatched response then blocks reading stdin via `cat`.
+// Stop() closes stdin causing `cat` to exit, which closes the stderr pipe so
+// io.ReadAll returns promptly. A regression would cause a 3-second hang.
+func TestStart_noHangOnProtocolError(t *testing.T) {
+	// Response has id:999 but rpcHandshake expects id:1 — protocol error, not EOF.
+	// `cat` keeps the process (and its stderr write-end) alive.
+	c := New(".", WithAppServerCommand("sh", "-c", `echo '{"id":999,"result":{}}' && cat`))
+
+	done := make(chan error, 1)
+	go func() { done <- c.Start() }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error from Start(), got nil")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start() hung — io.ReadAll(stderr) likely blocked on live process")
+	}
+}
+
+func TestStart_stderrCapturedOnHandshakeFailure(t *testing.T) {
+	const stderrMsg = "Missing optional dependency @openai/codex-linux-x64"
+	c := New(".", WithAppServerCommand("sh", "-c", "echo '"+stderrMsg+"' >&2; exit 1"))
+	err := c.Start()
+	if err == nil {
+		t.Fatal("expected error from Start(), got nil")
+	}
+	if !strings.Contains(err.Error(), stderrMsg) {
+		t.Errorf("expected stderr content in error\ngot:  %v\nwant: contains %q", err, stderrMsg)
+	}
 }
 
 func TestCodexArgs_default(t *testing.T) {

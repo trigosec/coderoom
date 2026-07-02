@@ -64,7 +64,7 @@ func (r *Registry) ListAvailable() []*Participant {
 		if p.Agent == nil {
 			continue
 		}
-		if p.Status == StatusStarting || p.Status == StatusPreparing || p.Status == StatusCrashed {
+		if p.Status == StatusStarting || p.Status == StatusAttached || p.Status == StatusPreparing || p.Status == StatusCrashed {
 			continue
 		}
 		out = append(out, p)
@@ -119,6 +119,9 @@ func (r *Registry) hasStatus(s Status) bool {
 
 // HasStarting reports whether any participant is currently in StatusStarting.
 func (r *Registry) HasStarting() bool { return r.hasStatus(StatusStarting) }
+
+// HasAttached reports whether any participant is currently in StatusAttached.
+func (r *Registry) HasAttached() bool { return r.hasStatus(StatusAttached) }
 
 // HasCrashed reports whether any participant is currently in StatusCrashed.
 func (r *Registry) HasCrashed() bool { return r.hasStatus(StatusCrashed) }

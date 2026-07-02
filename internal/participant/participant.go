@@ -27,6 +27,10 @@ var (
 	ErrNotReadyForWork = errors.New("participant not ready for work")
 	// ErrNotStarting is returned when an operation requires the participant to be in starting state.
 	ErrNotStarting = errors.New("participant is not starting")
+	// ErrNotAttached is returned when an operation requires the participant to be in attached state.
+	ErrNotAttached = errors.New("participant is not attached")
+	// ErrNotIdle is returned when an operation requires the participant to be idle.
+	ErrNotIdle = errors.New("participant is not idle")
 	// ErrNotActive is returned when an operation requires the participant to be in Working or Preparing state.
 	ErrNotActive = errors.New("participant is not active")
 )
@@ -60,6 +64,7 @@ type Status string
 const (
 	StatusIdle      Status = "idle"
 	StatusStarting  Status = "starting"
+	StatusAttached  Status = "attached"  // agent process running, AgentStarted not yet dispatched
 	StatusPreparing Status = "preparing" // committed to a Send; anchor being established
 	StatusWorking   Status = "working"
 	StatusCrashed   Status = "crashed"
@@ -80,6 +85,10 @@ type Participant struct {
 	// anchor is the stream whose close signals turn completion. Set by
 	// BeginWorking; cleared on BecomeIdle or AbortWork.
 	anchor agent.StreamID
+	// sessionReady is set by SessionReady near the end of startup, immediately
+	// before AgentStarted is dispatched. IsRemovable gates on it so /remove
+	// cannot race with the startup notification window.
+	sessionReady bool
 }
 
 // Snapshot returns a value copy safe for observers/UI to inspect.
@@ -89,20 +98,96 @@ func (p *Participant) Snapshot() Participant {
 	return cp
 }
 
+// IsSendable reports whether the participant is ready to receive messages.
+// True when an agent is bound and the startup notification window has closed
+// (status is Idle, Preparing, or Working). False for Starting, Attached, and
+// Crashed.
+func (p *Participant) IsSendable() bool {
+	if p.Agent == nil {
+		return false
+	}
+	switch p.Status {
+	case StatusIdle, StatusPreparing, StatusWorking:
+		return true
+	case StatusStarting, StatusAttached, StatusCrashed:
+		return false
+	}
+	return false // unreachable; exhaustive linter catches unhandled statuses above
+}
+
+// IsCancellable reports whether /cancel (interrupt) can be applied. True when
+// an agent is bound and has progressed past the startup window.
+func (p *Participant) IsCancellable() bool {
+	if p.Agent == nil {
+		return false
+	}
+	switch p.Status {
+	case StatusIdle, StatusPreparing, StatusWorking:
+		return true
+	case StatusStarting, StatusAttached, StatusCrashed:
+		return false
+	}
+	return false // unreachable; exhaustive linter catches unhandled statuses above
+}
+
+// IsRemovable reports whether /remove is permitted. Returns false until
+// SessionReady has been called, which the session does immediately before
+// dispatching AgentStarted. This ensures /remove cannot race with the startup
+// notification window. Also returns false for Starting and Attached regardless
+// of sessionReady.
+func (p *Participant) IsRemovable() bool {
+	if !p.sessionReady {
+		return false
+	}
+	switch p.Status {
+	case StatusIdle, StatusPreparing, StatusWorking, StatusCrashed:
+		return true
+	case StatusStarting, StatusAttached:
+		return false
+	}
+	return false // unreachable; exhaustive linter catches unhandled statuses above
+}
+
 // BeginStartup transitions the participant into startup state.
 func (p *Participant) BeginStartup(now time.Time) {
 	p.resetOpenStreams()
 	p.anchor = ""
+	p.sessionReady = false
 	p.Status = StatusStarting
 	p.Since = now
 }
 
-// CompleteStartup transitions a just-started participant from Starting to Idle.
-// This is the startup lifecycle transition; it is distinct from BecomeIdle,
-// which is the turn-completion transition.
-func (p *Participant) CompleteStartup(now time.Time) error {
+// SessionReady marks the participant as fully started. It must be called while
+// the participant is StatusIdle, immediately before AgentStarted is dispatched,
+// so that IsRemovable returns true by the time observers process the event.
+func (p *Participant) SessionReady() error {
+	if p.Status != StatusIdle {
+		return ErrNotIdle
+	}
+	p.sessionReady = true
+	return nil
+}
+
+// AttachAgent transitions the participant from Starting to Attached and binds
+// the running agent process. The Attached state signals that the process is
+// live but the startup sequence (commitStarted + AgentStarted) has not yet
+// completed; IsSendable returns false for Attached.
+func (p *Participant) AttachAgent(a agent.Agent, now time.Time) error {
 	if p.Status != StatusStarting {
 		return ErrNotStarting
+	}
+	p.Agent = a
+	p.Status = StatusAttached
+	p.Since = now
+	return nil
+}
+
+// CommitIdle transitions the participant from Attached to Idle. Called before
+// AgentStarted is dispatched so that IsSendable returns true when the event
+// fires and observers can immediately send to the participant.
+func (p *Participant) CommitIdle(now time.Time) error {
+	if p.Status != StatusAttached {
+		return ErrNotAttached
 	}
 	p.Status = StatusIdle
 	p.Since = now
@@ -142,7 +227,7 @@ func (p *Participant) Crash(now time.Time) {
 // Resets OpenStreams and clears the anchor. Blocks concurrent sends.
 func (p *Participant) PrepareForWork(now time.Time) error {
 	switch p.Status {
-	case StatusStarting, StatusCrashed:
+	case StatusStarting, StatusAttached, StatusCrashed:
 		return ErrNotReadyForWork
 	case StatusWorking, StatusPreparing:
 		return ErrWorkAlreadyStarted

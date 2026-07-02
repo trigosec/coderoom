@@ -118,9 +118,9 @@ func (s *Session) snapshotAgentsToStop() []agent.Agent {
 // Shutdown stops all agents in the session. Errors from individual agents are
 // silently discarded; the goal is best-effort cleanup on process exit.
 func (s *Session) Shutdown() {
-	// Note: participants in StatusStarting may not have Agent set yet (we only
-	// assign it after a successful Start()). Those in-flight processes are not
-	// currently stoppable via Session.Shutdown.
+	// Note: participants in StatusStarting do not have Agent set yet (it is
+	// bound by AttachAgent when they transition to StatusAttached). Those
+	// in-flight processes are not stoppable via Session.Shutdown.
 	for _, a := range s.snapshotAgentsToStop() {
 		_ = a.Stop()
 	}
@@ -216,8 +216,15 @@ func (s *Session) addParticipant(p *participant.Participant) error {
 }
 
 // detachParticipant removes the participant and its reader entry atomically,
-// closes the stop channel (signals readLoop: stopped, not crashed),
-// and returns the participant so the caller can stop the agent.
+// closes the stop channel (signals readLoop: stopped, not crashed), and returns
+// the participant so the caller can stop the agent.
+//
+// Return values:
+//   - (p, true)   — detached successfully; p is the participant (may be nil on
+//     registry inconsistency, which the caller handles as best-effort cleanup).
+//   - (p, false)  — participant exists but IsRemovable is false (startup window);
+//     caller should surface "not ready" rather than "not found".
+//   - (nil, false) — no reader entry; caller falls through to evictCrashedBeforeStart.
 func (s *Session) detachParticipant(alias string) (*participant.Participant, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -226,18 +233,88 @@ func (s *Session) detachParticipant(alias string) (*participant.Participant, boo
 		return nil, false
 	}
 	p, _ := s.registry.Get(alias)
+	if p != nil && !p.IsRemovable() {
+		return p, false
+	}
 	delete(s.agents, alias)
 	_ = s.registry.Remove(alias)
 	close(entry.stop)
 	return p, true
 }
 
-func (s *Session) startReader(alias string, a agent.Agent) {
+// evictCrashedBeforeStart removes a participant that crashed before its reader
+// was started (no entry in s.agents). It checks status atomically under the
+// session lock so that a concurrently completing startInvitedAgent goroutine
+// cannot be mistakenly evicted.
+//
+// Returns "not found" for unknown aliases, "not ready" for participants still
+// in the startup window (StatusStarting), and nil on successful eviction of a
+// StatusCrashed participant.
+func (s *Session) evictCrashedBeforeStart(alias string) error {
+	s.mu.Lock()
+	p, ok := s.registry.Get(alias)
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("participant %q not found", alias)
+	}
+	if p.Status != participant.StatusCrashed {
+		s.mu.Unlock()
+		return fmt.Errorf("participant %q is not ready", alias)
+	}
+	_ = s.registry.Remove(alias)
+	s.mu.Unlock()
+	s.notify(AgentStopped{Alias: alias})
+	return nil
+}
+
+// attachParticipant transitions the participant to StatusAttached (binding the
+// agent) and inserts the reader entry into s.agents under one lock acquisition,
+// so /remove cannot observe a window where s.agents has an entry but the
+// participant is still StatusStarting.
+//
+// The caller is responsible for starting the read goroutine after the full
+// startup sequence (AgentStarted + commitStarted) has completed, so that
+// early agent output is never processed while the participant is still Attached.
+//
+// Returns (stop, from, true) on success, where from is the pre-transition
+// status (StatusStarting) used to build the ParticipantStatusChanged event.
+func (s *Session) attachParticipant(alias string, a agent.Agent) (chan struct{}, participant.Status, bool) {
 	stop := make(chan struct{})
 	s.mu.Lock()
+	p, ok := s.registry.Get(alias)
+	if !ok {
+		s.mu.Unlock()
+		return nil, "", false
+	}
+	from := p.Status
+	if err := p.AttachAgent(a, s.now()); err != nil {
+		s.mu.Unlock()
+		s.notifyParticipantInvariant(alias, fmt.Errorf("attach agent: %w", err))
+		return nil, "", false
+	}
 	s.agents[alias] = agentEntry{stop: stop}
 	s.mu.Unlock()
-	go s.readLoop(stop, alias, a)
+	return stop, from, true
+}
+
+// commitStarted transitions the participant from StatusAttached to StatusIdle
+// and returns the corresponding ParticipantStatusChanged event. Called before
+// AgentStarted is dispatched so that IsSendable is true when the event fires.
+func (s *Session) commitStarted(alias string, from participant.Status) (Event, bool) {
+	s.mu.Lock()
+	p, ok := s.registry.Get(alias)
+	if !ok {
+		s.mu.Unlock()
+		return nil, false
+	}
+	if err := p.CommitIdle(s.now()); err != nil {
+		s.mu.Unlock()
+		s.notifyParticipantInvariant(alias, fmt.Errorf("commit idle: %w", err))
+		return nil, false
+	}
+	ev := Event(ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since})
+	s.mu.Unlock()
+	return ev, true
 }
 
 func (s *Session) lookupParticipant(alias string) (*participant.Participant, bool) {
@@ -295,7 +372,7 @@ func (s *Session) Participants() []participant.Participant {
 func (s *Session) HasAnyActivityParticipants() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.registry.HasStarting() || s.registry.HasWorking() || s.registry.HasCrashed()
+	return s.registry.HasStarting() || s.registry.HasAttached() || s.registry.HasWorking() || s.registry.HasCrashed()
 }
 
 // RoutableParticipants returns a snapshot of participants that are safe to send
@@ -318,9 +395,11 @@ func (s *Session) BarrierParticipants() []participant.Participant {
 	return out
 }
 
-// readLoop runs in a goroutine per agent, forwarding agent.Message values to the
-// observers. When Read returns an error it emits AgentStopped (if the stop
-// channel was closed) or AgentCrashed, then exits.
+// readLoop runs in a goroutine per agent, forwarding agent.Message values to
+// the observers. It is started after commitStarted and SessionReady so the
+// participant is StatusIdle when the first message arrives, but before
+// AgentStarted is dispatched so the agent pipe is drained immediately and
+// cannot stall the child process while observers are being notified.
 func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 	for {
 		msg, err := a.Read()

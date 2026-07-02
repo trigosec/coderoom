@@ -95,7 +95,7 @@ func (c PrivateSendCommand) execute(s *Session) error {
 // an already-working participant rejects the command.
 func acquireParticipantForDirectSend(alias string, s *Session) (a agent.Agent, err error) {
 	err = s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
-		if p.Agent == nil || p.Status == participant.StatusStarting || p.Status == participant.StatusCrashed {
+		if !p.IsSendable() {
 			return nil, nil
 		}
 		a = p.Agent
@@ -123,7 +123,7 @@ func acquireParticipantForDirectSend(alias string, s *Session) (a agent.Agent, e
 // allowed so a notice can be layered onto an active turn.
 func acquireParticipantForNotice(alias string, s *Session) (a agent.Agent, prepared bool, err error) {
 	err = s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
-		if p.Agent == nil || p.Status == participant.StatusStarting || p.Status == participant.StatusCrashed {
+		if !p.IsSendable() {
 			return nil, nil
 		}
 		a = p.Agent

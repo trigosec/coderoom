@@ -49,8 +49,46 @@ func startInvitedAgent(alias string, a agent.Agent, s *Session) {
 			handleInviteStartError(alias, err, s)
 			return
 		}
-		attachStartedAgent(alias, a, s)
-		s.startReader(alias, a)
+		stop, from, ok := s.attachParticipant(alias, a)
+		if !ok {
+			_ = a.Stop()
+			return
+		}
+		// Transition to Idle first so IsSendable is true when AgentStarted fires.
+		// The status-change event uses the pre-attach status as From so observers
+		// see Starting → Idle rather than the internal Attached intermediate state.
+		ev, ok := s.commitStarted(alias, from)
+		if !ok {
+			// Invariant violation: clean up the stranded agents entry.
+			s.mu.Lock()
+			delete(s.agents, alias)
+			_ = s.registry.Remove(alias)
+			s.mu.Unlock()
+			_ = a.Stop()
+			return
+		}
+		s.notify(ev)
+		// Mark the participant session-ready before dispatching AgentStarted.
+		// IsRemovable gates on sessionReady, so /remove cannot succeed until
+		// after the event fires. Go memory model: the channel send inside
+		// notify happens-after this write, so any goroutine that receives
+		// AgentStarted is guaranteed to observe sessionReady=true when it
+		// subsequently calls detachParticipant.
+		if err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
+			return nil, p.SessionReady()
+		}); err != nil {
+			s.notifyParticipantInvariant(alias, fmt.Errorf("session ready: %w", err))
+			s.mu.Lock()
+			delete(s.agents, alias)
+			_ = s.registry.Remove(alias)
+			s.mu.Unlock()
+			_ = a.Stop()
+			return
+		}
+		// Start the reader before dispatching AgentStarted so the agent's pipe
+		// is drained immediately. The participant is already StatusIdle with
+		// sessionReady=true, so all invariants are satisfied.
+		go s.readLoop(stop, alias, a)
 		s.notify(AgentStarted{Alias: alias})
 	}()
 }
@@ -68,20 +106,6 @@ func handleInviteStartError(alias string, err error, s *Session) {
 	s.notify(AgentCrashed{Alias: alias})
 }
 
-func attachStartedAgent(alias string, a agent.Agent, s *Session) {
-	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
-		p.Agent = a
-		from := p.Status
-		if err := p.CompleteStartup(s.now()); err != nil {
-			return nil, fmt.Errorf("complete startup: %w", err)
-		}
-		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
-	})
-	if err != nil && !errors.Is(err, errParticipantNotFound) {
-		s.notifyParticipantInvariant(alias, err)
-	}
-}
-
 // RemoveCommand stops and removes an agent from the session.
 type RemoveCommand struct {
 	Alias string
@@ -89,13 +113,24 @@ type RemoveCommand struct {
 
 func (c RemoveCommand) execute(s *Session) error {
 	p, ok := s.detachParticipant(c.Alias)
-	if !ok {
-		return fmt.Errorf("participant %q not found", c.Alias)
+	switch {
+	case ok && p != nil:
+		// Normal path: reader detached, stop the agent process.
+		if err := p.Agent.Stop(); err != nil {
+			return fmt.Errorf("remove agent %q: %w", c.Alias, err)
+		}
+		return nil
+	case ok && p == nil:
+		// Reader entry existed but the registry was inconsistent; best-effort cleanup.
+		s.notify(AgentStopped(c))
+		return nil
+	case !ok && p != nil:
+		// Participant exists but IsRemovable is false: still in the startup window.
+		return fmt.Errorf("participant %q is not ready", c.Alias)
+	default:
+		// No reader entry: crashed before startup completed, or unknown alias.
+		return s.evictCrashedBeforeStart(c.Alias)
 	}
-	if err := p.Agent.Stop(); err != nil {
-		return fmt.Errorf("remove agent %q: %w", c.Alias, err)
-	}
-	return nil
 }
 
 // CancelCommand requests an agent to interrupt its current in-flight work.
@@ -109,7 +144,7 @@ func (c CancelCommand) execute(s *Session) error {
 	if !ok {
 		return fmt.Errorf("participant %q not found", c.Alias)
 	}
-	if p.Agent == nil || p.Status == participant.StatusStarting || p.Status == participant.StatusCrashed {
+	if !p.IsCancellable() {
 		return fmt.Errorf("participant %q not ready", c.Alias)
 	}
 	if err := p.Agent.Interrupt(); err != nil {

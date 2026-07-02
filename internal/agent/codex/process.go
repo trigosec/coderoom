@@ -14,7 +14,7 @@ type process struct {
 
 	codexIn  io.WriteCloser
 	codexOut *bufio.Reader
-	codexErr io.Reader
+	codexErr io.ReadCloser
 
 	askForApproval   AskForApprovalPolicy
 	sandboxMode      SandboxMode
@@ -43,18 +43,27 @@ func (p *process) start() error {
 		return fmt.Errorf("codex stdout pipe: %w", err)
 	}
 
-	stderr, err := cmd.StderrPipe()
+	// Use os.Pipe instead of cmd.StderrPipe so that cmd.Wait does not add
+	// the read end to closeAfterWait. StderrPipe closes the read end in Wait,
+	// which makes io.ReadAll(codexErr) return nothing in the error path.
+	// With a raw pipe we close the parent's write end after Start; the read
+	// end stays open until the child exits and can be drained after Stop().
+	stderrRead, stderrWrite, err := os.Pipe()
 	if err != nil {
 		return fmt.Errorf("codex stderr pipe: %w", err)
 	}
+	cmd.Stderr = stderrWrite
 
 	if err := cmd.Start(); err != nil {
+		_ = stderrRead.Close()
+		_ = stderrWrite.Close()
 		return fmt.Errorf("codex start: %w", err)
 	}
+	_ = stderrWrite.Close() // parent's copy no longer needed; child still has it
 
 	p.codexIn = stdin
 	p.codexOut = bufio.NewReader(stdout)
-	p.codexErr = stderr
+	p.codexErr = stderrRead
 	p.cmd = cmd
 	return nil
 }

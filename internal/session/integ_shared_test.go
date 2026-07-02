@@ -98,7 +98,7 @@ func drainUntilIdle(t *testing.T, ch <-chan session.Event, timeout time.Duration
 				return
 			}
 			status, ok := ev.(session.ParticipantStatusChanged)
-			if ok && status.To == participant.StatusIdle {
+			if ok && status.From == participant.StatusWorking && status.To == participant.StatusIdle {
 				return
 			}
 		case <-deadline:

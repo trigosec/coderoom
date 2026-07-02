@@ -25,7 +25,7 @@ func activityTier(k participant.Status) int {
 		return 1
 	case participant.StatusPreparing:
 		return 2
-	case participant.StatusStarting:
+	case participant.StatusStarting, participant.StatusAttached:
 		return 3
 	case participant.StatusCrashed:
 		return 4
@@ -160,7 +160,7 @@ func renderCell(p participant.Participant, now time.Time, width int) string {
 	glyph := "●"
 	showElapsed := false
 	switch p.Status {
-	case participant.StatusStarting:
+	case participant.StatusStarting, participant.StatusAttached:
 		glyph = "◌"
 		showElapsed = true
 	case participant.StatusPreparing:

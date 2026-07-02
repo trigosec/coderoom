@@ -155,6 +155,7 @@ func isIdleStatusChange(alias string) func(session.Event) bool {
 		status, ok := ev.(session.ParticipantStatusChanged)
 		return ok &&
 			status.Alias == alias &&
+			status.From == participant.StatusWorking &&
 			status.To == participant.StatusIdle
 	}
 }

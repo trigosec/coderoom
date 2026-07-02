@@ -6,6 +6,7 @@ package codex
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -187,6 +188,13 @@ func (c *Client) Start() error {
 		close(c.read.bufMessages)
 		c.read.bufMessages = nil
 		_ = c.Stop()
+		// Stop() waits for the process to exit, so the stderr pipe is fully
+		// written and safe to drain without blocking regardless of error type.
+		stderrBytes, _ := io.ReadAll(c.proc.codexErr)
+		_ = c.proc.codexErr.Close()
+		if len(stderrBytes) > 0 {
+			return fmt.Errorf("%w\n%s", err, strings.TrimRight(string(stderrBytes), "\r\n"))
+		}
 		return err
 	}
 	c.turn.mu.Lock()

@@ -93,6 +93,22 @@ func (g *gateAgent) Start() error {
 	return g.mockAgent.Start()
 }
 
+// earlyOutputAgent pushes a message into its read channel before Start()
+// returns, simulating output produced by an agent process during initialisation
+// (before the session's readLoop has started).
+type earlyOutputAgent struct {
+	earlyMsg agent.Message
+	*mockAgent
+}
+
+func (a *earlyOutputAgent) Start() error {
+	if err := a.mockAgent.Start(); err != nil {
+		return err
+	}
+	a.ch <- a.earlyMsg
+	return nil
+}
+
 type noticeFlushAgent struct {
 	inner *mockAgent
 }
@@ -142,23 +158,36 @@ func (o *testObserver) OnEvent(e session.Event) {
 
 func shouldSkipEvent[T session.Event](ev session.Event) bool {
 	_, wantStarted := any(*new(T)).(session.AgentStarted)
-	if wantStarted {
-		if _, ok := ev.(session.AgentStarting); ok {
-			return true
-		}
+	_, wantStarting := any(*new(T)).(session.AgentStarting)
+	_, isStarting := ev.(session.AgentStarting)
+	_, isStarted := ev.(session.AgentStarted)
+	// Skip startup lifecycle events unless the caller is explicitly waiting for
+	// one. This covers both "skip AgentStarting when waiting for AgentStarted"
+	// and "skip AgentStarted when waiting for AgentLog". The readLoop starts
+	// before AgentStarted is dispatched, so early agent output can arrive in
+	// either order relative to AgentStarted.
+	if isStarting && !wantStarting {
+		return true
+	}
+	if isStarted && !wantStarted {
+		return true
 	}
 	_, isStatus := ev.(session.ParticipantStatusChanged)
 	_, wantStatus := any(*new(T)).(session.ParticipantStatusChanged)
 	if isStatus && !wantStatus {
 		return true
 	}
-	_, wantCrash := any(*new(T)).(session.AgentCrashed)
-	if wantCrash {
-		if _, ok := ev.(session.AgentLog); ok {
-			return true
-		}
+	// AgentMessage is emitted asynchronously by the readLoop and has no
+	// ordering guarantee relative to session-level coordination events.
+	// Skip it unless the caller is explicitly waiting for one.
+	_, isMsg := ev.(session.AgentMessage)
+	_, wantMsg := any(*new(T)).(session.AgentMessage)
+	if isMsg && !wantMsg {
+		return true
 	}
-	return false
+	_, wantCrash := any(*new(T)).(session.AgentCrashed)
+	_, isLog := ev.(session.AgentLog)
+	return wantCrash && isLog
 }
 
 func mustReceive[T session.Event](t *testing.T, ch <-chan session.Event) T {
@@ -262,6 +291,28 @@ func TestInvite_emitsAgentStarted(t *testing.T) {
 	invite(t, s, "ada")
 	mustReceive[session.AgentStarting](t, obs.ch)
 	mustReceive[session.AgentStarted](t, obs.ch)
+}
+
+func TestInvite_earlyAgentOutputDeliveredAfterStarted(t *testing.T) {
+	// Verify that output buffered in the agent pipe before AgentStarted is
+	// dispatched (produced during Start()) is delivered while the participant
+	// is StatusIdle. The readLoop starts before AgentStarted fires, so the
+	// log and the lifecycle event may arrive in either order; shouldSkipEvent
+	// skips AgentStarted when waiting for AgentLog.
+	obs := newTestObserver()
+	a := &earlyOutputAgent{
+		mockAgent: newMockAgent(),
+		earlyMsg:  agent.Message{Mode: agent.ModeSingle, Content: agent.Log{Text: "early startup log"}},
+	}
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada")
+	got := mustReceive[session.AgentLog](t, obs.ch)
+	if got.Text != "early startup log" {
+		t.Fatalf("early agent log: got %q, want %q", got.Text, "early startup log")
+	}
+	expectParticipantStatus(t, s, "ada", participant.StatusIdle, "when early log delivered")
 }
 
 func TestCancel_interruptsAgent(t *testing.T) {
@@ -375,6 +426,69 @@ func TestRemove_emitsAgentStopped(t *testing.T) {
 		t.Fatalf("RemoveCommand: %v", err)
 	}
 	mustReceive[session.AgentStopped](t, obs.ch)
+}
+
+func TestRemove_duringStartup_isRejected(t *testing.T) {
+	// /remove must be rejected while the startup goroutine has not yet dispatched
+	// AgentStarted. Two sub-windows are covered:
+	//
+	//  1. Before attachParticipant: participant is StatusStarting with no
+	//     s.agents entry → detachParticipant returns false → evictCrashedBeforeStart
+	//     rejects because status is not StatusCrashed.
+	//  2. After attachParticipant but before SessionReady: the participant is
+	//     present in s.agents, but IsRemovable is still false →
+	//     detachParticipant returns false (same rejection path).
+	//
+	// sessionReady=true is set (under s.mu) before AgentStarted is dispatched.
+	// By the Go memory model, any goroutine that receives AgentStarted from the
+	// observer channel is guaranteed to see sessionReady=true, so /remove
+	// succeeds immediately after the event is observed.
+	obs := newTestObserver()
+	var once sync.Once
+	gate := make(chan struct{})
+	closeGate := func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(closeGate)
+
+	g := &gateAgent{startGate: gate, mockAgent: newMockAgent()}
+	s := session.New(session.WithObserver(obs), fixedFactory(g))
+
+	invite(t, s, "ada")
+	mustReceive[session.AgentStarting](t, obs.ch)
+
+	if err := s.Execute(session.RemoveCommand{Alias: "ada"}); err == nil {
+		t.Fatal("RemoveCommand during startup returned nil; want error")
+	}
+
+	closeGate()
+	mustReceive[session.AgentStarted](t, obs.ch)
+	if err := s.Execute(session.RemoveCommand{Alias: "ada"}); err != nil {
+		t.Fatalf("remove after startup: %v", err)
+	}
+	mustReceive[session.AgentStopped](t, obs.ch)
+}
+
+func TestRemove_crashedBeforeStart_succeeds(t *testing.T) {
+	// A participant whose Start() fails never has its reader started, so it
+	// lives in the registry but not in the agents table. /remove must still
+	// work and emit AgentStopped so the UI roster refreshes.
+	obs := newTestObserver()
+	a := newMockAgent()
+	a.startErr = errors.New("missing native binary")
+	s := session.New(session.WithObserver(obs), fixedFactory(a))
+
+	invite(t, s, "ada")
+	mustReceive[session.AgentStarting](t, obs.ch)
+	mustReceive[session.AgentCrashed](t, obs.ch)
+
+	if err := s.Execute(session.RemoveCommand{Alias: "ada"}); err != nil {
+		t.Fatalf("RemoveCommand on crashed participant: %v", err)
+	}
+	mustReceive[session.AgentStopped](t, obs.ch)
+
+	// Participant must be gone from the roster after removal.
+	if _, ok := s.Participant("ada"); ok {
+		t.Error("participant still in roster after remove")
+	}
 }
 
 func TestRemove_notFound(t *testing.T) {

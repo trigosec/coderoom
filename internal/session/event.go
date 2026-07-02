@@ -16,7 +16,8 @@ type Event interface {
 // AgentStarting reports that the session has begun starting an agent process.
 type AgentStarting struct{ Alias string }
 
-// AgentStarted reports that an agent is ready to receive messages.
+// AgentStarted reports that an agent is ready to receive messages. By the time
+// this event fires the participant is in StatusIdle and IsSendable returns true.
 type AgentStarted struct{ Alias string }
 
 // AgentStopped reports that an agent exited during an intentional shutdown path.
@@ -107,9 +108,10 @@ type HandoffSource struct {
 	RecordIndex int
 }
 
-// Observer receives session events. Implementations must be fast; a blocking
-// observer will stall agent reader goroutines. If async processing is needed,
-// buffer internally inside OnEvent.
+// Observer receives session events. Implementations must be fast; a slow
+// OnEvent blocks the goroutine that called notify (typically an agent reader
+// goroutine or the Execute goroutine). If async processing is needed, buffer
+// internally and dispatch off-goroutine.
 type Observer interface {
 	OnEvent(e Event)
 }

@@ -153,7 +153,7 @@ func waitForIdleThenFlush(t *testing.T, b *eventBuf, alias string, timeout time.
 	var seenIdle bool
 	b.waitFor(t, timeout, func(ev session.Event) bool {
 		status, ok := ev.(session.ParticipantStatusChanged)
-		if ok && status.Alias == alias && status.To == participant.StatusIdle {
+		if ok && status.Alias == alias && status.From == participant.StatusWorking && status.To == participant.StatusIdle {
 			seenIdle = true
 			return false
 		}

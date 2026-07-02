@@ -37,6 +37,7 @@ type approvalRequest struct {
 // It exits when ctx is canceled or when codex stderr closes.
 func readCodexErrWorker(ctx context.Context, c *Client) {
 	r := c.proc.codexErr
+	defer func() { _ = r.Close() }()
 	for chunk := range linestream.BatchReader(r) {
 		rm := readMessage{
 			msg: agent.Message{
