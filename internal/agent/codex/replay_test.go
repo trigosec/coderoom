@@ -162,6 +162,8 @@ type replayCollector struct {
 
 	outputCount     int
 	outputText      strings.Builder
+	logCount        int
+	logText         strings.Builder
 	reasoningCount  int
 	reasoningText   strings.Builder
 	fileChangeCount int
@@ -183,28 +185,51 @@ func (c *replayCollector) observe(msg agent.Message) {
 	}
 	switch content := msg.Content.(type) {
 	case agent.Output:
-		if msg.StreamID == c.turnAnchor && msg.Mode == agent.ModeFlush {
-			return
-		}
-		c.outputCount++
-		c.outputText.WriteString(content.Text)
+		c.observeOutput(msg, content)
+	case agent.Log:
+		c.observeLog(content)
 	case agent.Reasoning:
-		c.reasoningCount++
-		c.reasoningText.WriteString(content.Text)
-		c.observeReasoningStream(msg, content)
+		c.observeReasoning(msg, content)
 	case agent.FileChangeSet:
-		c.fileChangeCount++
-		for _, change := range content.Changes {
-			replayAppendUnique(&c.filePaths, change.Path)
-		}
-		c.observeFileChangeStream(msg, content)
+		c.observeFileChange(msg, content)
 	case agent.Command:
-		c.commandCount++
-		if strings.TrimSpace(content.Command) != "" {
-			replayAppendUnique(&c.commands, content.Command)
-		}
-		c.observeCommandStream(msg, content)
+		c.observeCommand(msg, content)
 	}
+}
+
+func (c *replayCollector) observeOutput(msg agent.Message, content agent.Output) {
+	if msg.StreamID == c.turnAnchor && msg.Mode == agent.ModeFlush {
+		return
+	}
+	c.outputCount++
+	c.outputText.WriteString(content.Text)
+}
+
+func (c *replayCollector) observeLog(content agent.Log) {
+	c.logCount++
+	c.logText.WriteString(content.Text)
+}
+
+func (c *replayCollector) observeReasoning(msg agent.Message, content agent.Reasoning) {
+	c.reasoningCount++
+	c.reasoningText.WriteString(content.Text)
+	c.observeReasoningStream(msg, content)
+}
+
+func (c *replayCollector) observeFileChange(msg agent.Message, content agent.FileChangeSet) {
+	c.fileChangeCount++
+	for _, change := range content.Changes {
+		replayAppendUnique(&c.filePaths, change.Path)
+	}
+	c.observeFileChangeStream(msg, content)
+}
+
+func (c *replayCollector) observeCommand(msg agent.Message, content agent.Command) {
+	c.commandCount++
+	if strings.TrimSpace(content.Command) != "" {
+		replayAppendUnique(&c.commands, content.Command)
+	}
+	c.observeCommandStream(msg, content)
 }
 
 func (c *replayCollector) observeLifecycleFlush(msg agent.Message) bool {
@@ -374,6 +399,9 @@ func assertReplayPreconditions(collector *replayCollector, listener *replayAppro
 
 func assertReplayMessageExpectations(expect transcript.Expect, collector *replayCollector) error {
 	if err := assertReplayTextExpectation("output", expect.Output, collector.outputCount, collector.outputText.String()); err != nil {
+		return err
+	}
+	if err := assertReplayTextExpectation("log", expect.Log, collector.logCount, collector.logText.String()); err != nil {
 		return err
 	}
 	if err := assertReplayReasoningExpectation(expect.Reasoning, collector); err != nil {

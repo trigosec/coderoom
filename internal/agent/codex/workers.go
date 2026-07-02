@@ -41,9 +41,9 @@ func readCodexErrWorker(ctx context.Context, c *Client) {
 	for chunk := range linestream.BatchReader(r) {
 		rm := readMessage{
 			msg: agent.Message{
-				StreamID: logStreamID,
+				StreamID: stderrLogStreamID,
 				Mode:     agent.ModeSingle,
-				Content:  agent.Log{Text: chunk},
+				Content:  agent.Log{Text: sanitizeLogText(chunk)},
 			},
 		}
 		select {
@@ -78,7 +78,7 @@ func handleStdoutReadError(ctx context.Context, c *Client, err error) bool {
 			msg: agent.Message{
 				StreamID: logStreamID,
 				Mode:     agent.ModeSingle,
-				Content:  agent.Log{Text: nonJSON.FormatLogLine()},
+				Content:  agent.Log{Text: sanitizeLogText(nonJSON.FormatLogLine())},
 			},
 		}
 		return sendBufMessage(ctx, c, readMsg)
@@ -92,16 +92,17 @@ func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool 
 	if msg.Method == "" {
 		return true
 	}
+	if isTurnError(msg) {
+		logMsg, ok := turnErrorLogMessage(msg)
+		if !ok {
+			return true
+		}
+		return sendBufMessage(ctx, c, readMessage{msg: logMsg})
+	}
 	if isApprovalRequest(msg) {
 		return enqueueApprovalRequest(ctx, c, msg)
 	}
-	var started *turnStartedParams
-	if msg.Method == methodTurnStarted {
-		var p turnStartedParams
-		if err := json.Unmarshal(msg.Params, &p); err == nil {
-			started = &p
-		}
-	}
+	started := turnStartedFromEnvelope(msg)
 	c.updateTurnState(msg.Method, started)
 	switch c.interceptNotice(ctx, msg) {
 	case noticeContinue:
@@ -116,6 +117,17 @@ func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool 
 		return false
 	}
 	return sendAgentMessages(ctx, c, agentMsgs)
+}
+
+func turnStartedFromEnvelope(msg rpcEnvelope) *turnStartedParams {
+	if msg.Method != methodTurnStarted {
+		return nil
+	}
+	var p turnStartedParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		return nil
+	}
+	return &p
 }
 
 func sendAgentMessages(ctx context.Context, c *Client, msgs []agent.Message) bool {
@@ -308,7 +320,7 @@ func emitApprovalLog(ctx context.Context, c *Client, text string) {
 		msg: agent.Message{
 			StreamID: logStreamID,
 			Mode:     agent.ModeSingle,
-			Content:  agent.Log{Text: "codex: " + text},
+			Content:  agent.Log{Text: sanitizeLogText("codex: " + text)},
 		},
 	}
 	select {

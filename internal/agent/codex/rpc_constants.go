@@ -8,6 +8,7 @@ const (
 	methodTurnCompleted = "turn/completed"
 	methodTurnFailed    = "turn/failed"
 	methodTurnInterrupt = "turn/interrupt"
+	methodError         = "error"
 
 	methodAgentDelta = "item/agentMessage/delta"
 

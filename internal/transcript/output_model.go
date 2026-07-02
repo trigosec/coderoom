@@ -42,6 +42,7 @@ func DefaultNoticeTurnFlushes(output Output) int {
 // Expect stores the high-level expectations captured during recording.
 type Expect struct {
 	Output     TextExpectation       `yaml:"output"`
+	Log        TextExpectation       `yaml:"log"`
 	Reasoning  ReasoningExpectation  `yaml:"reasoning"`
 	FileChange FileChangeExpectation `yaml:"file_change"`
 	Command    CommandExpectation    `yaml:"command"`

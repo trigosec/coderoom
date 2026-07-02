@@ -63,9 +63,23 @@ type notificationParams struct {
 type turnCompletedParams struct {
 	ThreadID string `json:"threadId"`
 	Turn     struct {
-		ID    string     `json:"id"`
-		Items []itemKind `json:"items"`
+		ID     string     `json:"id"`
+		Status string     `json:"status"`
+		Items  []itemKind `json:"items"`
 	} `json:"turn"`
+}
+
+type errorNotificationParams struct {
+	ThreadID  string          `json:"threadId"`
+	TurnID    string          `json:"turnId"`
+	WillRetry bool            `json:"willRetry"`
+	Error     *codexTurnError `json:"error"`
+}
+
+type codexTurnError struct {
+	Message           string  `json:"message"`
+	CodexErrorInfo    string  `json:"codexErrorInfo"`
+	AdditionalDetails *string `json:"additionalDetails"`
 }
 
 // rpcEnvelope is the minimal wire envelope used for decoding unknown messages.

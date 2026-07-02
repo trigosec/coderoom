@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -155,6 +156,49 @@ func TestRead_turnCompleted(t *testing.T) {
 	}
 	if msg.StreamID != activeTurnStreamID {
 		t.Fatalf("expected anchor stream ID %q, got %q", activeTurnStreamID, msg.StreamID)
+	}
+}
+
+func TestRead_turnErrorNotificationSurfacedAsLog(t *testing.T) {
+	const errorMessage = `{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-5.2' model is not supported when using Codex with a ChatGPT account."}}`
+	wire := line(`{"method":"error","params":{"error":{"additionalDetails":null,"codexErrorInfo":"other","message":`+strconv.Quote(errorMessage)+`},"threadId":"th1","turnId":"t1","willRetry":false}}`) +
+		line(`{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"t1","status":"failed","error":{"additionalDetails":null,"codexErrorInfo":"other","message":`+strconv.Quote(errorMessage)+`},"items":[]}}}`)
+	stdout := bytes.NewBufferString(wire)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error reading log: %v", err)
+	}
+	logLine, ok := msg.Content.(agent.Log)
+	if !ok {
+		t.Fatalf("expected Log content, got %T", msg.Content)
+	}
+	if !strings.Contains(logLine.Text, "turn error [other]:") || !strings.Contains(logLine.Text, "gpt-5.2") {
+		t.Fatalf("unexpected log text: %q", logLine.Text)
+	}
+
+	msg, err = c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error reading anchor flush: %v", err)
+	}
+	if msg.StreamID != activeTurnStreamID || msg.Mode != agent.ModeFlush {
+		t.Fatalf("expected anchor flush after error, got stream=%q mode=%v", msg.StreamID, msg.Mode)
+	}
+}
+
+func TestRead_turnCompletedFailedWithoutPriorErrorDoesNotLog(t *testing.T) {
+	const errorMessage = "model not available for this account"
+	wire := line(`{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"t1","status":"failed","error":{"additionalDetails":null,"codexErrorInfo":"other","message":"` + errorMessage + `"},"items":[]}}}`)
+	stdout := bytes.NewBufferString(wire)
+	c := newWithIO(t, nopWriteCloser{io.Discard}, stdout, nil)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("unexpected error reading anchor flush: %v", err)
+	}
+	if msg.StreamID != activeTurnStreamID || msg.Mode != agent.ModeFlush {
+		t.Fatalf("expected anchor flush without fallback log, got stream=%q mode=%v", msg.StreamID, msg.Mode)
 	}
 }
 

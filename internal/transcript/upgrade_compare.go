@@ -12,6 +12,7 @@ func CompareUpgradeOutputs(previous, current Output) error {
 	var problems []string
 
 	compareTextExpectation(&problems, "output", previous.Expect.Output, current.Expect.Output)
+	compareTextExpectation(&problems, "log", previous.Expect.Log, current.Expect.Log)
 	compareReasoningExpectation(&problems, previous.Expect.Reasoning, current.Expect.Reasoning)
 	compareMessageCount(&problems, "file_change.num_messages", previous.Expect.FileChange.NumMessages, current.Expect.FileChange.NumMessages)
 	compareNonEmptyList(&problems, "file_change.files", previous.Expect.FileChange.Files, current.Expect.FileChange.Files)

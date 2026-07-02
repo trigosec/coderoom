@@ -32,6 +32,7 @@ func TestWrite_MatchesTestdata(t *testing.T) {
 		Actions:      []Action{{Kind: "prompt", Text: "prompt"}},
 		Expect: Expect{
 			Output:     TextExpectation{NumMessages: 0, Content: ""},
+			Log:        TextExpectation{NumMessages: 0, Content: ""},
 			Reasoning:  ReasoningExpectation{NumMessages: 1, Content: "think", NumStreams: 1, AllFlushed: true},
 			FileChange: FileChangeExpectation{NumMessages: 2, Files: []string{"a.txt"}},
 			Command:    CommandExpectation{NumMessages: 1, Executed: []string{"ls -la"}},
@@ -70,6 +71,7 @@ func TestRead_MissingDelimiter(t *testing.T) {
 func assertTranscriptFile(t *testing.T, gotFile Output) {
 	t.Helper()
 	assertTranscriptIdentity(t, gotFile)
+	assertTranscriptLogExpectation(t, gotFile.Expect.Log)
 	assertTranscriptReasoningExpectation(t, gotFile.Expect.Reasoning)
 	assertTranscriptFileChangeExpectation(t, gotFile.Expect.FileChange)
 	assertTranscriptCommandExpectation(t, gotFile.Expect.Command)
@@ -97,6 +99,13 @@ func assertTranscriptReasoningExpectation(t *testing.T, got ReasoningExpectation
 	t.Helper()
 	if got.NumStreams != 1 || !got.AllFlushed {
 		t.Fatalf("reasoning expectation = %#v, want num_streams=1 all_flushed=true", got)
+	}
+}
+
+func assertTranscriptLogExpectation(t *testing.T, got TextExpectation) {
+	t.Helper()
+	if got.NumMessages != 0 || got.Content != "" {
+		t.Fatalf("log expectation = %#v, want zero value", got)
 	}
 }
 

@@ -135,6 +135,9 @@ func writeExpectations(w io.Writer, expect Expect) error {
 	if err := writeTextExpectation(w, "  output", expect.Output); err != nil {
 		return err
 	}
+	if err := writeTextExpectation(w, "  log", expect.Log); err != nil {
+		return err
+	}
 	if err := writeReasoningExpectation(w, expect.Reasoning); err != nil {
 		return err
 	}
@@ -273,6 +276,7 @@ const (
 	frontMatterStateRoot       frontMatterState = "root"
 	frontMatterStateActions    frontMatterState = "actions"
 	frontMatterStateOutput     frontMatterState = "output"
+	frontMatterStateLog        frontMatterState = "log"
 	frontMatterStateReasoning  frontMatterState = "reasoning"
 	frontMatterStateFileChange frontMatterState = "file_change"
 	frontMatterStateCommand    frontMatterState = "command"
@@ -332,6 +336,8 @@ func parseFrontMatterSection(trimmed string) (frontMatterState, bool) {
 		return frontMatterStateActions, true
 	case strings.HasPrefix(trimmed, "output:"):
 		return frontMatterStateOutput, true
+	case strings.HasPrefix(trimmed, "log:"):
+		return frontMatterStateLog, true
 	case strings.HasPrefix(trimmed, "reasoning:"):
 		return frontMatterStateReasoning, true
 	case strings.HasPrefix(trimmed, "file_change:"):
@@ -421,6 +427,8 @@ func parseNumMessages(output *Output, state frontMatterState, trimmed string) er
 	switch state {
 	case frontMatterStateOutput:
 		output.Expect.Output.NumMessages = n
+	case frontMatterStateLog:
+		output.Expect.Log.NumMessages = n
 	case frontMatterStateReasoning:
 		output.Expect.Reasoning.NumMessages = n
 	case frontMatterStateFileChange:
@@ -440,6 +448,8 @@ func parseContent(output *Output, state frontMatterState, trimmed string) error 
 	switch state {
 	case frontMatterStateOutput:
 		output.Expect.Output.Content = content
+	case frontMatterStateLog:
+		output.Expect.Log.Content = content
 	case frontMatterStateReasoning:
 		output.Expect.Reasoning.Content = content
 	case frontMatterStateRoot, frontMatterStateActions, frontMatterStateFileChange, frontMatterStateCommand, frontMatterStateNotice, frontMatterStateApprovals:

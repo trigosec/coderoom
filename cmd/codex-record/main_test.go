@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/trigosec/coderoom/internal/agent"
 )
 
 func TestCollectorNormalizeRecordedPath(t *testing.T) {
@@ -79,6 +81,18 @@ func TestResolveSelection_VersionCases(t *testing.T) {
 	}
 	if cases[1].version != "0.133.0" || cases[1].name != "beta" {
 		t.Fatalf("second case = %#v", cases[1])
+	}
+}
+
+func TestCollectorObserve_ignoresStderrLogs(t *testing.T) {
+	var c collector
+	c.observe(agent.Message{
+		StreamID: agent.StreamID("codex:stderr"),
+		Mode:     agent.ModeSingle,
+		Content:  agent.Log{Text: "stderr noise"},
+	})
+	if c.logCount != 0 || c.logText.String() != "" {
+		t.Fatalf("stderr log should be ignored, got count=%d content=%q", c.logCount, c.logText.String())
 	}
 }
 

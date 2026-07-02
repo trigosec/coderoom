@@ -9,6 +9,9 @@ expect:
   output:
     num_messages: 0
     content: ""
+  log:
+    num_messages: 0
+    content: ""
   reasoning:
     num_messages: 1
     content: "think"

@@ -22,6 +22,7 @@ func fileChangeStreamID(itemID string) agent.StreamID {
 // Fixed stream IDs for synthetic and log streams.
 const (
 	logStreamID         = agent.StreamID("codex:log")
+	stderrLogStreamID   = agent.StreamID("codex:stderr")
 	noticeRelayStreamID = agent.StreamID("codex:notice-relay")
 	noticeTurnStreamID  = agent.StreamID("codex:notice-turn")
 	// activeTurnStreamID is the turn-lifecycle anchor for regular (non-notice)
@@ -30,3 +31,10 @@ const (
 	// adapter has fully signalled turn completion.
 	activeTurnStreamID = agent.StreamID("codex:active-turn")
 )
+
+// IsStderrLogStream reports whether the stream ID is used for raw stderr logs
+// emitted by the Codex process. Transcript recording ignores these because
+// replay only reproduces protocol traffic, not live process stderr.
+func IsStderrLogStream(id agent.StreamID) bool {
+	return id == stderrLogStreamID
+}

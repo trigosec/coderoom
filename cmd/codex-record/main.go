@@ -31,6 +31,8 @@ type collector struct {
 
 	outputCount      int
 	outputText       strings.Builder
+	logCount         int
+	logText          strings.Builder
 	reasoningCount   int
 	reasoningText    strings.Builder
 	reasoningStreams map[agent.StreamID]toolStreamState
@@ -187,6 +189,7 @@ func buildFixture(version, testCase string, input transcript.Input, collector *c
 		Actions:      input.Actions,
 		Expect: transcript.Expect{
 			Output: transcript.TextExpectation{NumMessages: collector.outputCount, Content: collector.outputText.String()},
+			Log:    transcript.TextExpectation{NumMessages: collector.logCount, Content: collector.logText.String()},
 			Reasoning: transcript.ReasoningExpectation{
 				NumMessages: collector.reasoningCount,
 				Content:     collector.reasoningText.String(),
@@ -222,25 +225,51 @@ func (c *collector) observe(msg agent.Message) {
 	}
 	switch content := msg.Content.(type) {
 	case agent.Output:
-		if msg.StreamID == c.turnAnchor && msg.Mode == agent.ModeFlush {
-			return
-		}
-		c.outputCount++
-		c.outputText.WriteString(content.Text)
+		c.observeOutput(msg, content)
+	case agent.Log:
+		c.observeLog(msg, content)
 	case agent.Reasoning:
-		c.reasoningCount++
-		c.reasoningText.WriteString(content.Text)
-		c.observeReasoningStream(msg)
+		c.observeReasoning(msg, content)
 	case agent.FileChangeSet:
-		c.fileChangeCount++
-		for _, change := range content.Changes {
-			appendUnique(&c.filePaths, c.normalizeRecordedPath(change.Path))
-		}
+		c.observeFileChange(content)
 	case agent.Command:
-		c.commandCount++
-		if strings.TrimSpace(content.Command) != "" {
-			appendUnique(&c.commands, content.Command)
-		}
+		c.observeCommand(content)
+	}
+}
+
+func (c *collector) observeOutput(msg agent.Message, content agent.Output) {
+	if msg.StreamID == c.turnAnchor && msg.Mode == agent.ModeFlush {
+		return
+	}
+	c.outputCount++
+	c.outputText.WriteString(content.Text)
+}
+
+func (c *collector) observeLog(msg agent.Message, content agent.Log) {
+	if codex.IsStderrLogStream(msg.StreamID) {
+		return
+	}
+	c.logCount++
+	c.logText.WriteString(content.Text)
+}
+
+func (c *collector) observeReasoning(msg agent.Message, content agent.Reasoning) {
+	c.reasoningCount++
+	c.reasoningText.WriteString(content.Text)
+	c.observeReasoningStream(msg)
+}
+
+func (c *collector) observeFileChange(content agent.FileChangeSet) {
+	c.fileChangeCount++
+	for _, change := range content.Changes {
+		appendUnique(&c.filePaths, c.normalizeRecordedPath(change.Path))
+	}
+}
+
+func (c *collector) observeCommand(content agent.Command) {
+	c.commandCount++
+	if strings.TrimSpace(content.Command) != "" {
+		appendUnique(&c.commands, content.Command)
 	}
 }
 
