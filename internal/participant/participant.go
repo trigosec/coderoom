@@ -33,6 +33,8 @@ var (
 	ErrNotIdle = errors.New("participant is not idle")
 	// ErrNotActive is returned when an operation requires the participant to be in Working or Preparing state.
 	ErrNotActive = errors.New("participant is not active")
+	// ErrNotKeepalive is returned when an operation requires the participant to be in keepalive state.
+	ErrNotKeepalive = errors.New("participant is not in keepalive state")
 )
 
 // Role defines the behavioural contract of a participant.
@@ -66,6 +68,7 @@ const (
 	StatusStarting  Status = "starting"
 	StatusAttached  Status = "attached"  // agent process running, AgentStarted not yet dispatched
 	StatusPreparing Status = "preparing" // committed to a Send; anchor being established
+	StatusKeepalive Status = "keepalive"
 	StatusWorking   Status = "working"
 	StatusCrashed   Status = "crashed"
 )
@@ -109,7 +112,7 @@ func (p *Participant) IsSendable() bool {
 	switch p.Status {
 	case StatusIdle, StatusPreparing, StatusWorking:
 		return true
-	case StatusStarting, StatusAttached, StatusCrashed:
+	case StatusStarting, StatusAttached, StatusKeepalive, StatusCrashed:
 		return false
 	}
 	return false // unreachable; exhaustive linter catches unhandled statuses above
@@ -124,7 +127,7 @@ func (p *Participant) IsCancellable() bool {
 	switch p.Status {
 	case StatusIdle, StatusPreparing, StatusWorking:
 		return true
-	case StatusStarting, StatusAttached, StatusCrashed:
+	case StatusStarting, StatusAttached, StatusKeepalive, StatusCrashed:
 		return false
 	}
 	return false // unreachable; exhaustive linter catches unhandled statuses above
@@ -140,7 +143,7 @@ func (p *Participant) IsRemovable() bool {
 		return false
 	}
 	switch p.Status {
-	case StatusIdle, StatusPreparing, StatusWorking, StatusCrashed:
+	case StatusIdle, StatusPreparing, StatusKeepalive, StatusWorking, StatusCrashed:
 		return true
 	case StatusStarting, StatusAttached:
 		return false
@@ -229,7 +232,7 @@ func (p *Participant) PrepareForWork(now time.Time) error {
 	switch p.Status {
 	case StatusStarting, StatusAttached, StatusCrashed:
 		return ErrNotReadyForWork
-	case StatusWorking, StatusPreparing:
+	case StatusWorking, StatusPreparing, StatusKeepalive:
 		return ErrWorkAlreadyStarted
 	case StatusIdle:
 		// Ready to prepare.
@@ -237,6 +240,26 @@ func (p *Participant) PrepareForWork(now time.Time) error {
 	p.resetOpenStreams()
 	p.anchor = ""
 	p.Status = StatusPreparing
+	p.Since = now
+	return nil
+}
+
+// BeginKeepalive transitions the participant from Idle into Keepalive.
+func (p *Participant) BeginKeepalive(now time.Time) error {
+	if p.Status != StatusIdle {
+		return ErrNotIdle
+	}
+	p.Status = StatusKeepalive
+	p.Since = now
+	return nil
+}
+
+// FinishKeepalive transitions the participant from Keepalive back to Idle.
+func (p *Participant) FinishKeepalive(now time.Time) error {
+	if p.Status != StatusKeepalive {
+		return ErrNotKeepalive
+	}
+	p.Status = StatusIdle
 	p.Since = now
 	return nil
 }

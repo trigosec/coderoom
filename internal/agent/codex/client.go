@@ -326,6 +326,33 @@ func (c *Client) Read() (agent.Message, error) {
 	return r.msg, r.err
 }
 
+// KeepAliveSchedule returns how often the session should ping Codex to keep
+// the thread warm while it is otherwise idle.
+func (c *Client) KeepAliveSchedule() time.Duration {
+	return 20 * time.Minute
+}
+
+// KeepAlive performs a low-cost thread read to keep the Codex thread warm.
+func (c *Client) KeepAlive() error {
+	c.turn.mu.Lock()
+	threadID := c.turn.threadID
+	state := c.turn.state
+	c.turn.mu.Unlock()
+
+	if threadID == "" {
+		return fmt.Errorf("codex: thread not started")
+	}
+	if state.kind != turnIdle {
+		return agent.ErrTurnInProgress
+	}
+
+	err := rpcWrite(c, methodThreadRead, threadReadParams{
+		ThreadID:     threadID,
+		IncludeTurns: false,
+	})
+	return err
+}
+
 func (c *Client) updateTurnState(method string, p *turnStartedParams) {
 	switch method {
 	case methodTurnStarted:

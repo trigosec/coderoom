@@ -42,7 +42,7 @@ func (m Model) Height() int { return 1 }
 func (m Model) WantsTick() bool {
 	for _, p := range m.participants {
 		switch p.Status {
-		case participant.StatusStarting, participant.StatusAttached, participant.StatusPreparing, participant.StatusWorking, participant.StatusCrashed:
+		case participant.StatusStarting, participant.StatusAttached, participant.StatusPreparing, participant.StatusKeepalive, participant.StatusWorking, participant.StatusCrashed:
 			return true
 		case participant.StatusIdle:
 			// no tick needed

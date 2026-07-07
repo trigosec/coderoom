@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"strconv"
 	"strings"
@@ -247,6 +248,47 @@ func TestRead_reasoningSummaryTextDelta(t *testing.T) {
 	r, ok := msg.Content.(agent.Reasoning)
 	if !ok || r.Text != "summary fragment" {
 		t.Errorf("expected Reasoning{summary fragment}, got mode=%v content=%T", msg.Mode, msg.Content)
+	}
+}
+
+func TestKeepAlive_threadRead(t *testing.T) {
+	stdin := &bytes.Buffer{}
+	stdout := bytes.NewBufferString(line(`{"id":1,"result":{"thread":{"id":"th1"}}}`))
+	c := newWithIO(t, nopWriteCloser{stdin}, stdout, nil)
+	c.turn.threadID = "th1"
+	c.turn.state = turnState{kind: turnIdle}
+
+	if err := c.KeepAlive(); err != nil {
+		t.Fatalf("KeepAlive(): %v", err)
+	}
+	got := stdin.String()
+	if !strings.Contains(got, `"method":"thread/read"`) {
+		t.Fatalf("expected thread/read request, got %q", got)
+	}
+	if !strings.Contains(got, `"threadId":"th1"`) {
+		t.Fatalf("expected threadId in request, got %q", got)
+	}
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("Read(): %v", err)
+	}
+	if _, ok := msg.Content.(agent.KeepAlive); !ok {
+		t.Fatalf("expected KeepAlive content, got %T", msg.Content)
+	}
+}
+
+func TestKeepaliveResponseMessages_ignoresBareRPCError(t *testing.T) {
+	id := 1
+	msg := rpcEnvelope{
+		ID:     &id,
+		Error:  json.RawMessage(`{"message":"boom"}`),
+		Result: nil,
+	}
+
+	got, ok := keepaliveResponseMessages(msg)
+	if ok {
+		t.Fatalf("expected bare RPC error not to be classified as keepalive, got %#v", got)
 	}
 }
 

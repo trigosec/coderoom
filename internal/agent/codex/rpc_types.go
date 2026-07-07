@@ -31,6 +31,11 @@ type threadStartResult struct {
 	} `json:"thread"`
 }
 
+type threadReadParams struct {
+	ThreadID     string `json:"threadId"`
+	IncludeTurns bool   `json:"includeTurns"`
+}
+
 type turnStartParams struct {
 	ThreadID     string          `json:"threadId"`
 	Input        []turnInput     `json:"input"`

@@ -23,6 +23,7 @@ func fileChangeStreamID(itemID string) agent.StreamID {
 const (
 	logStreamID         = agent.StreamID("codex:log")
 	stderrLogStreamID   = agent.StreamID("codex:stderr")
+	keepaliveStreamID   = agent.StreamID("codex:keepalive")
 	noticeRelayStreamID = agent.StreamID("codex:notice-relay")
 	noticeTurnStreamID  = agent.StreamID("codex:notice-turn")
 	// activeTurnStreamID is the turn-lifecycle anchor for regular (non-notice)

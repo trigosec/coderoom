@@ -3,6 +3,7 @@ package codex
 const (
 	methodInitialize    = "initialize"
 	methodThreadStart   = "thread/start"
+	methodThreadRead    = "thread/read"
 	methodTurnStart     = "turn/start"
 	methodTurnStarted   = "turn/started"
 	methodTurnCompleted = "turn/completed"

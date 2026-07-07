@@ -56,7 +56,8 @@ func (r *Registry) List() []*Participant {
 
 // ListAvailable returns participants that are safe to send messages to.
 // This includes only participants whose agent has started and that are not
-// currently in StatusStarting or StatusCrashed.
+// currently in StatusStarting, StatusPreparing, StatusKeepalive, StatusAttached,
+// or StatusCrashed.
 // Order is unspecified.
 func (r *Registry) ListAvailable() []*Participant {
 	var out []*Participant
@@ -64,7 +65,7 @@ func (r *Registry) ListAvailable() []*Participant {
 		if p.Agent == nil {
 			continue
 		}
-		if p.Status == StatusStarting || p.Status == StatusAttached || p.Status == StatusPreparing || p.Status == StatusCrashed {
+		if p.Status == StatusStarting || p.Status == StatusAttached || p.Status == StatusPreparing || p.Status == StatusKeepalive || p.Status == StatusCrashed {
 			continue
 		}
 		out = append(out, p)
@@ -128,3 +129,6 @@ func (r *Registry) HasCrashed() bool { return r.hasStatus(StatusCrashed) }
 
 // HasWorking reports whether any participant is currently in StatusWorking.
 func (r *Registry) HasWorking() bool { return r.hasStatus(StatusWorking) }
+
+// HasKeepalive reports whether any participant is currently in StatusKeepalive.
+func (r *Registry) HasKeepalive() bool { return r.hasStatus(StatusKeepalive) }

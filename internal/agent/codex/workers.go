@@ -89,15 +89,14 @@ func handleStdoutReadError(ctx context.Context, c *Client, err error) bool {
 }
 
 func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool {
-	if msg.Method == "" {
+	if keepaliveMsgs, ok := keepaliveResponseMessages(msg); ok {
+		return sendAgentMessages(ctx, c, keepaliveMsgs)
+	}
+	if shouldIgnoreStdoutEnvelope(msg) {
 		return true
 	}
-	if isTurnError(msg) {
-		logMsg, ok := turnErrorLogMessage(msg)
-		if !ok {
-			return true
-		}
-		return sendBufMessage(ctx, c, readMessage{msg: logMsg})
+	if handled, ok := handleTurnErrorEnvelope(ctx, c, msg); ok {
+		return handled
 	}
 	if isApprovalRequest(msg) {
 		return enqueueApprovalRequest(ctx, c, msg)
@@ -117,6 +116,67 @@ func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool 
 		return false
 	}
 	return sendAgentMessages(ctx, c, agentMsgs)
+}
+
+func shouldIgnoreStdoutEnvelope(msg rpcEnvelope) bool {
+	if msg.ID != nil && msg.Method == "" {
+		return true
+	}
+	if msg.Method == "" {
+		return true
+	}
+	return false
+}
+
+func handleTurnErrorEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) (bool, bool) {
+	if !isTurnError(msg) {
+		return false, false
+	}
+	logMsg, ok := turnErrorLogMessage(msg)
+	if !ok {
+		return true, true
+	}
+	return sendBufMessage(ctx, c, readMessage{msg: logMsg}), true
+}
+
+// keepaliveResponseMessages converts a bare thread/read RPC response into a
+// semantic keepalive completion. This is valid because thread/read is currently
+// only used for keepalive.
+func keepaliveResponseMessages(msg rpcEnvelope) ([]agent.Message, bool) {
+	if msg.ID == nil || msg.Method != "" {
+		return nil, false
+	}
+	if !isNullJSON(msg.Error) {
+		return nil, false
+	}
+
+	if !looksLikeThreadReadResult(msg.Result) {
+		return nil, false
+	}
+
+	return []agent.Message{
+		{
+			StreamID: keepaliveStreamID,
+			Mode:     agent.ModeSingle,
+			Content:  agent.KeepAlive{},
+		},
+	}, true
+}
+
+func looksLikeThreadReadResult(raw json.RawMessage) bool {
+	if isNullJSON(raw) {
+		return false
+	}
+	// Post-start, keepalive is the only feature that currently expects a bare
+	// thread-shaped RPC response. If we start using additional thread RPCs, this
+	// shape check will need proper request/response correlation instead.
+	var payload struct {
+		Thread json.RawMessage `json:"thread"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	return !isNullJSON(payload.Thread)
 }
 
 func turnStartedFromEnvelope(msg rpcEnvelope) *turnStartedParams {

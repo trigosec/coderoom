@@ -25,12 +25,14 @@ func activityTier(k participant.Status) int {
 		return 1
 	case participant.StatusPreparing:
 		return 2
-	case participant.StatusStarting, participant.StatusAttached:
+	case participant.StatusKeepalive:
 		return 3
-	case participant.StatusCrashed:
+	case participant.StatusStarting, participant.StatusAttached:
 		return 4
-	case participant.StatusIdle:
+	case participant.StatusCrashed:
 		return 5
+	case participant.StatusIdle:
+		return 6
 	default:
 		return 99
 	}
@@ -157,34 +159,8 @@ func renderParticipantCells(innerWidth int, now time.Time, ps []participant.Part
 }
 
 func renderCell(p participant.Participant, now time.Time, width int) string {
-	glyph := "●"
-	showElapsed := false
-	switch p.Status {
-	case participant.StatusStarting, participant.StatusAttached:
-		glyph = "◌"
-		showElapsed = true
-	case participant.StatusPreparing:
-		glyph = "◐"
-		showElapsed = true
-	case participant.StatusWorking:
-		showElapsed = true
-		sec := int(now.Unix()) % 2
-		if sec == 0 {
-			glyph = "⏹"
-		} else {
-			glyph = "◆"
-		}
-	case participant.StatusCrashed:
-		glyph = "✖"
-		showElapsed = true
-	case participant.StatusIdle:
-		glyph = "●"
-	}
-
-	elapsed := ""
-	if showElapsed {
-		elapsed = " (" + formatElapsed(now.Sub(p.Since)) + ")"
-	}
+	glyph, showElapsed := participantGlyph(p.Status, now)
+	elapsed := participantElapsedSuffix(p, now, showElapsed)
 	// Reserve columns for glyph + separator + elapsed so truncation never
 	// bites into the elapsed suffix.
 	reserved := ansi.StringWidth(glyph) + 1 + ansi.StringWidth(elapsed)
@@ -198,4 +174,33 @@ func renderCell(p participant.Participant, now time.Time, width int) string {
 		return colored
 	}
 	return padOrTruncateToWidth(base, width)
+}
+
+func participantGlyph(status participant.Status, now time.Time) (string, bool) {
+	switch status {
+	case participant.StatusStarting, participant.StatusAttached:
+		return "◌", true
+	case participant.StatusPreparing:
+		return "◐", true
+	case participant.StatusKeepalive:
+		return "◔", true
+	case participant.StatusWorking:
+		if int(now.Unix())%2 == 0 {
+			return "⏹", true
+		}
+		return "◆", true
+	case participant.StatusCrashed:
+		return "✖", true
+	case participant.StatusIdle:
+		return "●", false
+	default:
+		return "●", false
+	}
+}
+
+func participantElapsedSuffix(p participant.Participant, now time.Time, showElapsed bool) string {
+	if !showElapsed {
+		return ""
+	}
+	return " (" + formatElapsed(now.Sub(p.Since)) + ")"
 }

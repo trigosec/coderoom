@@ -5,6 +5,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 var (
@@ -163,6 +164,9 @@ type Reasoning struct{ Text string }
 // Log carries a diagnostic or process-level log line.
 type Log struct{ Text string }
 
+// KeepAlive marks completion of a backend keepalive operation.
+type KeepAlive struct{}
+
 // ToolStatus is a lifecycle marker for tool-like output items (commands, file
 // changes) as reported by an adapter.
 type ToolStatus string
@@ -219,6 +223,7 @@ type FileChangeSet struct {
 func (Output) content()        {}
 func (Reasoning) content()     {}
 func (Log) content()           {}
+func (KeepAlive) content()     {}
 func (Command) content()       {}
 func (FileChangeSet) content() {}
 
@@ -251,6 +256,13 @@ type Agent interface {
 	// Stop kills the process and blocks until it is fully reaped.
 	// May be called from a different goroutine to interrupt a blocked Read.
 	Stop() error
+}
+
+// Keepaliver is an optional capability for agents that need periodic idle-time
+// maintenance to keep their session context warm.
+type Keepaliver interface {
+	KeepAliveSchedule() time.Duration
+	KeepAlive() error
 }
 
 // SendAndWait sends a prompt and blocks until the turn is complete,

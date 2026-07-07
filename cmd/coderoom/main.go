@@ -41,7 +41,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cleanup, factoryOpt, err := agentFactoryOption(ctx, cwd, *agentLog)
+	cleanup, factoryOpt, err := agentFactoryOption(cwd, *agentLog)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent factory: %v\n", err)
 		return 1
@@ -49,7 +49,7 @@ func run() int {
 	if cleanup != nil {
 		defer cleanup()
 	}
-	sess := session.New(factoryOpt)
+	sess := session.New(session.WithContext(ctx), factoryOpt)
 
 	var opts []ui.Option
 	if strings.TrimSpace(os.Getenv("CODEROOM_DEBUG")) == "1" {
@@ -66,10 +66,14 @@ func run() int {
 	return 0
 }
 
-func agentFactoryOption(ctx context.Context, cwd, agentLog string) (cleanup func(), opt session.Option, err error) {
+func agentFactoryOption(cwd, agentLog string) (cleanup func(), opt session.Option, err error) {
 	if agentLog == "" {
 		return nil, session.WithAgentFactory(func(s *session.Session, alias string) agent.Agent {
-			return codex.New(cwd, codex.WithContext(ctx), codex.WithApprovalListener(s.ApprovalListener(alias)))
+			return codex.New(
+				cwd,
+				codex.WithContext(s.CreateAgentContext(alias)),
+				codex.WithApprovalListener(s.ApprovalListener(alias)),
+			)
 		}), nil
 	}
 
@@ -84,7 +88,7 @@ func agentFactoryOption(ctx context.Context, cwd, agentLog string) (cleanup func
 		}, session.WithAgentFactory(func(s *session.Session, alias string) agent.Agent {
 			return codex.New(
 				cwd,
-				codex.WithContext(ctx),
+				codex.WithContext(s.CreateAgentContext(alias)),
 				codex.WithObserver(codex.NewLogObserver(f, alias)),
 				codex.WithApprovalListener(s.ApprovalListener(alias)),
 			)

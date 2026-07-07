@@ -92,6 +92,10 @@ func TestRosterWantsTick(t *testing.T) {
 	if !working.WantsTick() {
 		t.Fatal("expected true for working participant")
 	}
+	keepalive, _ := New().SetParticipants([]participant.Participant{{Alias: "ada", Status: participant.StatusKeepalive, Since: now}})
+	if !keepalive.WantsTick() {
+		t.Fatal("expected true for keepalive participant")
+	}
 	starting, _ := New().SetParticipants([]participant.Participant{{Alias: "ada", Status: participant.StatusStarting, Since: now}})
 	if !starting.WantsTick() {
 		t.Fatal("expected true for starting participant")

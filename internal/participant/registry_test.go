@@ -126,52 +126,47 @@ func TestRegistry_List_empty(t *testing.T) {
 
 func TestRegistry_ListAvailable_filtersByAgentAndStatus(t *testing.T) {
 	r := participant.NewRegistry()
-
-	pStarting := newParticipant("starting")
-	pStarting.Status = participant.StatusStarting
-
-	pCrashed := newParticipant("crashed")
-	pCrashed.Status = participant.StatusCrashed
-	pCrashed.Agent = fakeAgent{}
-
-	pPreparing := newParticipant("preparing")
-	pPreparing.Status = participant.StatusPreparing
-	pPreparing.Agent = fakeAgent{}
-
-	pIdle := newParticipant("idle")
-	pIdle.Status = participant.StatusIdle
-	pIdle.Agent = fakeAgent{}
-
-	pWorking := newParticipant("working")
-	pWorking.Status = participant.StatusWorking
-	pWorking.Agent = fakeAgent{}
-
-	_ = r.Add(pStarting)
-	_ = r.Add(pCrashed)
-	_ = r.Add(pPreparing)
-	_ = r.Add(pIdle)
-	_ = r.Add(pWorking)
+	addAvailableTestParticipant(t, r, "starting", participant.StatusStarting, false)
+	addAvailableTestParticipant(t, r, "crashed", participant.StatusCrashed, true)
+	addAvailableTestParticipant(t, r, "preparing", participant.StatusPreparing, true)
+	addAvailableTestParticipant(t, r, "keepalive", participant.StatusKeepalive, true)
+	addAvailableTestParticipant(t, r, "idle", participant.StatusIdle, true)
+	addAvailableTestParticipant(t, r, "working", participant.StatusWorking, true)
 
 	avail := r.ListAvailable()
 	aliases := map[string]bool{}
 	for _, p := range avail {
 		aliases[p.Alias] = true
 	}
-	if aliases["starting"] {
-		t.Fatal("expected starting participant to be excluded from ListAvailable")
+	assertAvailableAlias(t, aliases, "starting", false)
+	assertAvailableAlias(t, aliases, "crashed", false)
+	assertAvailableAlias(t, aliases, "preparing", false)
+	assertAvailableAlias(t, aliases, "keepalive", false)
+	assertAvailableAlias(t, aliases, "idle", true)
+	assertAvailableAlias(t, aliases, "working", true)
+}
+
+func addAvailableTestParticipant(t *testing.T, r *participant.Registry, alias string, status participant.Status, attachAgent bool) {
+	t.Helper()
+	p := newParticipant(alias)
+	p.Status = status
+	if attachAgent {
+		p.Agent = fakeAgent{}
 	}
-	if aliases["crashed"] {
-		t.Fatal("expected crashed participant to be excluded from ListAvailable")
+	if err := r.Add(p); err != nil {
+		t.Fatalf("Add(%q): %v", alias, err)
 	}
-	if aliases["preparing"] {
-		t.Fatal("expected preparing participant to be excluded from ListAvailable")
+}
+
+func assertAvailableAlias(t *testing.T, aliases map[string]bool, alias string, want bool) {
+	t.Helper()
+	if aliases[alias] == want {
+		return
 	}
-	if !aliases["idle"] {
-		t.Fatal("expected idle participant to be included in ListAvailable")
+	if want {
+		t.Fatalf("expected %q to be included in ListAvailable", alias)
 	}
-	if !aliases["working"] {
-		t.Fatal("expected working participant to be included in ListAvailable")
-	}
+	t.Fatalf("expected %q to be excluded from ListAvailable", alias)
 }
 
 func TestRegistry_StatusListsAndPredicates(t *testing.T) {
@@ -186,9 +181,13 @@ func TestRegistry_StatusListsAndPredicates(t *testing.T) {
 	pWorking := newParticipant("working")
 	pWorking.Status = participant.StatusWorking
 
+	pKeepalive := newParticipant("keepalive")
+	pKeepalive.Status = participant.StatusKeepalive
+
 	_ = r.Add(pStarting)
 	_ = r.Add(pCrashed)
 	_ = r.Add(pWorking)
+	_ = r.Add(pKeepalive)
 
 	if !r.HasStarting() {
 		t.Fatal("expected HasStarting true")
@@ -198,6 +197,9 @@ func TestRegistry_StatusListsAndPredicates(t *testing.T) {
 	}
 	if !r.HasWorking() {
 		t.Fatal("expected HasWorking true")
+	}
+	if !r.HasKeepalive() {
+		t.Fatal("expected HasKeepalive true")
 	}
 
 	if len(r.ListStarting()) != 1 {

@@ -215,6 +215,12 @@ without re-reading session state.
 `InviteCommand` calls `registry.Add` then `agent.Start`. On success, it emits
 `AgentStarted` and launches a reader goroutine for that agent.
 
+Agent process lifecycle is rooted in the session lifecycle context. The
+session derives one child context per invited agent and passes that child into
+the backend adapter via the configured factory. This gives teardown a strict
+hierarchy: session shutdown cancels all agent contexts, while removing or
+failing one agent cancels only that agent's subtree.
+
 The reader goroutine loops on `agent.Read()`, forwarding each message to
 observers as an `AgentMessage` event (or `AgentLog` for `Log` content). The
 session also inspects messages for participant state management — it does not

@@ -94,60 +94,55 @@ func (c PrivateSendCommand) execute(s *Session) error {
 // transitions it from Idle to Preparing. Direct sends require exclusivity:
 // an already-working participant rejects the command.
 func acquireParticipantForDirectSend(alias string, s *Session) (a agent.Agent, err error) {
-	err = s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
-		if !p.IsSendable() {
-			return nil, nil
-		}
-		a = p.Agent
-		from := p.Status
-		if err := p.PrepareForWork(s.now()); err != nil {
-			return nil, fmt.Errorf("prepare for work: %w", err)
-		}
-		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
-	})
-	if err != nil {
-		if errors.Is(err, errParticipantNotFound) {
-			return nil, fmt.Errorf("participant %q not found", alias)
-		}
-		s.notifyParticipantInvariant(alias, err)
-		return nil, fmt.Errorf("participant %q invalid working transition: %w", alias, err)
+	if err := s.prepareParticipantForWork(alias); err != nil {
+		return nil, formatDirectSendPrepareError(alias, err, s)
 	}
-	if a == nil {
+	p, ok := s.lookupParticipant(alias)
+	if !ok || p.Agent == nil || !p.IsSendable() {
 		return nil, fmt.Errorf("participant %q not ready", alias)
 	}
-	return a, nil
+	return p.Agent, nil
 }
 
 // acquireParticipantForNotice captures the participant's agent and transitions
 // it to Preparing only when currently Idle. Existing Working/Preparing turns are
 // allowed so a notice can be layered onto an active turn.
 func acquireParticipantForNotice(alias string, s *Session) (a agent.Agent, prepared bool, err error) {
-	err = s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
-		if !p.IsSendable() {
-			return nil, nil
-		}
-		a = p.Agent
-		if p.Status == participant.StatusWorking || p.Status == participant.StatusPreparing {
-			return nil, nil
-		}
-		from := p.Status
-		if err := p.PrepareForWork(s.now()); err != nil {
-			return nil, fmt.Errorf("prepare for work: %w", err)
-		}
-		prepared = true
-		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
-	})
+	p, err := lookupSendableParticipant(alias, s)
 	if err != nil {
-		if errors.Is(err, errParticipantNotFound) {
-			return nil, false, fmt.Errorf("participant %q not found", alias)
-		}
-		s.notifyParticipantInvariant(alias, err)
-		return nil, false, fmt.Errorf("participant %q invalid working transition: %w", alias, err)
+		return nil, false, err
 	}
-	if a == nil {
-		return nil, false, fmt.Errorf("participant %q not ready", alias)
+	if isActiveParticipantStatus(p.Status) {
+		return p.Agent, false, nil
 	}
-	return a, prepared, nil
+	a, err = acquireParticipantForDirectSend(alias, s)
+	if err != nil {
+		return nil, false, err
+	}
+	return a, true, nil
+}
+
+func formatDirectSendPrepareError(alias string, err error, s *Session) error {
+	if errors.Is(err, errParticipantNotFound) {
+		return fmt.Errorf("participant %q not found", alias)
+	}
+	s.notifyParticipantInvariant(alias, err)
+	return fmt.Errorf("participant %q invalid working transition: %w", alias, err)
+}
+
+func lookupSendableParticipant(alias string, s *Session) (participant.Participant, error) {
+	p, ok := s.lookupParticipant(alias)
+	if !ok {
+		return participant.Participant{}, fmt.Errorf("participant %q not found", alias)
+	}
+	if !p.IsSendable() || p.Agent == nil {
+		return participant.Participant{}, fmt.Errorf("participant %q not ready", alias)
+	}
+	return p.Snapshot(), nil
+}
+
+func isActiveParticipantStatus(status participant.Status) bool {
+	return status == participant.StatusWorking || status == participant.StatusPreparing
 }
 
 func sendPreparedDirect(alias string, a agent.Agent, text string, s *Session) error {

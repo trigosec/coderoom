@@ -4,6 +4,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,15 +16,22 @@ import (
 )
 
 // AgentFactory constructs an agent.Agent for a given alias. The factory is
-// responsible for wiring any backend-specific options (context, approval
-// listener, logging) before returning.
+// responsible for wiring any backend-specific options using session-owned
+// facilities (agent context, approval listener, logging) before returning.
 //
 // The session is passed to allow factories to use session-owned facilities
 // (e.g., approval routing) without requiring UI-owned glue code.
 type AgentFactory func(s *Session, alias string) agent.Agent
 
-type agentEntry struct {
-	stop chan struct{}
+type agentRuntime struct {
+	agentCancel     context.CancelFunc
+	keepaliveCancel context.CancelFunc
+	stop            chan struct{}
+}
+
+type namedAgentRuntime struct {
+	alias   string
+	runtime agentRuntime
 }
 
 // Session is the central orchestrator of a Code Room session.
@@ -32,17 +40,38 @@ type agentEntry struct {
 type Session struct {
 	mu           sync.Mutex
 	registry     *participant.Registry
-	agents       map[string]agentEntry
+	agents       map[string]agentRuntime
 	obs          []Observer
 	now          func() time.Time
 	agentFactory AgentFactory
 	approvals    *approvalHub
+	lifecycle    sessionLifecycle
+}
+
+type sessionLifecycle struct {
+	ctx      context.Context
+	cancelFn context.CancelFunc
+	once     sync.Once
 }
 
 var errParticipantNotFound = errors.New("participant not found")
 
 // Option configures a Session at construction time.
 type Option func(*Session)
+
+// WithContext sets the parent context for session-owned background work such as
+// idle-window keepalive waiters.
+func WithContext(ctx context.Context) Option {
+	return func(s *Session) {
+		if ctx == nil {
+			return
+		}
+		if s.lifecycle.cancelFn != nil {
+			s.lifecycle.cancelFn()
+		}
+		s.lifecycle.ctx, s.lifecycle.cancelFn = context.WithCancel(ctx) //nolint:gosec // cancel stored and invoked by Shutdown
+	}
+}
 
 // WithObserver appends an Observer that receives all session events.
 // May be called multiple times to register multiple observers.
@@ -59,7 +88,7 @@ func (s *Session) AddObserver(obs Observer) {
 
 // WithAgentFactory sets the factory used to construct agents when a participant
 // is invited. The factory receives the agent alias and is responsible for
-// wiring all backend options (context, approval listener, etc.).
+// wiring all backend options using session-owned facilities where applicable.
 func WithAgentFactory(f AgentFactory) Option {
 	return func(s *Session) { s.agentFactory = f }
 }
@@ -68,9 +97,10 @@ func WithAgentFactory(f AgentFactory) Option {
 func New(opts ...Option) *Session {
 	s := &Session{
 		registry: participant.NewRegistry(),
-		agents:   make(map[string]agentEntry),
+		agents:   make(map[string]agentRuntime),
 		now:      time.Now,
 	}
+	s.lifecycle.ctx, s.lifecycle.cancelFn = context.WithCancel(context.Background()) //nolint:gosec // cancel stored and invoked by Shutdown
 	s.approvals = newApprovalHub(s.notify)
 	for _, o := range opts {
 		o(s)
@@ -82,6 +112,31 @@ func New(opts ...Option) *Session {
 // as session events and blocks until the session resolves them.
 func (s *Session) ApprovalListener(alias string) agent.ApprovalListener {
 	return s.approvals.Listener(alias)
+}
+
+// CreateAgentRuntime reserves the session-owned runtime record for alias.
+func (s *Session) CreateAgentRuntime(alias string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.agents[alias]; ok {
+		return
+	}
+	s.agents[alias] = agentRuntime{}
+}
+
+// CreateAgentContext derives a per-agent lifecycle context from the session
+// lifecycle context and records it in the agent runtime under alias.
+func (s *Session) CreateAgentContext(alias string) context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtime := s.agents[alias]
+	if runtime.agentCancel != nil {
+		runtime.agentCancel()
+	}
+	ctx, cancel := context.WithCancel(s.lifecycle.ctx) //nolint:gosec // cancel stored in agent runtime and invoked by session lifecycle
+	runtime.agentCancel = cancel
+	s.agents[alias] = runtime
+	return ctx
 }
 
 // Roster returns a snapshot of participants for UI display.
@@ -118,12 +173,86 @@ func (s *Session) snapshotAgentsToStop() []agent.Agent {
 // Shutdown stops all agents in the session. Errors from individual agents are
 // silently discarded; the goal is best-effort cleanup on process exit.
 func (s *Session) Shutdown() {
+	s.stopBackgroundLoops()
+	s.cancelAllAgentContexts()
 	// Note: participants in StatusStarting do not have Agent set yet (it is
 	// bound by AttachAgent when they transition to StatusAttached). Those
 	// in-flight processes are not stoppable via Session.Shutdown.
 	for _, a := range s.snapshotAgentsToStop() {
 		_ = a.Stop()
 	}
+}
+
+func (s *Session) stopBackgroundLoops() {
+	s.lifecycle.once.Do(func() {
+		s.cancelAllKeepaliveWaiters()
+		if s.lifecycle.cancelFn != nil {
+			s.lifecycle.cancelFn()
+			s.lifecycle.cancelFn = nil
+		}
+	})
+}
+
+func (s *Session) cancelAllKeepaliveWaiters() {
+	for _, named := range s.snapshotAgentRuntimes() {
+		alias := named.alias
+		runtime := named.runtime
+		if runtime.keepaliveCancel != nil {
+			runtime.keepaliveCancel()
+			s.mu.Lock()
+			if current, ok := s.agents[alias]; ok {
+				current.keepaliveCancel = nil
+				s.agents[alias] = current
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+func (s *Session) cancelAllAgentContexts() {
+	s.mu.Lock()
+	runtimes := make([]agentRuntime, 0, len(s.agents))
+	for _, runtime := range s.agents {
+		runtimes = append(runtimes, runtime)
+	}
+	s.agents = make(map[string]agentRuntime)
+	s.mu.Unlock()
+	for _, runtime := range runtimes {
+		if runtime.keepaliveCancel != nil {
+			runtime.keepaliveCancel()
+		}
+		if runtime.agentCancel != nil {
+			runtime.agentCancel()
+		}
+	}
+}
+
+func (s *Session) cancelAgentContext(alias string) {
+	s.mu.Lock()
+	runtime, ok := s.agents[alias]
+	if ok {
+		delete(s.agents, alias)
+	}
+	s.mu.Unlock()
+	if ok && runtime.keepaliveCancel != nil {
+		runtime.keepaliveCancel()
+	}
+	if ok && runtime.agentCancel != nil {
+		runtime.agentCancel()
+	}
+}
+
+func (s *Session) snapshotAgentRuntimes() []namedAgentRuntime {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtimes := make([]namedAgentRuntime, 0, len(s.agents))
+	for alias, runtime := range s.agents {
+		runtimes = append(runtimes, namedAgentRuntime{
+			alias:   alias,
+			runtime: runtime,
+		})
+	}
+	return runtimes
 }
 
 func (s *Session) notify(e Event) {
@@ -215,7 +344,7 @@ func (s *Session) addParticipant(p *participant.Participant) error {
 	return nil
 }
 
-// detachParticipant removes the participant and its reader entry atomically,
+// detachParticipant removes the participant and its attached runtime atomically,
 // closes the stop channel (signals readLoop: stopped, not crashed), and returns
 // the participant so the caller can stop the agent.
 //
@@ -224,12 +353,12 @@ func (s *Session) addParticipant(p *participant.Participant) error {
 //     registry inconsistency, which the caller handles as best-effort cleanup).
 //   - (p, false)  — participant exists but IsRemovable is false (startup window);
 //     caller should surface "not ready" rather than "not found".
-//   - (nil, false) — no reader entry; caller falls through to evictCrashedBeforeStart.
+//   - (nil, false) — no attached runtime; caller falls through to evictCrashedBeforeStart.
 func (s *Session) detachParticipant(alias string) (*participant.Participant, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entry, ok := s.agents[alias]
-	if !ok {
+	runtime, ok := s.agents[alias]
+	if !ok || runtime.stop == nil {
 		return nil, false
 	}
 	p, _ := s.registry.Get(alias)
@@ -237,15 +366,21 @@ func (s *Session) detachParticipant(alias string) (*participant.Participant, boo
 		return p, false
 	}
 	delete(s.agents, alias)
+	if runtime.agentCancel != nil {
+		runtime.agentCancel()
+	}
+	if runtime.keepaliveCancel != nil {
+		runtime.keepaliveCancel()
+	}
 	_ = s.registry.Remove(alias)
-	close(entry.stop)
+	close(runtime.stop)
 	return p, true
 }
 
 // evictCrashedBeforeStart removes a participant that crashed before its reader
-// was started (no entry in s.agents). It checks status atomically under the
-// session lock so that a concurrently completing startInvitedAgent goroutine
-// cannot be mistakenly evicted.
+// was started (runtime exists but has no stop channel yet, or runtime is gone).
+// It checks status atomically under the session lock so that a concurrently
+// completing startInvitedAgent goroutine cannot be mistakenly evicted.
 //
 // Returns "not found" for unknown aliases, "not ready" for participants still
 // in the startup window (StatusStarting), and nil on successful eviction of a
@@ -261,6 +396,15 @@ func (s *Session) evictCrashedBeforeStart(alias string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("participant %q is not ready", alias)
 	}
+	if runtime, ok := s.agents[alias]; ok {
+		if runtime.keepaliveCancel != nil {
+			runtime.keepaliveCancel()
+		}
+		if runtime.agentCancel != nil {
+			runtime.agentCancel()
+		}
+		delete(s.agents, alias)
+	}
 	_ = s.registry.Remove(alias)
 	s.mu.Unlock()
 	s.notify(AgentStopped{Alias: alias})
@@ -268,9 +412,9 @@ func (s *Session) evictCrashedBeforeStart(alias string) error {
 }
 
 // attachParticipant transitions the participant to StatusAttached (binding the
-// agent) and inserts the reader entry into s.agents under one lock acquisition,
-// so /remove cannot observe a window where s.agents has an entry but the
-// participant is still StatusStarting.
+// agent) and completes the runtime with its stop channel under one lock
+// acquisition, so /remove cannot observe a window where the runtime is fully
+// attached but the participant is still StatusStarting.
 //
 // The caller is responsible for starting the read goroutine after the full
 // startup sequence (AgentStarted + commitStarted) has completed, so that
@@ -292,7 +436,14 @@ func (s *Session) attachParticipant(alias string, a agent.Agent) (chan struct{},
 		s.notifyParticipantInvariant(alias, fmt.Errorf("attach agent: %w", err))
 		return nil, "", false
 	}
-	s.agents[alias] = agentEntry{stop: stop}
+	runtime, ok := s.agents[alias]
+	if !ok {
+		s.mu.Unlock()
+		s.notifyParticipantInvariant(alias, fmt.Errorf("attach agent: missing runtime"))
+		return nil, "", false
+	}
+	runtime.stop = stop
+	s.agents[alias] = runtime
 	s.mu.Unlock()
 	return stop, from, true
 }
@@ -314,6 +465,7 @@ func (s *Session) commitStarted(alias string, from participant.Status) (Event, b
 	}
 	ev := Event(ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since})
 	s.mu.Unlock()
+	s.scheduleKeepaliveWaiter(alias, p.Since)
 	return ev, true
 }
 
@@ -372,7 +524,7 @@ func (s *Session) Participants() []participant.Participant {
 func (s *Session) HasAnyActivityParticipants() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.registry.HasStarting() || s.registry.HasAttached() || s.registry.HasWorking() || s.registry.HasCrashed()
+	return s.registry.HasStarting() || s.registry.HasAttached() || s.registry.HasKeepalive() || s.registry.HasWorking() || s.registry.HasCrashed()
 }
 
 // RoutableParticipants returns a snapshot of participants that are safe to send
@@ -413,6 +565,7 @@ func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 
 func (s *Session) handleAgentReadError(stop <-chan struct{}, alias string) {
 	if isCrashedReadError(stop) {
+		s.cancelKeepaliveWaiter(alias)
 		err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 			from := p.Status
 			p.Crash(s.now())
@@ -445,13 +598,34 @@ func isCrashedReadError(stop <-chan struct{}) bool {
 // under the session lock. Must be followed by Send then beginParticipantWorking
 // (on success) or abortWork (on Send failure).
 func (s *Session) prepareParticipantForWork(alias string) error {
-	return s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
-		from := p.Status
-		if err := p.PrepareForWork(s.now()); err != nil {
-			return nil, fmt.Errorf("prepare for work: %w", err)
-		}
-		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
-	})
+	var (
+		ev     ParticipantStatusChanged
+		cancel context.CancelFunc
+	)
+	s.mu.Lock()
+	p, ok := s.registry.Get(alias)
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("%w: %q", errParticipantNotFound, alias)
+	}
+	runtime, ok := s.agents[alias]
+	if ok {
+		cancel = runtime.keepaliveCancel
+		runtime.keepaliveCancel = nil
+		s.agents[alias] = runtime
+	}
+	from := p.Status
+	if err := p.PrepareForWork(s.now()); err != nil {
+		s.mu.Unlock()
+		return fmt.Errorf("prepare for work: %w", err)
+	}
+	ev = ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	s.notify(ev)
+	return nil
 }
 
 // beginParticipantWorking transitions from Preparing to Working and atomically
@@ -473,6 +647,7 @@ func (s *Session) beginParticipantWorking(alias string, anchor agent.StreamID) {
 // abortWork rolls back a Preparing or Working participant to Idle. Use when
 // Send fails after prepareParticipantForWork, or for error rollback paths.
 func (s *Session) abortWork(alias string) {
+	var idleSince time.Time
 	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		if p.Status != participant.StatusWorking && p.Status != participant.StatusPreparing {
 			return nil, nil
@@ -481,25 +656,34 @@ func (s *Session) abortWork(alias string) {
 		if err := p.AbortWork(s.now()); err != nil {
 			return nil, fmt.Errorf("abort work: %w", err)
 		}
+		idleSince = p.Since
 		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
+	}
+	if !idleSince.IsZero() {
+		s.scheduleKeepaliveWaiter(alias, idleSince)
 	}
 }
 
 // markIdle transitions the participant to Idle via BecomeIdle. Called when the
 // anchor stream flush is received (shouldIdle=true from CloseStream).
 func (s *Session) markIdle(alias string) {
+	var idleSince time.Time
 	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		from := p.Status
 		if err := p.BecomeIdle(s.now()); err != nil {
 			return nil, fmt.Errorf("become idle: %w", err)
 		}
+		idleSince = p.Since
 		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
+	}
+	if !idleSince.IsZero() {
+		s.scheduleKeepaliveWaiter(alias, idleSince)
 	}
 }
 
@@ -575,6 +759,11 @@ func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
 		return
 	}
 
+	if _, ok := msg.Content.(agent.KeepAlive); ok {
+		s.finishParticipantKeepalive(alias)
+		return
+	}
+
 	if c, ok := msg.Content.(agent.Log); ok {
 		if c.Text != "" {
 			s.notify(AgentLog{Alias: alias, Text: c.Text})
@@ -585,6 +774,27 @@ func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
 	s.applyTurnLifecycle(alias, msg)
 	m := msg
 	s.notify(AgentMessage{Alias: alias, Msg: m})
+}
+
+func (s *Session) finishParticipantKeepalive(alias string) {
+	var idleSince time.Time
+	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
+		if p.Status != participant.StatusKeepalive {
+			return nil, nil
+		}
+		from := p.Status
+		if err := p.FinishKeepalive(s.now()); err != nil {
+			return nil, fmt.Errorf("finish keepalive: %w", err)
+		}
+		idleSince = p.Since
+		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
+	})
+	if err != nil && !errors.Is(err, errParticipantNotFound) {
+		s.notifyParticipantInvariant(alias, err)
+	}
+	if !idleSince.IsZero() {
+		s.scheduleKeepaliveWaiter(alias, idleSince)
+	}
 }
 
 func (s *Session) applyTurnLifecycle(alias string, msg agent.Message) {
@@ -630,5 +840,123 @@ func (s *Session) shouldDropIdleStreamFragment(alias string, msg agent.Message) 
 		return true
 	default:
 		return false
+	}
+}
+
+type keepaliveCandidate struct {
+	alias string
+	agent agent.Keepaliver
+}
+
+func (s *Session) runKeepalive(candidate keepaliveCandidate) {
+	if err := candidate.agent.KeepAlive(); err != nil {
+		s.notify(AgentLog{Alias: candidate.alias, Text: fmt.Sprintf("keepalive failed: %v", err)})
+		s.finishParticipantKeepalive(candidate.alias)
+	}
+}
+
+func (s *Session) scheduleKeepaliveWaiter(alias string, since time.Time) {
+	p, ok := s.lookupParticipant(alias)
+	if !ok || p.Status != participant.StatusIdle || p.Agent == nil {
+		return
+	}
+	keepaliver, ok := p.Agent.(agent.Keepaliver)
+	if !ok {
+		return
+	}
+	wait := keepaliver.KeepAliveSchedule()
+	if wait <= 0 {
+		return
+	}
+	ctx, ok := s.replaceKeepaliveWaiter(alias)
+	if !ok {
+		return
+	}
+	go s.keepaliveWaiter(ctx, alias, since, wait)
+}
+
+func (s *Session) keepaliveWaiter(ctx context.Context, alias string, since time.Time, wait time.Duration) {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return
+	}
+
+	candidate, ok := s.tryBeginKeepalive(alias, since)
+	if !ok {
+		return
+	}
+	s.runKeepalive(candidate)
+}
+
+func (s *Session) tryBeginKeepalive(alias string, since time.Time) (keepaliveCandidate, bool) {
+	var candidate keepaliveCandidate
+	var ev Event
+
+	s.mu.Lock()
+	p, ok := s.registry.Get(alias)
+	if !ok || p.Status != participant.StatusIdle || !p.Since.Equal(since) || p.Agent == nil {
+		s.mu.Unlock()
+		return keepaliveCandidate{}, false
+	}
+	runtime, ok := s.agents[alias]
+	if !ok {
+		s.mu.Unlock()
+		return keepaliveCandidate{}, false
+	}
+	if runtime.keepaliveCancel != nil {
+		runtime.keepaliveCancel()
+		runtime.keepaliveCancel = nil
+		s.agents[alias] = runtime
+	}
+	keepaliver, ok := p.Agent.(agent.Keepaliver)
+	if !ok {
+		s.mu.Unlock()
+		return keepaliveCandidate{}, false
+	}
+	from := p.Status
+	if err := p.BeginKeepalive(s.now()); err != nil {
+		s.mu.Unlock()
+		return keepaliveCandidate{}, false
+	}
+	ev = ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}
+	candidate = keepaliveCandidate{alias: alias, agent: keepaliver}
+	s.mu.Unlock()
+
+	s.notify(ev)
+	return candidate, true
+}
+
+func (s *Session) replaceKeepaliveWaiter(alias string) (context.Context, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtime, ok := s.agents[alias]
+	if !ok {
+		return nil, false
+	}
+	if runtime.keepaliveCancel != nil {
+		runtime.keepaliveCancel()
+	}
+	ctx, cancel := context.WithCancel(s.lifecycle.ctx) //nolint:gosec // cancel stored in agent runtime and invoked by keepalive lifecycle
+	runtime.keepaliveCancel = cancel
+	s.agents[alias] = runtime
+	return ctx, true
+}
+
+func (s *Session) cancelKeepaliveWaiter(alias string) {
+	s.mu.Lock()
+	runtime, ok := s.agents[alias]
+	var cancel context.CancelFunc
+	if ok {
+		cancel = runtime.keepaliveCancel
+		runtime.keepaliveCancel = nil
+		s.agents[alias] = runtime
+	}
+	s.mu.Unlock()
+	if ok && cancel != nil {
+		cancel()
 	}
 }

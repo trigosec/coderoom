@@ -21,18 +21,19 @@ func (c InviteCommand) execute(s *Session) error {
 	if s.agentFactory == nil {
 		return fmt.Errorf("no agent factory configured on session")
 	}
-	a, p := c.buildInvite(s)
+	p := c.buildParticipant(s)
 	if err := s.addParticipant(p); err != nil {
 		return err
 	}
+	s.CreateAgentRuntime(c.Alias)
+	a := s.agentFactory(s, c.Alias)
 	s.notify(ParticipantStatusChanged{Alias: c.Alias, From: "", To: p.Status, Since: p.Since})
 	s.notify(AgentStarting{Alias: c.Alias})
 	startInvitedAgent(c.Alias, a, s)
 	return nil
 }
 
-func (c InviteCommand) buildInvite(s *Session) (agent.Agent, *participant.Participant) {
-	a := s.agentFactory(s, c.Alias)
+func (c InviteCommand) buildParticipant(s *Session) *participant.Participant {
 	p := &participant.Participant{
 		Alias:      c.Alias,
 		Role:       c.Role,
@@ -40,7 +41,7 @@ func (c InviteCommand) buildInvite(s *Session) (agent.Agent, *participant.Partic
 		Color:      c.Color,
 	}
 	p.BeginStartup(s.now())
-	return a, p
+	return p
 }
 
 func startInvitedAgent(alias string, a agent.Agent, s *Session) {
@@ -51,6 +52,7 @@ func startInvitedAgent(alias string, a agent.Agent, s *Session) {
 		}
 		stop, from, ok := s.attachParticipant(alias, a)
 		if !ok {
+			s.cancelAgentContext(alias)
 			_ = a.Stop()
 			return
 		}
@@ -64,6 +66,7 @@ func startInvitedAgent(alias string, a agent.Agent, s *Session) {
 			delete(s.agents, alias)
 			_ = s.registry.Remove(alias)
 			s.mu.Unlock()
+			s.cancelAgentContext(alias)
 			_ = a.Stop()
 			return
 		}
@@ -82,6 +85,7 @@ func startInvitedAgent(alias string, a agent.Agent, s *Session) {
 			delete(s.agents, alias)
 			_ = s.registry.Remove(alias)
 			s.mu.Unlock()
+			s.cancelAgentContext(alias)
 			_ = a.Stop()
 			return
 		}
@@ -94,6 +98,7 @@ func startInvitedAgent(alias string, a agent.Agent, s *Session) {
 }
 
 func handleInviteStartError(alias string, err error, s *Session) {
+	s.cancelAgentContext(alias)
 	s.notify(AgentLog{Alias: alias, Text: fmt.Sprintf("start failed: %v", err)})
 	stateErr := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		from := p.Status
@@ -121,14 +126,14 @@ func (c RemoveCommand) execute(s *Session) error {
 		}
 		return nil
 	case ok && p == nil:
-		// Reader entry existed but the registry was inconsistent; best-effort cleanup.
+		// Attached runtime existed but the registry was inconsistent; best-effort cleanup.
 		s.notify(AgentStopped(c))
 		return nil
 	case !ok && p != nil:
 		// Participant exists but IsRemovable is false: still in the startup window.
 		return fmt.Errorf("participant %q is not ready", c.Alias)
 	default:
-		// No reader entry: crashed before startup completed, or unknown alias.
+		// No attached runtime: crashed before startup completed, or unknown alias.
 		return s.evictCrashedBeforeStart(c.Alias)
 	}
 }
