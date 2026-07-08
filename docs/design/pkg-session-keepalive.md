@@ -78,6 +78,21 @@ The ticker interval should be comfortably smaller than the keepalive schedule,
 but it does not need second-level precision. A cadence such as `30s` or `1m`
 is good enough because Codex expiry is measured in tens of minutes.
 
+`KeepAliveSchedule()` remains the participant's target deadline. The ticker does
+not need to fire exactly at that deadline, but it must keep lateness bounded.
+The session contract is:
+
+- a participant becomes eligible for keepalive at
+  `dueAt = idleSince + KeepAliveSchedule()`
+- the sweep may start keepalive after `dueAt`
+- the lateness is bounded by one ticker interval
+
+In other words, keepalive should begin within:
+
+```text
+[dueAt, dueAt + keepaliveTick]
+```
+
 On each tick, session:
 
 1. gets the current time

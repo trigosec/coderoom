@@ -10,6 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/rivo/uniseg v0.4.7
+	go.uber.org/goleak v1.3.0
 )
 
 require (

@@ -280,12 +280,19 @@ func mappedFactory(agents map[string]agent.Agent) session.Option {
 	return session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] })
 }
 
+func newSession(t *testing.T, opts ...session.Option) *session.Session {
+	t.Helper()
+	s := session.New(opts...)
+	t.Cleanup(s.Shutdown)
+	return s
+}
+
 // --- tests ---
 
 func TestInvite_emitsAgentStarted(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -304,7 +311,7 @@ func TestInvite_earlyAgentOutputDeliveredAfterStarted(t *testing.T) {
 		mockAgent: newMockAgent(),
 		earlyMsg:  agent.Message{Mode: agent.ModeSingle, Content: agent.Log{Text: "early startup log"}},
 	}
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -318,7 +325,7 @@ func TestInvite_earlyAgentOutputDeliveredAfterStarted(t *testing.T) {
 func TestCancel_interruptsAgent(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -340,7 +347,7 @@ func TestCancel_notReadyWhileStarting(t *testing.T) {
 	obs := newTestObserver()
 	base := newMockAgent()
 	g := &gateAgent{startGate: make(chan struct{}), mockAgent: base}
-	s := session.New(session.WithObserver(obs), fixedFactory(g))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(g))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -358,7 +365,7 @@ func TestCancel_notReadyWhenCrashed(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
 	a.startErr = errors.New("boom")
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 
 	invite(t, s, "ada")
 	mustReceive[session.AgentStarting](t, obs.ch)
@@ -370,7 +377,7 @@ func TestCancel_notReadyWhenCrashed(t *testing.T) {
 }
 
 func TestCancel_unknownAlias(t *testing.T) {
-	s := session.New()
+	s := newSession(t)
 	if err := s.Execute(session.CancelCommand{Alias: "nobody"}); err == nil {
 		t.Fatalf("expected error for unknown participant")
 	}
@@ -379,7 +386,7 @@ func TestCancel_unknownAlias(t *testing.T) {
 func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	err := s.Execute(session.InviteCommand{
@@ -403,7 +410,7 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 }
 
 func TestInvite_duplicateAlias(t *testing.T) {
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, _ string) agent.Agent { return newMockAgent() }))
+	s := newSession(t, session.WithAgentFactory(func(_ *session.Session, _ string) agent.Agent { return newMockAgent() }))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -416,7 +423,7 @@ func TestInvite_duplicateAlias(t *testing.T) {
 func TestRemove_emitsAgentStopped(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 
 	invite(t, s, "ada")
 	mustReceive[session.AgentStarting](t, obs.ch)
@@ -450,7 +457,7 @@ func TestRemove_duringStartup_isRejected(t *testing.T) {
 	t.Cleanup(closeGate)
 
 	g := &gateAgent{startGate: gate, mockAgent: newMockAgent()}
-	s := session.New(session.WithObserver(obs), fixedFactory(g))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(g))
 
 	invite(t, s, "ada")
 	mustReceive[session.AgentStarting](t, obs.ch)
@@ -474,7 +481,7 @@ func TestRemove_crashedBeforeStart_succeeds(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
 	a.startErr = errors.New("missing native binary")
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 
 	invite(t, s, "ada")
 	mustReceive[session.AgentStarting](t, obs.ch)
@@ -492,7 +499,7 @@ func TestRemove_crashedBeforeStart_succeeds(t *testing.T) {
 }
 
 func TestRemove_notFound(t *testing.T) {
-	s := session.New()
+	s := newSession(t)
 	if err := s.Execute(session.RemoveCommand{Alias: "nobody"}); err == nil {
 		t.Fatal("expected error for unknown alias, got nil")
 	}
@@ -502,7 +509,7 @@ func TestBroadcast_emitsAndSendsToAllAgents(t *testing.T) {
 	obs := newTestObserver()
 	a1 := newMockAgent()
 	a2 := newMockAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    a1,
 		"turing": a2,
 	}))
@@ -545,7 +552,7 @@ func TestBroadcast_sendError_doesNotMarkWorking(t *testing.T) {
 	a1 := newMockAgent()
 	a1.sendErr = errors.New("send failed")
 	a2 := newMockAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    a1,
 		"turing": a2,
 	}))
@@ -589,7 +596,7 @@ func TestBroadcast_sendError_doesNotMarkWorking(t *testing.T) {
 func TestBroadcast_sendErrorDoesNotReviveCrashedParticipant(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(ada))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(ada))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -631,7 +638,7 @@ func TestReadLoop_dropsStreamFragmentsWhileIdle(t *testing.T) {
 		agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{Text: ""}},
 		agent.Message{StreamID: "out2", Mode: agent.ModeStream, Content: agent.Output{Text: "oops"}},
 	)
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -687,7 +694,7 @@ func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newMockAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
 		"turing": turing,
 	}))
@@ -731,7 +738,7 @@ func TestSharedSend_noticeMarksListenerWorkingUntilFlush(t *testing.T) {
 	ada := newMockAgent()
 	// Listener emits a flush when it receives a notice, ending its notice turn.
 	turing := newNoticeFlushAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
 		"turing": turing,
 	}))
@@ -780,7 +787,7 @@ func TestSharedSend_noticeDoesNotResetWorkingSince(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newMockAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
 		"turing": turing,
 	}))
@@ -827,7 +834,7 @@ func TestSharedSend_sendError_doesNotMarkWorking(t *testing.T) {
 	ada := newMockAgent()
 	ada.sendErr = errors.New("send failed")
 	turing := newMockAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
 		"turing": turing,
 	}))
@@ -871,7 +878,7 @@ func TestSharedSend_noticeErrorReportsDeliveredAlias(t *testing.T) {
 	ada := newMockAgent()
 	turing := newMockAgent()
 	turing.sendErr = errors.New("notice failed")
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
 		"turing": turing,
 	}))
@@ -898,7 +905,7 @@ func TestSharedSend_noticeErrorDoesNotReviveCrashedListener(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newMockAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
 		"turing": turing,
 	}))
@@ -944,7 +951,7 @@ func TestSharedSend_noticeErrorDoesNotReviveCrashedListener(t *testing.T) {
 }
 
 func TestSharedSend_notFound(t *testing.T) {
-	s := session.New()
+	s := newSession(t)
 	if err := s.Execute(session.SharedSendCommand{Alias: "nobody", TextDirect: "hi", TextListeners: "hi"}); err == nil {
 		t.Fatal("expected error for unknown alias, got nil")
 	}
@@ -964,7 +971,7 @@ func newHandoffTestSession(t *testing.T) (*testObserver, *noticeFlushAgent, *ses
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newNoticeFlushAgent()
-	s := session.New(
+	s := newSession(t,
 		session.WithObserver(obs),
 		mappedFactory(map[string]agent.Agent{
 			"ada":    ada,
@@ -1041,7 +1048,7 @@ func TestHandoff_requiresIdleParticipants(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newMockAgent()
-	s := session.New(
+	s := newSession(t,
 		session.WithObserver(obs),
 		mappedFactory(map[string]agent.Agent{
 			"ada":    ada,
@@ -1085,7 +1092,7 @@ func TestHandoff_requiresCompletedSourceOutput(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newMockAgent()
-	s := session.New(
+	s := newSession(t,
 		session.WithObserver(obs),
 		mappedFactory(map[string]agent.Agent{
 			"ada":    ada,
@@ -1123,7 +1130,7 @@ func TestHandoff_rejectionLogCompactsMultilineReason(t *testing.T) {
 	turing.inner.noticeHook = func(string) error {
 		return errors.New("line one\nline two\n\nline three")
 	}
-	s := session.New(
+	s := newSession(t,
 		session.WithObserver(obs),
 		mappedFactory(map[string]agent.Agent{
 			"ada":    ada,
@@ -1167,7 +1174,7 @@ func TestHandoff_ignoresStartingBystanderOutsideBarrier(t *testing.T) {
 	ada := newMockAgent()
 	turing := newNoticeFlushAgent()
 	cat := &gateAgent{startGate: make(chan struct{}), mockAgent: newMockAgent()}
-	s := session.New(
+	s := newSession(t,
 		session.WithObserver(obs),
 		mappedFactory(map[string]agent.Agent{
 			"ada":    ada,
@@ -1219,7 +1226,7 @@ func TestHandoff_usesProvidedIdleAliasesInsteadOfLiveBarrier(t *testing.T) {
 	ada := newMockAgent()
 	turing := newNoticeFlushAgent()
 	cat := newMockAgent()
-	s := session.New(
+	s := newSession(t,
 		session.WithObserver(obs),
 		mappedFactory(map[string]agent.Agent{
 			"ada":    ada,
@@ -1263,7 +1270,7 @@ func TestSharedSend_rejectsBusyDirectParticipant(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newMockAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
 		"turing": turing,
 	}))
@@ -1301,7 +1308,7 @@ func TestPrivateSend_forwardsToAgentOnly(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
 	turing := newMockAgent()
-	s := session.New(session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
 		"turing": turing,
 	}))
@@ -1349,7 +1356,7 @@ func TestPrivateSend_forwardsToAgentOnly(t *testing.T) {
 }
 
 func TestPrivateSend_notFound(t *testing.T) {
-	s := session.New()
+	s := newSession(t)
 	if err := s.Execute(session.PrivateSendCommand{Alias: "nobody", Text: "hi"}); err == nil {
 		t.Fatal("expected error for unknown alias, got nil")
 	}
@@ -1358,7 +1365,7 @@ func TestPrivateSend_notFound(t *testing.T) {
 func TestPrivateSend_rejectsBusyParticipant(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(ada))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(ada))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -1384,7 +1391,7 @@ func TestPrivateSend_rejectsBusyParticipant(t *testing.T) {
 func TestReaderLoop_emitsDelta(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -1429,7 +1436,7 @@ func TestReaderLoop_emitsDelta(t *testing.T) {
 func TestReaderLoop_reasoningDoubleCloseDoesNotInvariant(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -1512,7 +1519,7 @@ func TestReaderLoop_anchorStreamPreventsEarlyIdle(t *testing.T) {
 
 	obs := newTestObserver()
 	a := &anchorMockAgent{mockAgent: newMockAgent(), anchor: anchorID}
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -1554,7 +1561,7 @@ func TestReaderLoop_anchorStreamPreventsEarlyIdle(t *testing.T) {
 func TestReaderLoop_marksIdleOnlyAfterAllObservedStreamsFlush(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -1597,7 +1604,7 @@ func TestReaderLoop_marksIdleOnlyAfterAllObservedStreamsFlush(t *testing.T) {
 func TestReaderLoop_emitsDone(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent(agent.Message{StreamID: "turn1", Mode: agent.ModeFlush, Content: agent.Output{}})
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -1613,7 +1620,7 @@ func TestMultipleObservers_bothNotified(t *testing.T) {
 	obs1 := newTestObserver()
 	obs2 := newTestObserver()
 	a := newMockAgent()
-	s := session.New(session.WithObserver(obs1), session.WithObserver(obs2), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs1), session.WithObserver(obs2), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -1624,7 +1631,7 @@ func TestMultipleObservers_bothNotified(t *testing.T) {
 func TestReaderLoop_emitsAgentLog(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent(agent.Message{StreamID: "codex:log", Mode: agent.ModeSingle, Content: agent.Log{Text: "npm warn something"}})
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	invite(t, s, "ada")
@@ -1643,7 +1650,7 @@ func TestReaderLoop_agentCrash_emitsCrashed(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent() // no messages; Stop() will close channel
 	_ = a.Stop()        // close immediately — simulates crash
-	s := session.New(session.WithObserver(obs), fixedFactory(a))
+	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 
 	invite(t, s, "ada")
 	mustReceive[session.AgentStarted](t, obs.ch)

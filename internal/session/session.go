@@ -24,34 +24,30 @@ import (
 type AgentFactory func(s *Session, alias string) agent.Agent
 
 type agentRuntime struct {
-	agentCancel     context.CancelFunc
-	keepaliveCancel context.CancelFunc
-	stop            chan struct{}
-}
-
-type namedAgentRuntime struct {
-	alias   string
-	runtime agentRuntime
+	agentCancel context.CancelFunc
+	stop        chan struct{}
 }
 
 // Session is the central orchestrator of a Code Room session.
 // Execute must be called from a single goroutine (the TUI input loop).
 // It is not safe for concurrent calls to Execute.
 type Session struct {
-	mu           sync.Mutex
-	registry     *participant.Registry
-	agents       map[string]agentRuntime
-	obs          []Observer
-	now          func() time.Time
-	agentFactory AgentFactory
-	approvals    *approvalHub
-	lifecycle    sessionLifecycle
+	mu            sync.Mutex
+	registry      *participant.Registry
+	agents        map[string]agentRuntime
+	obs           []Observer
+	now           func() time.Time
+	keepaliveTick time.Duration
+	agentFactory  AgentFactory
+	approvals     *approvalHub
+	lifecycle     sessionLifecycle
 }
 
 type sessionLifecycle struct {
-	ctx      context.Context
-	cancelFn context.CancelFunc
-	once     sync.Once
+	ctx         context.Context
+	cancelFn    context.CancelFunc
+	keepaliveWG sync.WaitGroup
+	stopOnce    sync.Once
 }
 
 var errParticipantNotFound = errors.New("participant not found")
@@ -60,7 +56,7 @@ var errParticipantNotFound = errors.New("participant not found")
 type Option func(*Session)
 
 // WithContext sets the parent context for session-owned background work such as
-// idle-window keepalive waiters.
+// the keepalive ticker.
 func WithContext(ctx context.Context) Option {
 	return func(s *Session) {
 		if ctx == nil {
@@ -96,15 +92,17 @@ func WithAgentFactory(f AgentFactory) Option {
 // New returns an empty Session.
 func New(opts ...Option) *Session {
 	s := &Session{
-		registry: participant.NewRegistry(),
-		agents:   make(map[string]agentRuntime),
-		now:      time.Now,
+		registry:      participant.NewRegistry(),
+		agents:        make(map[string]agentRuntime),
+		now:           time.Now,
+		keepaliveTick: 30 * time.Second,
 	}
 	s.lifecycle.ctx, s.lifecycle.cancelFn = context.WithCancel(context.Background()) //nolint:gosec // cancel stored and invoked by Shutdown
 	s.approvals = newApprovalHub(s.notify)
 	for _, o := range opts {
 		o(s)
 	}
+	s.startKeepaliveLoop()
 	return s
 }
 
@@ -184,29 +182,13 @@ func (s *Session) Shutdown() {
 }
 
 func (s *Session) stopBackgroundLoops() {
-	s.lifecycle.once.Do(func() {
-		s.cancelAllKeepaliveWaiters()
+	s.lifecycle.stopOnce.Do(func() {
 		if s.lifecycle.cancelFn != nil {
 			s.lifecycle.cancelFn()
 			s.lifecycle.cancelFn = nil
 		}
+		s.lifecycle.keepaliveWG.Wait()
 	})
-}
-
-func (s *Session) cancelAllKeepaliveWaiters() {
-	for _, named := range s.snapshotAgentRuntimes() {
-		alias := named.alias
-		runtime := named.runtime
-		if runtime.keepaliveCancel != nil {
-			runtime.keepaliveCancel()
-			s.mu.Lock()
-			if current, ok := s.agents[alias]; ok {
-				current.keepaliveCancel = nil
-				s.agents[alias] = current
-			}
-			s.mu.Unlock()
-		}
-	}
 }
 
 func (s *Session) cancelAllAgentContexts() {
@@ -218,9 +200,6 @@ func (s *Session) cancelAllAgentContexts() {
 	s.agents = make(map[string]agentRuntime)
 	s.mu.Unlock()
 	for _, runtime := range runtimes {
-		if runtime.keepaliveCancel != nil {
-			runtime.keepaliveCancel()
-		}
 		if runtime.agentCancel != nil {
 			runtime.agentCancel()
 		}
@@ -234,25 +213,9 @@ func (s *Session) cancelAgentContext(alias string) {
 		delete(s.agents, alias)
 	}
 	s.mu.Unlock()
-	if ok && runtime.keepaliveCancel != nil {
-		runtime.keepaliveCancel()
-	}
 	if ok && runtime.agentCancel != nil {
 		runtime.agentCancel()
 	}
-}
-
-func (s *Session) snapshotAgentRuntimes() []namedAgentRuntime {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	runtimes := make([]namedAgentRuntime, 0, len(s.agents))
-	for alias, runtime := range s.agents {
-		runtimes = append(runtimes, namedAgentRuntime{
-			alias:   alias,
-			runtime: runtime,
-		})
-	}
-	return runtimes
 }
 
 func (s *Session) notify(e Event) {
@@ -369,9 +332,6 @@ func (s *Session) detachParticipant(alias string) (*participant.Participant, boo
 	if runtime.agentCancel != nil {
 		runtime.agentCancel()
 	}
-	if runtime.keepaliveCancel != nil {
-		runtime.keepaliveCancel()
-	}
 	_ = s.registry.Remove(alias)
 	close(runtime.stop)
 	return p, true
@@ -397,9 +357,6 @@ func (s *Session) evictCrashedBeforeStart(alias string) error {
 		return fmt.Errorf("participant %q is not ready", alias)
 	}
 	if runtime, ok := s.agents[alias]; ok {
-		if runtime.keepaliveCancel != nil {
-			runtime.keepaliveCancel()
-		}
 		if runtime.agentCancel != nil {
 			runtime.agentCancel()
 		}
@@ -465,7 +422,6 @@ func (s *Session) commitStarted(alias string, from participant.Status) (Event, b
 	}
 	ev := Event(ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since})
 	s.mu.Unlock()
-	s.scheduleKeepaliveWaiter(alias, p.Since)
 	return ev, true
 }
 
@@ -565,7 +521,6 @@ func (s *Session) readLoop(stop <-chan struct{}, alias string, a agent.Agent) {
 
 func (s *Session) handleAgentReadError(stop <-chan struct{}, alias string) {
 	if isCrashedReadError(stop) {
-		s.cancelKeepaliveWaiter(alias)
 		err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 			from := p.Status
 			p.Crash(s.now())
@@ -598,21 +553,12 @@ func isCrashedReadError(stop <-chan struct{}) bool {
 // under the session lock. Must be followed by Send then beginParticipantWorking
 // (on success) or abortWork (on Send failure).
 func (s *Session) prepareParticipantForWork(alias string) error {
-	var (
-		ev     ParticipantStatusChanged
-		cancel context.CancelFunc
-	)
+	var ev ParticipantStatusChanged
 	s.mu.Lock()
 	p, ok := s.registry.Get(alias)
 	if !ok {
 		s.mu.Unlock()
 		return fmt.Errorf("%w: %q", errParticipantNotFound, alias)
-	}
-	runtime, ok := s.agents[alias]
-	if ok {
-		cancel = runtime.keepaliveCancel
-		runtime.keepaliveCancel = nil
-		s.agents[alias] = runtime
 	}
 	from := p.Status
 	if err := p.PrepareForWork(s.now()); err != nil {
@@ -621,9 +567,6 @@ func (s *Session) prepareParticipantForWork(alias string) error {
 	}
 	ev = ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}
 	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
 	s.notify(ev)
 	return nil
 }
@@ -647,7 +590,6 @@ func (s *Session) beginParticipantWorking(alias string, anchor agent.StreamID) {
 // abortWork rolls back a Preparing or Working participant to Idle. Use when
 // Send fails after prepareParticipantForWork, or for error rollback paths.
 func (s *Session) abortWork(alias string) {
-	var idleSince time.Time
 	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		if p.Status != participant.StatusWorking && p.Status != participant.StatusPreparing {
 			return nil, nil
@@ -656,34 +598,25 @@ func (s *Session) abortWork(alias string) {
 		if err := p.AbortWork(s.now()); err != nil {
 			return nil, fmt.Errorf("abort work: %w", err)
 		}
-		idleSince = p.Since
 		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
-	}
-	if !idleSince.IsZero() {
-		s.scheduleKeepaliveWaiter(alias, idleSince)
 	}
 }
 
 // markIdle transitions the participant to Idle via BecomeIdle. Called when the
 // anchor stream flush is received (shouldIdle=true from CloseStream).
 func (s *Session) markIdle(alias string) {
-	var idleSince time.Time
 	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		from := p.Status
 		if err := p.BecomeIdle(s.now()); err != nil {
 			return nil, fmt.Errorf("become idle: %w", err)
 		}
-		idleSince = p.Since
 		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
-	}
-	if !idleSince.IsZero() {
-		s.scheduleKeepaliveWaiter(alias, idleSince)
 	}
 }
 
@@ -777,7 +710,6 @@ func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
 }
 
 func (s *Session) finishParticipantKeepalive(alias string) {
-	var idleSince time.Time
 	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		if p.Status != participant.StatusKeepalive {
 			return nil, nil
@@ -786,14 +718,10 @@ func (s *Session) finishParticipantKeepalive(alias string) {
 		if err := p.FinishKeepalive(s.now()); err != nil {
 			return nil, fmt.Errorf("finish keepalive: %w", err)
 		}
-		idleSince = p.Since
 		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
-	}
-	if !idleSince.IsZero() {
-		s.scheduleKeepaliveWaiter(alias, idleSince)
 	}
 }
 
@@ -855,108 +783,73 @@ func (s *Session) runKeepalive(candidate keepaliveCandidate) {
 	}
 }
 
-func (s *Session) scheduleKeepaliveWaiter(alias string, since time.Time) {
-	p, ok := s.lookupParticipant(alias)
-	if !ok || p.Status != participant.StatusIdle || p.Agent == nil {
+func (s *Session) startKeepaliveLoop() {
+	if s.keepaliveTick <= 0 {
 		return
 	}
-	keepaliver, ok := p.Agent.(agent.Keepaliver)
-	if !ok {
-		return
-	}
-	wait := keepaliver.KeepAliveSchedule()
-	if wait <= 0 {
-		return
-	}
-	ctx, ok := s.replaceKeepaliveWaiter(alias)
-	if !ok {
-		return
-	}
-	go s.keepaliveWaiter(ctx, alias, since, wait)
+	s.lifecycle.keepaliveWG.Add(1)
+	go func() {
+		defer s.lifecycle.keepaliveWG.Done()
+		s.keepaliveLoop(s.lifecycle.ctx, s.keepaliveTick)
+	}()
 }
 
-func (s *Session) keepaliveWaiter(ctx context.Context, alias string, since time.Time, wait time.Duration) {
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-
-	select {
-	case <-timer.C:
-	case <-ctx.Done():
-		return
+func (s *Session) keepaliveLoop(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.sweepKeepalive()
+		case <-ctx.Done():
+			return
+		}
 	}
-
-	candidate, ok := s.tryBeginKeepalive(alias, since)
-	if !ok {
-		return
-	}
-	s.runKeepalive(candidate)
 }
 
-func (s *Session) tryBeginKeepalive(alias string, since time.Time) (keepaliveCandidate, bool) {
-	var candidate keepaliveCandidate
-	var ev Event
+func (s *Session) sweepKeepalive() {
+	now := s.now()
+	candidates, events := s.collectKeepaliveCandidates(now)
+	for _, ev := range events {
+		s.notify(ev)
+	}
+	for _, candidate := range candidates {
+		go s.runKeepalive(candidate)
+	}
+}
 
+func (s *Session) collectKeepaliveCandidates(now time.Time) ([]keepaliveCandidate, []Event) {
+	var candidates []keepaliveCandidate
+	var events []Event
 	s.mu.Lock()
-	p, ok := s.registry.Get(alias)
-	if !ok || p.Status != participant.StatusIdle || !p.Since.Equal(since) || p.Agent == nil {
-		s.mu.Unlock()
-		return keepaliveCandidate{}, false
-	}
-	runtime, ok := s.agents[alias]
-	if !ok {
-		s.mu.Unlock()
-		return keepaliveCandidate{}, false
-	}
-	if runtime.keepaliveCancel != nil {
-		runtime.keepaliveCancel()
-		runtime.keepaliveCancel = nil
-		s.agents[alias] = runtime
-	}
-	keepaliver, ok := p.Agent.(agent.Keepaliver)
-	if !ok {
-		s.mu.Unlock()
-		return keepaliveCandidate{}, false
-	}
-	from := p.Status
-	if err := p.BeginKeepalive(s.now()); err != nil {
-		s.mu.Unlock()
-		return keepaliveCandidate{}, false
-	}
-	ev = ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}
-	candidate = keepaliveCandidate{alias: alias, agent: keepaliver}
-	s.mu.Unlock()
-
-	s.notify(ev)
-	return candidate, true
-}
-
-func (s *Session) replaceKeepaliveWaiter(alias string) (context.Context, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	runtime, ok := s.agents[alias]
-	if !ok {
-		return nil, false
-	}
-	if runtime.keepaliveCancel != nil {
-		runtime.keepaliveCancel()
-	}
-	ctx, cancel := context.WithCancel(s.lifecycle.ctx) //nolint:gosec // cancel stored in agent runtime and invoked by keepalive lifecycle
-	runtime.keepaliveCancel = cancel
-	s.agents[alias] = runtime
-	return ctx, true
-}
-
-func (s *Session) cancelKeepaliveWaiter(alias string) {
-	s.mu.Lock()
-	runtime, ok := s.agents[alias]
-	var cancel context.CancelFunc
-	if ok {
-		cancel = runtime.keepaliveCancel
-		runtime.keepaliveCancel = nil
-		s.agents[alias] = runtime
+	for _, p := range s.registry.List() {
+		alias := p.Alias
+		if p.Status != participant.StatusIdle || p.Agent == nil {
+			continue
+		}
+		if _, ok := s.agents[alias]; !ok {
+			continue
+		}
+		keepaliver, ok := p.Agent.(agent.Keepaliver)
+		if !ok {
+			continue
+		}
+		wait := keepaliver.KeepAliveSchedule()
+		if wait <= 0 || now.Sub(p.Since) < wait {
+			continue
+		}
+		from := p.Status
+		if err := p.BeginKeepalive(now); err != nil {
+			continue
+		}
+		events = append(events, ParticipantStatusChanged{
+			Alias: alias,
+			From:  from,
+			To:    p.Status,
+			Since: p.Since,
+		})
+		candidates = append(candidates, keepaliveCandidate{alias: alias, agent: keepaliver})
 	}
 	s.mu.Unlock()
-	if ok && cancel != nil {
-		cancel()
-	}
+	return candidates, events
 }

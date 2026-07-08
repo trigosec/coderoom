@@ -91,7 +91,7 @@ func (o keepaliveObserver) OnEvent(e Event) {
 }
 
 func TestSession_keepaliveSweepTransitionsParticipant(t *testing.T) {
-	s, events := newKeepaliveTestSession(func() agent.Agent {
+	s, events := newKeepaliveTestSession(5*time.Millisecond, func() agent.Agent {
 		return newKeepaliveTestAgent(10*time.Millisecond, true)
 	})
 	t.Cleanup(s.Shutdown)
@@ -124,6 +124,7 @@ func TestSession_keepaliveStopsWhenParentContextIsCancelled(t *testing.T) {
 	events := make(chan Event, 32)
 	s := New(
 		WithContext(ctx),
+		func(s *Session) { s.keepaliveTick = 10 * time.Millisecond },
 		WithAgentFactory(agentFactory),
 		WithObserver(keepaliveObserver{ch: events}),
 	)
@@ -166,6 +167,7 @@ func TestSession_shutdownDuringKeepaliveReturnsPromptly(t *testing.T) {
 	}
 	events := make(chan Event, 32)
 	s := New(
+		func(s *Session) { s.keepaliveTick = 5 * time.Millisecond },
 		WithAgentFactory(agentFactory),
 		WithObserver(keepaliveObserver{ch: events}),
 	)
@@ -194,56 +196,35 @@ func TestSession_shutdownDuringKeepaliveReturnsPromptly(t *testing.T) {
 	}
 }
 
-func TestSession_prepareParticipantForWorkBeatsStaleKeepaliveWaiter(t *testing.T) {
-	agentFactory := func(_ *Session, _ string) agent.Agent {
-		return &keepaliveTestAgent{
-			schedule: 10 * time.Millisecond,
-			readCh:   make(chan agent.Message, 1),
-			stopCh:   make(chan struct{}),
-		}
-	}
-	events := make(chan Event, 32)
-	s := New(
-		WithAgentFactory(agentFactory),
-		WithObserver(keepaliveObserver{ch: events}),
-	)
+func TestSession_sweepKeepaliveSkipsPreparingParticipant(t *testing.T) {
+	s, events := newKeepaliveTestSession(time.Hour, func() agent.Agent {
+		return newKeepaliveTestAgent(10*time.Millisecond, false)
+	})
 	t.Cleanup(s.Shutdown)
-
-	if err := s.Execute(InviteCommand{
-		Alias:      "ada",
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
-	}); err != nil {
-		t.Fatalf("InviteCommand: %v", err)
-	}
+	mustInviteKeepaliveTestParticipant(t, s)
 
 	waitForStatusEvent(t, events, participant.StatusIdle)
-
-	p, ok := s.Participant(keepaliveTestAlias)
-	if !ok {
-		t.Fatalf("expected participant %s", keepaliveTestAlias)
-	}
-	idleSince := p.Since
 
 	if err := s.prepareParticipantForWork(keepaliveTestAlias); err != nil {
 		t.Fatalf("prepareParticipantForWork: %v", err)
 	}
 
-	if _, ok := s.tryBeginKeepalive(keepaliveTestAlias, idleSince); ok {
-		t.Fatal("expected stale keepalive waiter to lose after work preparation")
-	}
+	s.sweepKeepalive()
 
-	p, ok = s.Participant(keepaliveTestAlias)
+	p, ok := s.Participant(keepaliveTestAlias)
 	if !ok {
 		t.Fatalf("expected participant %s", keepaliveTestAlias)
 	}
 	if p.Status != participant.StatusPreparing {
 		t.Fatalf("expected preparing status, got %q", p.Status)
 	}
+	if got := requireKeepaliveTestAgent(t, s).CallCount(); got != 0 {
+		t.Fatalf("expected no keepalive call while preparing, got %d", got)
+	}
 }
 
-func TestSession_scheduleKeepaliveWaiterSkipsMissingRuntime(t *testing.T) {
-	s, events := newKeepaliveTestSession(func() agent.Agent {
+func TestSession_sweepKeepaliveSkipsMissingRuntime(t *testing.T) {
+	s, events := newKeepaliveTestSession(time.Hour, func() agent.Agent {
 		return newKeepaliveTestAgent(10*time.Millisecond, false)
 	})
 	t.Cleanup(s.Shutdown)
@@ -258,8 +239,8 @@ func TestSession_scheduleKeepaliveWaiterSkipsMissingRuntime(t *testing.T) {
 	ka := requireKeepaliveTestAgent(t, s)
 
 	s.cancelAgentContext(keepaliveTestAlias)
-	s.scheduleKeepaliveWaiter(keepaliveTestAlias, p.Since)
-	time.Sleep(50 * time.Millisecond)
+	s.now = func() time.Time { return p.Since.Add(time.Hour) }
+	s.sweepKeepalive()
 
 	if got := ka.CallCount(); got != 0 {
 		t.Fatalf("expected no keepalive call without runtime, got %d", got)
@@ -278,9 +259,10 @@ func newKeepaliveTestAgent(schedule time.Duration, withBlockCh bool) *keepaliveT
 	return a
 }
 
-func newKeepaliveTestSession(factory func() agent.Agent) (*Session, chan Event) {
+func newKeepaliveTestSession(tick time.Duration, factory func() agent.Agent) (*Session, chan Event) {
 	events := make(chan Event, 32)
 	s := New(
+		func(s *Session) { s.keepaliveTick = tick },
 		WithAgentFactory(func(_ *Session, _ string) agent.Agent { return factory() }),
 		WithObserver(keepaliveObserver{ch: events}),
 	)
