@@ -117,7 +117,17 @@ participant adapter, not a heuristic derived from output streams.
 Conceptually:
 
 - idle: the participant has no active turn in progress
-- busy: the participant currently has an active turn
+- busy: the participant is not currently routable for shared-room delivery
+
+For routing and barrier purposes, `busy` includes:
+
+- `preparing`
+- `keepalive`
+- `working`
+- startup windows such as `starting` / `attached`
+
+`keepalive` is busy even though it is not a user-visible turn. It occupies the
+request lane until the backend maintenance round-trip completes.
 
 ## State machine (staged batch)
 
@@ -193,4 +203,3 @@ begins, delivery is best-effort and may partially succeed.
 
 Recovery is user-driven using normal primitives (e.g. re-send a new batch to the
 missing participants, or Interrupt + Send to re-synchronize).
-

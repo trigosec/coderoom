@@ -25,6 +25,9 @@ Current participant statuses:
 
 - `idle`: no turn is in flight
 - `starting`: the agent process is starting and cannot receive work yet
+- `attached`: the agent process is live, but startup has not fully committed
+- `keepalive`: backend maintenance is in flight; the participant is temporarily
+  non-sendable but no user turn is active
 - `preparing`: the session has committed to a new turn, but the participant has
   not entered `working` yet
 - `working`: a turn is in flight and turn-scoped stream fragments may arrive
@@ -33,14 +36,20 @@ Current participant statuses:
 The normal lifecycle is:
 
 ```text
-starting -> idle
+starting -> attached -> idle
 idle -> preparing -> working -> idle
+idle -> keepalive -> idle
 * -> crashed
 ```
 
 `preparing` exists to close the race between "the session decided to send" and
 "the participant is visibly in-flight". Once a participant is in `preparing`,
 other callers can no longer observe it as available for another direct send.
+
+`keepalive` exists to reserve the request lane for backend maintenance without
+inventing a user-visible conversation turn. While a participant is in
+`keepalive`, direct sends, shared-room dispatch, and handoff delivery treat it
+as busy.
 
 ---
 
@@ -49,7 +58,8 @@ other callers can no longer observe it as available for another direct send.
 The participant package enforces these runtime rules:
 
 - a participant cannot start a new turn while already `preparing` or `working`
-- a participant cannot receive work while `starting` or `crashed`
+- a participant cannot start a new turn while `keepalive` is in flight
+- a participant cannot receive work while `starting`, `attached`, or `crashed`
 - a participant cannot become `idle` while its turn anchor is still open
 - a stream flush for an untracked stream is invalid
 - turn-scoped streams may only be tracked while the participant is
@@ -65,15 +75,18 @@ of state transitions; the session owns when to attempt them.
 The intended lifecycle is:
 
 1. `BeginStartup`
-2. `CompleteStartup`
-3. `PrepareForWork`
-4. `BeginWorking`
-5. `TrackStream` / `CloseStream`
-6. `BecomeIdle`
+2. `AttachAgent`
+3. `CommitIdle`
+4. `PrepareForWork`
+5. `BeginWorking`
+6. `TrackStream` / `CloseStream`
+7. `BecomeIdle`
 
 Exceptional paths:
 
 - `AbortWork` rolls back a `preparing` or `working` participant to `idle`
+- `BeginKeepalive` / `FinishKeepalive` bracket a maintenance-only
+  `idle -> keepalive -> idle` transition
 - `Crash` clears turn state and moves the participant to `crashed`
 
 ### Why `PrepareForWork` exists

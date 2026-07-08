@@ -21,7 +21,7 @@ participant/session model, while **presentation** lives in the UI.
 
 Session/participant owns:
 
-- Participant status: `idle | starting | working | crashed`
+- Participant status: `idle | starting | attached | keepalive | preparing | working | crashed`
 - `since` timestamp for the current status
 - Allowed state transitions (enforced centrally)
 
@@ -82,6 +82,7 @@ default terminal colour.
 Examples:
 
 - Idle: `● ada`
+- Keepalive: `◔ ada (12s)`
 - Working: `⏹ ada (10s)` and `◆ ada (11s)` (alternates each second)
 
 Status is communicated **only** via the leading glyph. We intentionally do not
@@ -140,38 +141,56 @@ Each participant has a state machine that drives the status glyph and
 
 - `idle`: no active turn
 - `starting`: agent process is starting
+- `attached`: agent process is live, but startup is not fully committed yet
+- `keepalive`: backend maintenance request in flight
+- `preparing`: the session has committed to a send and is establishing turn state
 - `working`: agent is processing a request / streaming output
 - `crashed`: agent crashed
 - `stopped`: agent left / stopped
 
 Idle cells do not show an elapsed field (no `(…)` suffix).
 
+### What counts as “busy”
+
+A participant is considered busy for dispatch/routing purposes if it is in any
+non-idle runtime state, including `keepalive`.
+
+`keepalive` is special:
+
+- it blocks new sends like other busy states
+- it is visible in the toolbox as participant activity
+- it does not create a user-visible room-history record on its own
+
 ### What counts as “working”
 
-A participant is considered `working` if:
+The toolbox does not infer work from transcript events. It renders the current
+participant status projected by session/participant.
 
-- The user sends `@<alias> ...` (shared send) and we have not yet observed a
-  matching `Done` event for that alias.
-- The participant emits a `Delta` event and we have not yet observed a matching
-  `Done` event for that alias.
+That means:
 
-Rationale: the `@alias` send is a clear user intent; `Delta` confirms work has
-begun even if the send originated elsewhere.
+- `preparing` means the session has committed to a send and is establishing the
+  turn anchor
+- `working` means a real turn is in flight
+- `keepalive` means backend maintenance is in flight without a user turn
 
 ### Start/stop rules
 
-- Enter `starting` on `agent.starting`.
-- Transition `starting → idle` on `agent.started`.
-- Enter `working` on:
-  - `message.shared` targeting the alias, or
-  - `message.delta` from the alias (if not already working).
-- Return to `idle` on `message.done` for that alias.
-- Enter `crashed` state on `agent.crashed` (resets elapsed to “time since crash”).
-- `agent.stopped` removes an alias from the activity monitor.
+- Enter `starting` when session begins agent startup.
+- Transition `starting -> attached -> idle` during startup commit.
+- Enter `preparing` when session commits to a new user-visible send.
+- Transition `preparing -> working` when the turn anchor is established.
+- Enter `keepalive` when session claims the participant for backend
+  maintenance.
+- Return to `idle` when the active turn or keepalive round-trip completes.
+- Enter `crashed` when the agent exits unexpectedly.
+- Remove the participant from the activity monitor when it leaves the session.
 
 Elapsed semantics:
 
 - `starting`: elapsed since `agent.starting`.
+- `attached`: elapsed since the agent became live but not yet fully started.
+- `preparing`: elapsed since the send was committed.
+- `keepalive`: elapsed since backend maintenance started.
 - `working`: elapsed since entering `working`.
 - `crashed`: elapsed since `agent.crashed`.
 - `idle`/`stopped`: no elapsed displayed.
@@ -179,7 +198,8 @@ Elapsed semantics:
 ## Tick / animation model
 
 The UI updates once per second **only if** any participant is in `starting`,
-`working` or `crashed`. Otherwise, no periodic ticks run.
+`attached`, `keepalive`, `preparing`, `working` or `crashed`. Otherwise, no
+periodic ticks run.
 
 ### Spinner glyphs
 
@@ -190,6 +210,9 @@ Working state uses an alternating glyph as a low-noise spinner:
 
 Idle uses `●`.
 Starting uses `◌` (static).
+Attached uses `◌` (static).
+Preparing uses `◐` (static).
+Keepalive uses `◔` (static).
 Crashed uses `✖` (static).
 
 ### Legend (discoverability)
@@ -199,7 +222,9 @@ small legend can live in help text or a toolbox hint line (not inside the cells
 themselves), e.g.:
 
 - `●` idle
-- `◌` starting
+- `◌` starting / attached
+- `◐` preparing
+- `◔` keepalive
 - `⏹` / `◆` working
 - `✖` crashed
 
@@ -208,9 +233,11 @@ themselves), e.g.:
 To keep the display useful when capped to one row, ordering is activity-first:
 
 1. `working`
-2. `starting`
-3. `crashed`
-4. `idle`
+2. `preparing`
+3. `keepalive`
+4. `starting` / `attached`
+5. `crashed`
+6. `idle`
 
 Within the same state tier, participants are sorted by alias (stable,
 deterministic).

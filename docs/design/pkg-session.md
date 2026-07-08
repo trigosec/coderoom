@@ -273,6 +273,10 @@ decides how those events become rooms and records for the UI.
 - `Execute` runs on the caller's goroutine (the TUI's input loop).
 - Reader goroutines call `observer.OnEvent` directly; the observer must not block.
 - The registry and session state are accessed from both `Execute` and reader goroutines. A mutex protects shared access.
+- Keepalive candidate selection happens under the session lock, but adapter
+  calls such as `KeepAlive()` happen after unlocking. Session first claims the
+  participant (`idle -> keepalive`) under lock, then touches the backend out of
+  lock so one slow keepalive request cannot stall unrelated reads or sends.
 
 ---
 

@@ -163,6 +163,11 @@ Version 1 should use one explicit idleness rule:
 
 - execute `/handoff` only when all participants are idle
 
+For this rule, any non-idle participant counts as busy, including
+`keepalive`. A keepalive round-trip is backend maintenance rather than a user
+turn, but it still occupies the request lane and blocks handoff delivery until
+the participant returns to `idle`.
+
 Why:
 
 - it matches current message staging behavior

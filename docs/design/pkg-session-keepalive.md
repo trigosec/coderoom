@@ -66,30 +66,39 @@ Why:
 - tying the policy to UI would make correctness depend on the interface being
   present and ticking
 
-The session lifecycle is rooted in the top-level `coderoom` context. Idle
-waiters derive from that session context, so process shutdown cancels any
-pending keepalive timers immediately.
+The session lifecycle is rooted in the top-level `coderoom` context. The
+keepalive ticker derives from that session context, so process shutdown cancels
+pending keepalive work immediately.
 
 ## Scheduling model
 
-We do not use a polling loop.
+Keepalive is scheduled by one session-level ticker.
 
-Instead, keepalive is scheduled per idle window:
+The ticker interval should be comfortably smaller than the keepalive schedule,
+but it does not need second-level precision. A cadence such as `30s` or `1m`
+is good enough because Codex expiry is measured in tens of minutes.
 
-1. participant transitions to `idle`
-2. session starts one waiter goroutine for that participant
-3. the waiter sleeps for the agent's `KeepAliveSchedule()`
-4. on wake-up, it checks that:
-   - the participant is still `idle`
-   - the participant `Since` timestamp is unchanged
-5. if both checks still hold, session transitions the participant to
-   `keepalive` and calls `KeepAlive()`
+On each tick, session:
 
-If the participant leaves `idle` before the timer fires, the idle-window
-context is cancelled and the waiter exits.
+1. gets the current time
+2. scans participants
+3. skips participants that are not `idle`
+4. skips agents that do not implement `Keepaliver`
+5. skips idle windows younger than that agent's `KeepAliveSchedule()`
+6. for each remaining overdue participant:
+   - claims the participant under the session lock by atomically transitioning
+     `idle -> keepalive`
+   - releases the session lock
+   - calls `KeepAlive()` out of lock
 
-This keeps the mechanism tied to actual idle spans rather than continuous
-background polling.
+This makes the scheduler deadline-based rather than waiter-based:
+
+- normal awake runtime is handled by the same sweep
+- suspend or hibernate is handled naturally on the next tick after resume
+- there is no per-participant keepalive goroutine to cancel or replace
+
+The sweep still uses `participant.Since` as the idle-window identity check, so
+it does not need a separate `lastActivityAt` field.
 
 ## Why `Since`
 
@@ -127,6 +136,10 @@ Codex keepalive uses the standard message workflow:
 
 The room/UI does not see a user-visible keepalive record.
 
+The participant may still render as `keepalive` in status-oriented UI such as
+the toolbox. "Invisible" here means "no shared-room transcript record is
+created for a successful keepalive round-trip."
+
 For now, post-start `thread/read` is the only supported bare thread-shaped RPC
 response in the Codex adapter. That is why the response classifier can treat a
 thread-shaped bare response as keepalive completion without adding correlation
@@ -152,7 +165,7 @@ Reason:
 - only after we have data should we decide whether a stronger fallback is worth
   it
 
-## Rejected approaches
+## Tradeoffs and rejected approaches
 
 ### Synthetic notice turn
 
@@ -160,17 +173,26 @@ Rejected as the primary design because it creates fake conversation traffic,
 consumes turn machinery, and muddies history for what should be invisible
 transport maintenance.
 
-### Polling loop
+### Ticker-based polling loop
 
-Rejected because the session already knows exactly when a participant enters and
-leaves `idle`. A per-idle-window waiter is simpler and more precise than a
-global periodic sweep.
+Accepted as the primary scheduling mechanism for keepalive.
+
+Reason:
+
+- the keepalive window is coarse, so exact wake-up precision is not important
+- one session ticker is easier to reason about than one goroutine per idle
+  participant
+- suspend or hibernate no longer needs a special recovery path
+
+Tradeoff:
+
+- keepalive runs on the next sweep after a participant becomes due, not exactly
+  at the due timestamp
 
 ### Participant-lifetime keepalive context
 
-Rejected because the only useful lifetime for a keepalive waiter is the current
-idle span. Creating a fresh context on `idle` and cancelling it on `idle -> *`
-keeps the number of live goroutines bounded to actual idle participants.
+Rejected because the scheduler no longer uses per-idle waiters. The only
+keepalive-owned lifetime is the session ticker itself.
 
 ## Open question
 

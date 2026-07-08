@@ -90,6 +90,7 @@ Status values and their meaning:
 | `starting` | `Start()` has been called; the process is not yet confirmed live. |
 | `attached` | Process is live and the agent is bound, but `AgentStarted` has not yet been dispatched. `/remove` and sends are rejected in this window. |
 | `idle` | Startup complete (`AgentStarted` dispatched, `sessionReady` set); ready to receive messages. |
+| `keepalive` | Backend maintenance request in flight. No user turn is active, but the participant is temporarily non-sendable and occupies the request lane. |
 | `preparing` | Committed to a send; anchor stream being established. |
 | `working` | Turn in flight; agent is processing and streaming output. |
 | `crashed` | Agent process exited unexpectedly. |
@@ -98,6 +99,15 @@ The participant is the stateful runtime entity. Beyond identity and coarse
 status, it carries active-turn runtime state used by the session and UI (for
 example, tracked open streams while the participant is working) and enforces
 runtime invariants for legal transitions.
+
+Normal transitions include:
+
+- `starting -> attached -> idle`
+- `idle -> preparing -> working -> idle`
+- `idle -> keepalive -> idle`
+
+The UI may render `keepalive` distinctly in the roster, but it does not create
+its own shared-room transcript record.
 
 ---
 
