@@ -6,7 +6,12 @@ import (
 	"testing"
 
 	"github.com/trigosec/coderoom/internal/agent"
+	"go.uber.org/goleak"
 )
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
 
 func TestCollectorNormalizeRecordedPath(t *testing.T) {
 	c := &collector{workDir: "/tmp/codex-record-123"}

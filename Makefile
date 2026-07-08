@@ -9,6 +9,10 @@ build:
 lint:
 	golangci-lint run ./...
 
+.PHONY: check-goleak
+check-goleak:
+	./scripts/check-goleak-testmain.sh
+
 .PHONY: test
 test:
 	go test ./...
@@ -25,7 +29,7 @@ test-integration:
 test-all: lint test-race test-integration
 
 .PHONY: pre-commit
-pre-commit: lint test-race
+pre-commit: check-goleak lint test-race
 
 .PHONY: upgrade-codex
 upgrade-codex:
