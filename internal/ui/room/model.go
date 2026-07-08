@@ -117,6 +117,16 @@ func New(colorByAlias func(string) string, departedColor string) Model {
 	}
 }
 
+// Close stops the room model's background goroutines.
+func (m Model) Close() {
+	if m.chat != nil {
+		m.chat.Close()
+	}
+	if m.roomQueue != nil {
+		m.roomQueue.Close()
+	}
+}
+
 // Init returns the initial command for the component.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.input.compose.Init(), awaitRoomUpdate(m.roomQueue))

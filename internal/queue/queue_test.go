@@ -7,6 +7,7 @@ import (
 
 func TestQueue_deliversInOrder(t *testing.T) {
 	q := New[int]()
+	t.Cleanup(q.Close)
 	want := []int{1, 2, 3}
 	go func() {
 		for _, v := range want {
@@ -26,6 +27,7 @@ func TestQueue_deliversInOrder(t *testing.T) {
 
 func TestQueue_concurrentProducers(_ *testing.T) {
 	q := New[int]()
+	defer q.Close()
 	const n = 50
 	// Two goroutines push concurrently; all values must arrive.
 	for range 2 {
@@ -74,6 +76,7 @@ func TestQueue_pushAfterCloseDoesNotBlock(t *testing.T) {
 
 func TestQueue_tryPull(t *testing.T) {
 	q := New[int]()
+	t.Cleanup(q.Close)
 	if _, ok := q.TryPull(); ok {
 		t.Fatal("expected no value available")
 	}
@@ -96,6 +99,7 @@ func TestQueue_tryPull(t *testing.T) {
 
 func TestQueue_pullTimeout(t *testing.T) {
 	q := New[int]()
+	t.Cleanup(q.Close)
 	if _, ok := q.PullTimeout(10 * time.Millisecond); ok {
 		t.Fatal("expected timeout with no value available")
 	}

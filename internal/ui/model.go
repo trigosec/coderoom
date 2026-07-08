@@ -97,3 +97,11 @@ func New(sess *session.Session, cwd string, opts ...Option) Model {
 	}
 	return m
 }
+
+// Close stops the model-owned background queues.
+func (m Model) Close() {
+	m.room.Close()
+	if m.queue != nil {
+		m.queue.Close()
+	}
+}

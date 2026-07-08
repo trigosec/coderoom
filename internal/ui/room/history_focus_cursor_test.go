@@ -14,7 +14,7 @@ func TestHistoryFocus_rendersCursorInViewport(t *testing.T) {
 	lipgloss.Writer.Profile = colorprofile.ANSI256
 	t.Cleanup(func() { lipgloss.Writer.Profile = prev })
 
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(40, 10)
 	m = m.AppendSystem("hello")
 

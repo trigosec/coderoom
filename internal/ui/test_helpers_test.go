@@ -14,21 +14,33 @@ import (
 // viewport is initialised and syncViewport calls are live.
 func makeReadyModel(t *testing.T) Model {
 	t.Helper()
-	m := New(newTestSession(), ".")
+	m := New(newTestSession(t), ".")
+	t.Cleanup(m.Close)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return next.(Model)
 }
 
 func makeReadyModelWithHeight(t *testing.T, height int) Model {
 	t.Helper()
-	m := New(newTestSession(), ".")
+	m := New(newTestSession(t), ".")
+	t.Cleanup(m.Close)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
 	return next.(Model)
 }
 
 // newTestSession returns a bare session suitable for UI unit tests (no factory).
-func newTestSession() *session.Session {
-	return session.New()
+func newTestSession(t *testing.T) *session.Session {
+	t.Helper()
+	s := session.New()
+	t.Cleanup(s.Shutdown)
+	return s
+}
+
+func newTestModelWithSession(t *testing.T, sess *session.Session) Model {
+	t.Helper()
+	m := New(sess, ".")
+	t.Cleanup(m.Close)
+	return m
 }
 
 // pushEvent sends a session event into the model via Update and returns the result.

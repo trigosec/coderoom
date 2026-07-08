@@ -15,6 +15,7 @@ import (
 
 func TestChannelObserver_forwardsToQueue(t *testing.T) {
 	q := queue.New[session.Event]()
+	t.Cleanup(q.Close)
 	obs := channelObserver{queue: q}
 	go obs.OnEvent(session.AgentStarted{Alias: "ada"})
 	got, ok := q.Pull()

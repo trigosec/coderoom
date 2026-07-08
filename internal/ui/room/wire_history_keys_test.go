@@ -7,7 +7,7 @@ import (
 )
 
 func TestPgUpPgDown_scrollHistoryWithoutAffectingComposer(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 12)
 
 	for range 40 {
@@ -34,7 +34,7 @@ func TestPgUpPgDown_scrollHistoryWithoutAffectingComposer(t *testing.T) {
 }
 
 func TestHistoryFocus_homeEndJumpToTopBottom(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 10)
 	for range 40 {
 		m = m.AppendSystem("[x]")
@@ -55,7 +55,7 @@ func TestHistoryFocus_homeEndJumpToTopBottom(t *testing.T) {
 }
 
 func TestHistoryFocus_arrowKeysScroll(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 10)
 	for range 40 {
 		m = m.AppendSystem("[x]")

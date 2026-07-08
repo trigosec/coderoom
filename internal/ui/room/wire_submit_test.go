@@ -33,7 +33,7 @@ func assertCmdContainsStagedEditMsg(t *testing.T, cmd tea.Cmd) {
 }
 
 func TestEnter_emitsSubmitMsgAndClearsComposer(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("hello")
 
@@ -55,7 +55,7 @@ func TestEnter_emitsSubmitMsgAndClearsComposer(t *testing.T) {
 }
 
 func TestEnter_secondPressDoesNotEmitDuplicateSubmit(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("hello")
 
@@ -74,7 +74,7 @@ func TestEnter_secondPressDoesNotEmitDuplicateSubmit(t *testing.T) {
 }
 
 func TestEnter_whitespaceOnlyDoesNotEmitSubmitMsg(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("   \n\t ")
 
@@ -89,7 +89,7 @@ func TestEnter_whitespaceOnlyDoesNotEmitSubmitMsg(t *testing.T) {
 }
 
 func TestCtrlC_clearsComposerOnlyWhenFocused(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("draft")
 
@@ -112,7 +112,7 @@ func TestCtrlC_clearsComposerOnlyWhenFocused(t *testing.T) {
 }
 
 func TestComposerHeight_isCappedAndDoesNotCollapseHistory(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 30) // max input height = min(8, 30/3=10) => 8
 
 	m = m.SetComposeValue(strings.Repeat("x\n", 20) + "x") // 21 lines
@@ -125,7 +125,7 @@ func TestComposerHeight_isCappedAndDoesNotCollapseHistory(t *testing.T) {
 }
 
 func TestComposeResize_preservesBottomAnchor(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 12)
 	for range 50 {
 		m = m.AppendSystem("line")
@@ -142,7 +142,7 @@ func TestComposeResize_preservesBottomAnchor(t *testing.T) {
 }
 
 func TestStagedStatusResize_preservesBottomAnchor(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 12)
 	for range 50 {
 		m = m.AppendSystem("line")
@@ -164,7 +164,7 @@ func TestStagedStatusResize_preservesBottomAnchor(t *testing.T) {
 }
 
 func TestStagedComposer_blocksKeysAndEscEmitsEditMsg(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.SetComposerStaged("hello", "Message on-hold.")
 
@@ -189,7 +189,7 @@ func TestStagedComposer_blocksKeysAndEscEmitsEditMsg(t *testing.T) {
 }
 
 func TestDispatchStagedBatch_restoresComposerFocus(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 
 	b := staging.NewBatch(

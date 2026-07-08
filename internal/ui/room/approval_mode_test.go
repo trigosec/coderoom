@@ -50,7 +50,7 @@ func firstDecisionMsg(t *testing.T, msgs []tea.Msg) ApprovalDecisionMsg {
 }
 
 func TestApprovalMode_enterEmitsApprovalDecisionMsgAndReturnsToCompose(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.ShowApproval(agent.ApprovalRequest{
 		Ask:     "approve?",
@@ -85,7 +85,7 @@ func TestApprovalMode_enterEmitsApprovalDecisionMsgAndReturnsToCompose(t *testin
 }
 
 func TestApprovalMode_escEmitsDeclineDecisionMsg(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.ShowApproval(agent.ApprovalRequest{
 		Ask:     "approve?",
@@ -111,7 +111,7 @@ func TestApprovalMode_escEmitsDeclineDecisionMsg(t *testing.T) {
 }
 
 func TestApprovalMode_ctrlCEmitsCancelDecisionMsg(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.ShowApproval(agent.ApprovalRequest{
 		Ask:     "approve?",
@@ -134,7 +134,7 @@ func TestApprovalMode_ctrlCEmitsCancelDecisionMsg(t *testing.T) {
 }
 
 func TestApprovalMode_ctrlCRestoresStagedComposer(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	batch := staging.NewBatch(
 		"next turn",

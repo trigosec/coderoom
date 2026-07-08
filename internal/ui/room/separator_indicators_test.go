@@ -9,7 +9,7 @@ import (
 )
 
 func TestSeparatorIndicators_noneWhenContentFits(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 20)
 	m = m.SetComposeValue("one\ntwo")
 	top, bottom := separatorLines(m)
@@ -22,7 +22,7 @@ func TestSeparatorIndicators_noneWhenContentFits(t *testing.T) {
 }
 
 func TestSeparatorIndicators_aboveWhenOverflowAndCursorAtEnd(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 9) // maxH=3 from totalH=9
 	m = m.SetComposeValue("a\nb\nc\nd\ne")
 	top, _ := separatorLines(m)
@@ -33,7 +33,7 @@ func TestSeparatorIndicators_aboveWhenOverflowAndCursorAtEnd(t *testing.T) {
 
 func TestSeparatorIndicators_topNeverShowsDown(t *testing.T) {
 	// Even when HasBelow is true, ▼ must only appear on the bottom separator.
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 9)
 	m = m.SetComposeValue("a\nb\nc\nd\ne")
 	for range 10 {
@@ -46,7 +46,7 @@ func TestSeparatorIndicators_topNeverShowsDown(t *testing.T) {
 }
 
 func TestSeparatorIndicators_belowWhenCursorAtTop(t *testing.T) {
-	m := New(nil, "")
+	m := newTestModel(t)
 	m = m.HandleResize(80, 9)
 	m = m.SetComposeValue("a\nb\nc\nd\ne")
 	for range 10 {
