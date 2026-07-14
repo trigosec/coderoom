@@ -130,7 +130,7 @@ func TestComposeResize_preservesBottomAnchor(t *testing.T) {
 	for range 50 {
 		m = m.AppendSystem("line")
 	}
-	m = m.GotoBottom()
+	m = m.GoLive()
 	if !m.AtBottom() {
 		t.Fatal("expected to start at bottom")
 	}
@@ -141,13 +141,65 @@ func TestComposeResize_preservesBottomAnchor(t *testing.T) {
 	}
 }
 
+func TestComposeResize_preservesExistingHistoryCursor(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	for range 30 {
+		m = m.AppendSystem("line")
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
+	beforeRow, beforeCol := m.HistoryCursorPosition()
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	m = m.SetComposeValue("a\nb\nc")
+	afterRow, afterCol := m.HistoryCursorPosition()
+	if afterRow != beforeRow || afterCol != beforeCol {
+		t.Fatalf("expected composer resize to preserve history cursor; before=(%d,%d) after=(%d,%d)", beforeRow, beforeCol, afterRow, afterCol)
+	}
+}
+
+func TestComposeResize_whenBottomAnchoredInComposer_ignoresHiddenStaleCursor(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	for range 60 {
+		m = m.AppendSystem("line")
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
+	staleRow, staleCol := m.HistoryCursorPosition()
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	for !m.AtBottom() {
+		var cmd tea.Cmd
+		m, cmd = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown}))
+		if cmd != nil {
+			t.Fatalf("expected PgDown not to emit a command in composer focus")
+		}
+	}
+	if !m.AtBottom() {
+		t.Fatal("expected PgDown to return history to the bottom in composer focus")
+	}
+	beforeRow, beforeCol := m.HistoryCursorPosition()
+	if beforeRow != staleRow || beforeCol != staleCol {
+		t.Fatalf("expected composer scroll to bottom not to rewrite hidden cursor; before=(%d,%d) stale=(%d,%d)", beforeRow, beforeCol, staleRow, staleCol)
+	}
+
+	m = m.SetComposeValue("a\nb\nc")
+	if !m.AtBottom() {
+		t.Fatal("expected compose resize to keep history anchored to bottom even with a hidden stale cursor")
+	}
+}
+
 func TestStagedStatusResize_preservesBottomAnchor(t *testing.T) {
 	m := newTestModel(t)
 	m = m.HandleResize(80, 12)
 	for range 50 {
 		m = m.AppendSystem("line")
 	}
-	m = m.GotoBottom()
+	m = m.GoLive()
 	if !m.AtBottom() {
 		t.Fatal("expected to start at bottom")
 	}

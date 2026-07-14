@@ -91,6 +91,7 @@ type Model struct {
 	input        inputModel
 	approvalPrev inputKind
 	focus        roomFocus
+	historyLive  bool
 	debug        bool
 	lastSize     tea.WindowSizeMsg
 	colorByAlias func(string) string
@@ -113,6 +114,7 @@ func New(colorByAlias func(string) string, departedColor string) Model {
 			approval: approval.New(),
 		},
 		focus:        focusInput,
+		historyLive:  true,
 		colorByAlias: colorByAlias,
 	}
 }
@@ -164,6 +166,7 @@ func (m Model) LatestHandoffSource(alias string) (session.HandoffSource, bool) {
 // SetHistorySnapshot replaces the rendered transcript state from the room package.
 func (m Model) SetHistorySnapshot(snapshot roomstate.Snapshot) Model {
 	m.history = m.history.ReplaceSnapshot(snapshot)
+	m = m.syncHistoryFollowAnchor()
 	m.roomVersion = snapshot.Version
 	return m
 }
@@ -466,9 +469,7 @@ func (m Model) HandleResize(innerW, totalH int) Model {
 	h := max(totalH-(3+inputH), 1)
 	m.history = m.history.SetSize(innerW, h)
 	m.history = m.history.RebuildColors()
-	if wasAtBottom {
-		m.history = m.history.GotoBottom()
-	}
+	m = m.syncHistoryAnchorAfterResize(wasAtBottom)
 	return m
 }
 
@@ -505,6 +506,7 @@ func (m Model) applyChatDelta() Model {
 		return m
 	}
 	m.history = m.history.ApplyRoomDelta(delta)
+	m = m.syncHistoryFollowAnchor()
 	m.roomVersion = delta.Version
 	return m
 }
@@ -513,10 +515,16 @@ func (m Model) applyChatSnapshot() Model {
 	return m.SetHistorySnapshot(m.chat.Snapshot())
 }
 
-// GotoBottom scrolls history to the bottom.
+// GotoBottom scrolls history to the bottom without changing live/browse mode.
 func (m Model) GotoBottom() Model {
 	m.history = m.history.GotoBottom()
 	return m
+}
+
+// GoLive arms follow mode and anchors history at the live tail.
+func (m Model) GoLive() Model {
+	m.historyLive = true
+	return m.syncHistoryFollowAnchor()
 }
 
 // DebugLabel returns the separator label suffix used in debug mode.
@@ -530,3 +538,36 @@ func (m Model) AtBottom() bool { return m.history.AtBottom() }
 
 // YOffset returns the history viewport vertical offset.
 func (m Model) YOffset() int { return m.history.YOffset() }
+
+// HistoryCursorPosition returns the history cursor row and column.
+func (m Model) HistoryCursorPosition() (int, int) { return m.history.CursorPosition() }
+
+func (m Model) syncHistoryAnchorAfterResize(wasAtBottom bool) Model {
+	if m.historyLive {
+		return m.syncHistoryFollowAnchor()
+	}
+	if wasAtBottom && m.focus != focusHistory {
+		return m.historyAtBottomBrowse()
+	}
+	if m.focus == focusHistory {
+		m.history = m.history.RevealCursor()
+	}
+	return m
+}
+
+func (m Model) syncHistoryFollowAnchor() Model {
+	if !m.historyLive {
+		return m
+	}
+	if m.focus == focusHistory {
+		m.history = m.history.GotoLiveEnd()
+		return m
+	}
+	m.history = m.history.GotoBottom()
+	return m
+}
+
+func (m Model) historyAtBottomBrowse() Model {
+	m.history = m.history.GotoBottom()
+	return m
+}

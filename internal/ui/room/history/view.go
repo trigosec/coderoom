@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/rivo/uniseg"
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
@@ -13,14 +16,19 @@ import (
 // always exactly viewport.Height lines joined by newlines, with no trailing
 // newline, so the outer layout gets a stable height.
 func (m Model) View() string {
-	if !m.ready {
+	return m.view(true)
+}
+
+// ViewWithoutCursor renders the viewport while suppressing the history cursor.
+func (m Model) ViewWithoutCursor() string {
+	return m.view(false)
+}
+
+func (m Model) view(showCursor bool) string {
+	if !m.viewportReady {
 		return ""
 	}
-	viewportView := strings.TrimSuffix(m.viewport.View(), "\n")
-	var viewportLines []string
-	if viewportView != "" {
-		viewportLines = strings.Split(viewportView, "\n")
-	}
+	viewportLines := m.viewportLines(showCursor)
 	lines := make([]string, m.viewport.Height())
 	for i := range lines {
 		if i < len(viewportLines) {
@@ -31,6 +39,191 @@ func (m Model) View() string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) viewportLines(showCursor bool) []string {
+	if len(m.lines) == 0 || m.viewport.Height() <= 0 {
+		return nil
+	}
+	top := m.viewport.YOffset()
+	if top < 0 {
+		top = 0
+	}
+	if top > len(m.lines) {
+		top = len(m.lines)
+	}
+	bottom := min(top+m.viewport.Height(), len(m.lines))
+	out := make([]string, 0, bottom-top)
+	for row := top; row < bottom; row++ {
+		line := m.lines[row].raw
+		if showCursor && m.cursor.Visible && row == m.cursor.Row {
+			line = renderCursorLine(line, m.cursor.Col, m.viewport.Width())
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+func renderCursorLine(raw string, cursorCol int, width int) string {
+	if width <= 0 {
+		return raw
+	}
+
+	cells, suffix := splitStyledCells(raw)
+	lineWidth := styledCellsWidth(cells)
+	cursorCol = normalizeCursorColumn(cursorCol, lineWidth, width)
+	return lipgloss.NewStyle().Width(width).Render(renderCursorCells(cells, suffix, cursorCol, lineWidth))
+}
+
+type styledCell struct {
+	raw   string
+	width int
+}
+
+func splitStyledCells(raw string) ([]styledCell, string) {
+	var cells []styledCell
+	var pending strings.Builder
+	var suffix strings.Builder
+
+	for i := 0; i < len(raw); {
+		if seqLen := ansiSequenceLength(raw[i:]); seqLen > 0 {
+			pending.WriteString(raw[i : i+seqLen])
+			i += seqLen
+			continue
+		}
+
+		cluster, size, width := nextVisibleCluster(raw[i:])
+		if size == 0 {
+			break
+		}
+
+		if width == 0 {
+			pending.WriteString(cluster)
+		} else {
+			cells = append(cells, styledCell{
+				raw:   pending.String() + cluster,
+				width: width,
+			})
+			pending.Reset()
+		}
+		i += size
+	}
+
+	suffix.WriteString(pending.String())
+	return cells, suffix.String()
+}
+
+func styledCellsWidth(cells []styledCell) int {
+	total := 0
+	for _, cell := range cells {
+		total += cell.width
+	}
+	return total
+}
+
+func nextVisibleCluster(s string) (cluster string, size int, width int) {
+	gr := uniseg.NewGraphemes(s)
+	if !gr.Next() {
+		return "", 0, 0
+	}
+	cluster = gr.Str()
+	size = len(cluster)
+	width = ansi.StringWidth(cluster)
+	return cluster, size, width
+}
+
+func ansiSequenceLength(s string) int {
+	if len(s) == 0 || s[0] != '\x1b' {
+		return 0
+	}
+	if len(s) == 1 {
+		return 1
+	}
+	return ansiSequenceBodyLength(s)
+}
+
+func normalizeCursorColumn(cursorCol, lineWidth, width int) int {
+	cursorCol = clampInt(cursorCol, lineWidth)
+	if cursorCol == lineWidth && lineWidth >= width && lineWidth > 0 {
+		return lineWidth - 1
+	}
+	return cursorCol
+}
+
+func renderCursorCells(cells []styledCell, suffix string, cursorCol int, lineWidth int) string {
+	if cursorCol == lineWidth {
+		return renderCursorAtLineEnd(cells, suffix)
+	}
+	return renderCursorInsideLine(cells, suffix, cursorCol)
+}
+
+func renderCursorAtLineEnd(cells []styledCell, suffix string) string {
+	cursorStyle := lipgloss.NewStyle().Reverse(true)
+	var b strings.Builder
+	for _, cell := range cells {
+		b.WriteString(cell.raw)
+	}
+	b.WriteString(suffix)
+	b.WriteString(cursorStyle.Render(" "))
+	return b.String()
+}
+
+func renderCursorInsideLine(cells []styledCell, suffix string, cursorCol int) string {
+	var b strings.Builder
+	col := 0
+	for _, cell := range cells {
+		next := col + cell.width
+		if cursorCol >= col && cursorCol < next {
+			b.WriteString("\x1b[7m")
+			b.WriteString(cell.raw)
+			b.WriteString("\x1b[27m")
+		} else {
+			b.WriteString(cell.raw)
+		}
+		col = next
+	}
+	b.WriteString(suffix)
+	return b.String()
+}
+
+func ansiSequenceBodyLength(s string) int {
+	switch s[1] {
+	case '[':
+		return ansiCSISequenceLength(s)
+	case ']':
+		return ansiOSCSequenceLength(s)
+	default:
+		return ansiSingleEscapeLength(s)
+	}
+}
+
+func ansiCSISequenceLength(s string) int {
+	for i := 2; i < len(s); i++ {
+		if s[i] >= 0x40 && s[i] <= 0x7e {
+			return i + 1
+		}
+	}
+	return len(s)
+}
+
+func ansiOSCSequenceLength(s string) int {
+	for i := 2; i < len(s); i++ {
+		if s[i] == '\a' {
+			return i + 1
+		}
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '\\' {
+			return i + 2
+		}
+	}
+	return len(s)
+}
+
+func ansiSingleEscapeLength(s string) int {
+	_, size := utf8.DecodeRuneInString(s[1:])
+	if size <= 0 {
+		return 1
+	}
+	return 1 + size
 }
 
 // RenderedContent returns the raw rendered records joined by newlines; useful

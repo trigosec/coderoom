@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent"
 	roomstate "github.com/trigosec/coderoom/internal/room"
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
@@ -25,15 +26,29 @@ type viewRecord struct {
 	cache  renderCache
 }
 
+type historyLine struct {
+	raw   string
+	plain string
+}
+
+// Cursor tracks the history caret on the visible rendered surface.
+type Cursor struct {
+	Row          int
+	Col          int
+	PreferredCol int
+	Visible      bool
+}
+
 // Model holds the conversation record list and its viewport.
 type Model struct {
 	viewport      viewport.Model
 	records       []viewRecord
-	contentLines  int
+	lines         []historyLine
 	streaming     map[agent.StreamID]streamSlot // streamID → open record slot
 	departed      map[string]bool
 	debugRowNums  bool
-	ready         bool
+	viewportReady bool
+	cursor        Cursor
 	colorByAlias  func(string) string
 	departedColor string
 	colorVersion  uint64
@@ -64,7 +79,7 @@ func New(colorByAlias func(string) string, departedColor string) Model {
 // ScrollStats reports the current scroll position and content height.
 func (m Model) ScrollStats() ScrollStats {
 	viewportRows := m.viewport.Height()
-	contentRows := m.contentLines
+	contentRows := len(m.lines)
 	top := m.viewport.YOffset()
 
 	if viewportRows < 0 {
@@ -96,13 +111,19 @@ func (m Model) ScrollStats() ScrollStats {
 	}
 }
 
-func countContentLines(s string) int {
-	if s == "" {
-		return 0
+func splitHistoryLines(content string) []historyLine {
+	if content == "" {
+		return nil
 	}
-	// Normalise to a content string without a trailing newline.
-	s = strings.TrimSuffix(s, "\n")
-	return strings.Count(s, "\n") + 1
+	rows := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	lines := make([]historyLine, len(rows))
+	for i, row := range rows {
+		lines[i] = historyLine{
+			raw:   row,
+			plain: ansi.Strip(row),
+		}
+	}
+	return lines
 }
 
 // resolveColor returns the display colour for alias, accounting for departed state.
@@ -127,8 +148,8 @@ func (m Model) viewportRenderContext() rec.RenderContext {
 	}
 }
 
-// Ready reports whether SetSize has been called at least once.
-func (m Model) Ready() bool { return m.ready }
+// Ready reports whether the viewport has been initialized with a size.
+func (m Model) Ready() bool { return m.viewportReady }
 
 // Records returns the current record slice.
 func (m Model) Records() []rec.Record {
@@ -183,8 +204,6 @@ func (m Model) ToggleDebugRowNums() Model {
 // pinned to the bottom afterward; otherwise the scroll position is left
 // alone so reading scrolled-up history isn't interrupted by new content.
 func (m Model) ReplaceSnapshot(snapshot roomstate.Snapshot) Model {
-	wasAtBottom := m.viewport.AtBottom()
-
 	m.records = make([]viewRecord, len(snapshot.Records))
 	for i, r := range snapshot.Records {
 		m.records[i] = viewRecord{record: r}
@@ -200,17 +219,11 @@ func (m Model) ReplaceSnapshot(snapshot roomstate.Snapshot) Model {
 		m.streaming[stream.StreamID] = streamSlot{recordIdx: stream.RecordIdx}
 	}
 
-	m = m.syncViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-	return m
+	return m.syncViewport(false)
 }
 
 // ApplyRoomDelta updates the history from an incremental room delta.
 func (m Model) ApplyRoomDelta(delta roomstate.Delta) Model {
-	wasAtBottom := m.viewport.AtBottom()
-
 	for _, update := range delta.RecordUpdates {
 		if update.Index < 0 {
 			continue
@@ -238,11 +251,7 @@ func (m Model) ApplyRoomDelta(delta roomstate.Delta) Model {
 		m.streaming[stream.StreamID] = streamSlot{recordIdx: stream.RecordIdx}
 	}
 
-	m = m.syncViewport()
-	if wasAtBottom {
-		m.viewport.GotoBottom()
-	}
-	return m
+	return m.syncViewport(false)
 }
 
 func sameDeparted(left, right map[string]bool) bool {

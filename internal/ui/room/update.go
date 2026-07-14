@@ -9,6 +9,7 @@ import (
 	roomstate "github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/ui/editor"
 	"github.com/trigosec/coderoom/internal/ui/room/approval"
+	"github.com/trigosec/coderoom/internal/ui/room/history"
 )
 
 // Update handles incoming messages and returns the next model state.
@@ -52,11 +53,23 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	// PgUp/PgDn always scroll history, regardless of focus.
 	if k.Code == tea.KeyPgUp {
-		m.history = m.history.HalfPageUp()
+		if m.focus == focusHistory {
+			m.history = m.history.CursorPageUp()
+			m.historyLive = m.history.CursorAtLiveEnd()
+		} else {
+			m.history = m.history.HalfPageUp()
+			m.historyLive = false
+		}
 		return m, nil
 	}
 	if k.Code == tea.KeyPgDown {
-		m.history = m.history.HalfPageDown()
+		if m.focus == focusHistory {
+			m.history = m.history.CursorPageDown()
+			m.historyLive = m.history.CursorAtLiveEnd()
+		} else {
+			m.history = m.history.HalfPageDown()
+			m.historyLive = m.history.AtBottom()
+		}
 		return m, nil
 	}
 
@@ -73,6 +86,13 @@ func (m Model) toggleFocus() (Model, tea.Cmd) {
 	if m.focus == focusInput {
 		m.focus = focusHistory
 		m.input.compose = m.input.compose.Blur()
+		if m.historyLive || m.history.AtBottom() {
+			m.history = m.history.GotoLiveEnd()
+			m.historyLive = true
+		} else {
+			m.history = m.history.AdoptCursorFromViewport()
+			m.historyLive = false
+		}
 		return m, nil
 	}
 	m.focus = focusInput
@@ -154,30 +174,21 @@ func (m Model) handleHistoryKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if k.Mod.Contains(tea.ModCtrl) {
 		return m.handleHistoryCtrlKey(k, msg)
 	}
-	switch k.Code {
-	case tea.KeyUp:
-		m.history = m.history.ScrollUp(1)
-		return m, nil
-	case tea.KeyDown:
-		m.history = m.history.ScrollDown(1)
-		return m, nil
-	case tea.KeyHome:
-		m.history = m.history.GotoTop()
-		return m, nil
-	case tea.KeyEnd:
-		m.history = m.history.GotoBottom()
-		return m, nil
-	case tea.KeyEsc:
+	if k.Code == tea.KeyEsc {
 		m.focus = focusInput
 		if m.input.kind == inputCompose {
 			return m.composeFocus()
 		}
 		return m, nil
-	default:
-		var cmd tea.Cmd
-		m.history, cmd = m.history.Update(msg)
-		return m, cmd
 	}
+	if nextHistory, handled := applyHistoryCursorKey(m.history, k); handled {
+		m.history = nextHistory
+		m.historyLive = m.history.CursorAtLiveEnd()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.history, cmd = m.history.Update(msg)
+	return m, cmd
 }
 
 func (m Model) handleHistoryCtrlKey(k tea.Key, msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -190,6 +201,25 @@ func (m Model) handleHistoryCtrlKey(k tea.Key, msg tea.KeyPressMsg) (Model, tea.
 		var cmd tea.Cmd
 		m.history, cmd = m.history.Update(msg)
 		return m, cmd
+	}
+}
+
+func applyHistoryCursorKey(historyModel history.Model, key tea.Key) (history.Model, bool) {
+	switch key.Code {
+	case tea.KeyUp:
+		return historyModel.CursorUp(), true
+	case tea.KeyDown:
+		return historyModel.CursorDown(), true
+	case tea.KeyLeft:
+		return historyModel.CursorLeft(), true
+	case tea.KeyRight:
+		return historyModel.CursorRight(), true
+	case tea.KeyHome:
+		return historyModel.CursorLineStart(), true
+	case tea.KeyEnd:
+		return historyModel.CursorLineEnd(), true
+	default:
+		return historyModel, false
 	}
 }
 
@@ -293,8 +323,5 @@ func (m Model) syncAfterCompose() Model {
 	}
 	wasAtBottom := m.history.AtBottom()
 	m.history = m.history.SetHeight(newHistH)
-	if wasAtBottom {
-		m.history = m.history.GotoBottom()
-	}
-	return m
+	return m.syncHistoryAnchorAfterResize(wasAtBottom)
 }

@@ -5,32 +5,35 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent"
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 // SetSize initialises or resizes the viewport.
 func (m Model) SetSize(w, h int) Model {
-	if !m.ready {
+	prevWidth := 0
+	if !m.viewportReady {
 		m.viewport = viewport.New(viewport.WithWidth(w), viewport.WithHeight(h))
-		m.ready = true
+		m.viewportReady = true
 	} else {
+		prevWidth = m.viewport.Width()
 		m.viewport.SetWidth(w)
 		m.viewport.SetHeight(h)
 	}
-	return m.syncViewport()
+	return m.syncViewport(prevWidth != w)
 }
 
 // SetHeight adjusts the viewport height and re-syncs content.
 func (m Model) SetHeight(h int) Model {
 	m.viewport.SetHeight(h)
-	return m.syncViewport()
+	return m.syncViewport(false)
 }
 
 // RebuildColors re-renders every record using the current color resolution.
 func (m Model) RebuildColors() Model {
 	m.colorVersion++
-	return m.syncViewport()
+	return m.syncViewport(false)
 }
 
 // IsReasoningStreaming reports whether alias has an open reasoning stream.
@@ -52,6 +55,60 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
+}
+
+// CursorVisible reports whether the history cursor has been initialised.
+func (m Model) CursorVisible() bool { return m.cursor.Visible }
+
+// CursorPosition reports the current cursor row and column on the visible surface.
+func (m Model) CursorPosition() (int, int) { return m.cursor.Row, m.cursor.Col }
+
+// CursorAtLiveEnd reports whether the history cursor is at the live end.
+func (m Model) CursorAtLiveEnd() bool { return m.cursorAtLiveEnd() }
+
+// RevealCursor scrolls just enough to bring the current history cursor into view.
+func (m Model) RevealCursor() Model { return m.ensureCursorVisible() }
+
+// AdoptCursorFromViewport places the history cursor onto the currently visible
+// viewport without moving that viewport.
+func (m Model) AdoptCursorFromViewport() Model {
+	if len(m.lines) == 0 {
+		m.cursor = Cursor{}
+		return m
+	}
+	top := clampInt(m.viewport.YOffset(), len(m.lines)-1)
+	height := max(m.viewport.Height(), 1)
+	row := min(top+height-1, len(m.lines)-1)
+	m.cursor = Cursor{
+		Row:          row,
+		Col:          0,
+		PreferredCol: 0,
+		Visible:      true,
+	}
+	return m
+}
+
+// ShowCursorInViewport keeps the current viewport position and, if needed,
+// moves the history cursor onto the visible surface.
+func (m Model) ShowCursorInViewport() Model {
+	if !m.hasCursor() {
+		return m
+	}
+	top := m.viewport.YOffset()
+	height := max(m.viewport.Height(), 1)
+	bottom := min(top+height-1, len(m.lines)-1)
+	if m.cursor.Row < top {
+		m.cursor.Row = top
+	} else if m.cursor.Row > bottom {
+		m.cursor.Row = bottom
+	}
+	lineEnd := lineWidth(m.lines[m.cursor.Row])
+	if m.cursor.PreferredCol > lineEnd {
+		m.cursor.Col = lineEnd
+	} else {
+		m.cursor.Col = m.cursor.PreferredCol
+	}
+	return m
 }
 
 // HalfPageUp scrolls the viewport up by half a page.
@@ -78,9 +135,117 @@ func (m Model) AtBottom() bool { return m.viewport.AtBottom() }
 // YOffset returns the current viewport vertical scroll offset.
 func (m Model) YOffset() int { return m.viewport.YOffset() }
 
-func (m Model) syncViewport() Model {
-	if !m.ready {
+// GotoLiveEnd moves the history cursor to the end of the visible surface and
+// scrolls to keep it visible.
+func (m Model) GotoLiveEnd() Model {
+	if len(m.lines) == 0 {
+		m.cursor = Cursor{}
 		return m
+	}
+	lastRow := len(m.lines) - 1
+	m.cursor = Cursor{
+		Row:          lastRow,
+		Col:          lineWidth(m.lines[lastRow]),
+		PreferredCol: lineWidth(m.lines[lastRow]),
+		Visible:      true,
+	}
+	return m.ensureCursorVisible()
+}
+
+// CursorUp moves the cursor one visible row up, preserving preferred column.
+func (m Model) CursorUp() Model {
+	if !m.hasCursor() || m.cursor.Row == 0 {
+		return m.ensureCursorVisible()
+	}
+	return m.moveCursorVertical(-1)
+}
+
+// CursorDown moves the cursor one visible row down, preserving preferred column.
+func (m Model) CursorDown() Model {
+	if !m.hasCursor() || m.cursor.Row >= len(m.lines)-1 {
+		return m.ensureCursorVisible()
+	}
+	return m.moveCursorVertical(1)
+}
+
+// CursorLeft moves the cursor one visible cell to the left, crossing line
+// boundaries when needed.
+func (m Model) CursorLeft() Model {
+	if !m.hasCursor() {
+		return m
+	}
+	switch {
+	case m.cursor.Col > 0:
+		m.cursor.Col--
+	case m.cursor.Row > 0:
+		m.cursor.Row--
+		m.cursor.Col = lineWidth(m.lines[m.cursor.Row])
+	default:
+		return m.ensureCursorVisible()
+	}
+	m.cursor.PreferredCol = m.cursor.Col
+	return m.ensureCursorVisible()
+}
+
+// CursorRight moves the cursor one visible cell to the right, crossing line
+// boundaries when needed.
+func (m Model) CursorRight() Model {
+	if !m.hasCursor() {
+		return m
+	}
+	lineEnd := lineWidth(m.lines[m.cursor.Row])
+	switch {
+	case m.cursor.Col < lineEnd:
+		m.cursor.Col++
+	case m.cursor.Row < len(m.lines)-1:
+		m.cursor.Row++
+		m.cursor.Col = 0
+	default:
+		return m.ensureCursorVisible()
+	}
+	m.cursor.PreferredCol = m.cursor.Col
+	return m.ensureCursorVisible()
+}
+
+// CursorLineStart moves the cursor to the start of the current visible line.
+func (m Model) CursorLineStart() Model {
+	if !m.hasCursor() {
+		return m
+	}
+	m.cursor.Col = 0
+	m.cursor.PreferredCol = 0
+	return m.ensureCursorVisible()
+}
+
+// CursorLineEnd moves the cursor to the end of the current visible line.
+func (m Model) CursorLineEnd() Model {
+	if !m.hasCursor() {
+		return m
+	}
+	m.cursor.Col = lineWidth(m.lines[m.cursor.Row])
+	m.cursor.PreferredCol = m.cursor.Col
+	return m.ensureCursorVisible()
+}
+
+// CursorPageUp moves the cursor up by roughly one viewport height.
+func (m Model) CursorPageUp() Model {
+	return m.moveCursorByPage(-1)
+}
+
+// CursorPageDown moves the cursor down by roughly one viewport height.
+func (m Model) CursorPageDown() Model {
+	return m.moveCursorByPage(1)
+}
+
+func (m Model) syncViewport(remapCursor bool) Model {
+	if !m.viewportReady {
+		return m
+	}
+	prevTop := m.viewport.YOffset()
+	wasLiveEnd := remapCursor && m.cursorAtLiveEnd()
+	cursorCoord, hasCursorCoord := surfaceCoord{}, false
+	if remapCursor {
+		cursorCoord, hasCursorCoord = m.cursorSurfaceCoord()
 	}
 	ctx := m.viewportRenderContext()
 	rendered := make([]string, 0, len(m.records))
@@ -90,8 +255,10 @@ func (m Model) syncViewport() Model {
 		rendered = append(rendered, out)
 	}
 	content := joinRenderedForViewport(m.records, rendered)
-	m.contentLines = countContentLines(content)
+	m.lines = splitHistoryLines(content)
 	m.viewport.SetContent(content)
+	m.viewport.SetYOffset(clampViewportTop(prevTop, len(m.lines), m.viewport.Height()))
+	m = m.syncCursor(remapCursor, wasLiveEnd, cursorCoord, hasCursorCoord)
 	return m
 }
 
@@ -117,4 +284,182 @@ func joinRenderedForViewport(records []viewRecord, rendered []string) string {
 		b.WriteString(renderedRec)
 	}
 	return b.String()
+}
+
+func (m Model) hasCursor() bool {
+	return m.cursor.Visible && len(m.lines) > 0
+}
+
+func (m Model) cursorAtLiveEnd() bool {
+	if !m.hasCursor() || len(m.lines) == 0 {
+		return true
+	}
+	lastRow := len(m.lines) - 1
+	return m.cursor.Row == lastRow && m.cursor.Col == lineWidth(m.lines[lastRow])
+}
+
+type surfaceCoord struct {
+	Advance int
+}
+
+func (m Model) syncCursor(remapCursor bool, wasLiveEnd bool, cursorCoord surfaceCoord, hasCursorCoord bool) Model {
+	if len(m.lines) == 0 {
+		m.cursor = Cursor{}
+		return m
+	}
+	if m.shouldGotoLiveEnd(remapCursor, wasLiveEnd) {
+		return m.GotoLiveEnd()
+	}
+	if remapCursor && hasCursorCoord {
+		return m.setCursorFromSurfaceCoord(cursorCoord)
+	}
+	return m.clampCursorPosition()
+}
+
+func (m Model) cursorSurfaceCoord() (surfaceCoord, bool) {
+	if !m.hasCursor() {
+		return surfaceCoord{}, false
+	}
+	coord := surfaceCoord{}
+	for row := 0; row < m.cursor.Row && row < len(m.lines); row++ {
+		coord.Advance += lineWidth(m.lines[row]) + 1
+	}
+	coord.Advance += m.cursor.Col
+	return coord, true
+}
+
+func (m Model) setCursorFromSurfaceCoord(coord surfaceCoord) Model {
+	if len(m.lines) == 0 {
+		m.cursor = Cursor{}
+		return m
+	}
+	if coord.Advance < 0 {
+		coord.Advance = 0
+	}
+	row := 0
+	remaining := coord.Advance
+	for row < len(m.lines)-1 {
+		rowSpan := lineWidth(m.lines[row]) + 1
+		if remaining < rowSpan {
+			break
+		}
+		remaining -= rowSpan
+		row++
+	}
+	lineEnd := lineWidth(m.lines[row])
+	col := clampInt(remaining, lineEnd)
+	m.cursor.Row = row
+	m.cursor.Col = col
+	m.cursor.PreferredCol = col
+	m.cursor.Visible = true
+	return m
+}
+
+func (m Model) shouldGotoLiveEnd(remapCursor bool, wasLiveEnd bool) bool {
+	if !m.cursor.Visible {
+		return true
+	}
+	return remapCursor && wasLiveEnd
+}
+
+func (m Model) clampCursorPosition() Model {
+	m.cursor.Row = clampInt(m.cursor.Row, len(m.lines)-1)
+	lineEnd := lineWidth(m.lines[m.cursor.Row])
+	m.cursor.Col = clampInt(m.cursor.Col, lineEnd)
+	if m.cursor.PreferredCol < 0 {
+		m.cursor.PreferredCol = 0
+	}
+	m.cursor.Visible = true
+	return m
+}
+
+func (m Model) moveCursorVertical(delta int) Model {
+	if !m.hasCursor() {
+		return m
+	}
+	nextRow := m.cursor.Row + delta
+	if nextRow < 0 {
+		nextRow = 0
+	}
+	if nextRow >= len(m.lines) {
+		nextRow = len(m.lines) - 1
+	}
+	m.cursor.Row = nextRow
+	lineEnd := lineWidth(m.lines[m.cursor.Row])
+	if m.cursor.PreferredCol > lineEnd {
+		m.cursor.Col = lineEnd
+	} else {
+		m.cursor.Col = m.cursor.PreferredCol
+	}
+	return m.ensureCursorVisible()
+}
+
+func (m Model) moveCursorByPage(direction int) Model {
+	if !m.hasCursor() {
+		return m
+	}
+	step := max(m.viewport.Height(), 1)
+	if direction < 0 {
+		step = -step
+	}
+	nextRow := m.cursor.Row + step
+	if nextRow < 0 {
+		nextRow = 0
+	}
+	if nextRow >= len(m.lines) {
+		nextRow = len(m.lines) - 1
+	}
+	m.cursor.Row = nextRow
+	lineEnd := lineWidth(m.lines[m.cursor.Row])
+	if m.cursor.PreferredCol > lineEnd {
+		m.cursor.Col = lineEnd
+	} else {
+		m.cursor.Col = m.cursor.PreferredCol
+	}
+	return m.ensureCursorVisible()
+}
+
+func (m Model) ensureCursorVisible() Model {
+	if !m.hasCursor() {
+		return m
+	}
+	top := m.viewport.YOffset()
+	height := max(m.viewport.Height(), 1)
+	bottom := top + height - 1
+
+	switch {
+	case m.cursor.Row < top:
+		m.viewport.SetYOffset(m.cursor.Row)
+	case m.cursor.Row > bottom:
+		m.viewport.SetYOffset(m.cursor.Row - height + 1)
+	}
+	return m
+}
+
+func lineWidth(line historyLine) int {
+	return ansi.StringWidth(line.plain)
+}
+
+func clampViewportTop(top, contentRows, height int) int {
+	if top < 0 {
+		top = 0
+	}
+	maxTop := 0
+	if height > 0 && contentRows > height {
+		maxTop = contentRows - height
+	}
+	if top > maxTop {
+		top = maxTop
+	}
+	return top
+}
+
+func clampInt(n, maxValue int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > maxValue {
+		return maxValue
+	}
+	return n
 }
