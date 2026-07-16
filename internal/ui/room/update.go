@@ -47,33 +47,58 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	k := msg.Key()
-	if k.Code == 'o' && k.Mod.Contains(tea.ModCtrl) {
+	if isCtrlKey(msg, 'o') {
 		return m.toggleFocus()
 	}
 
 	// PgUp/PgDn always scroll history, regardless of focus.
-	if k.Code == tea.KeyPgUp {
-		if m.focus == focusHistory {
-			m.history = m.history.CursorPageUp()
-			m.historyLive = m.history.CursorAtLiveEnd()
-		} else {
-			m.history = m.history.HalfPageUp()
-			m.historyLive = false
-		}
-		return m, nil
-	}
-	if k.Code == tea.KeyPgDown {
-		if m.focus == focusHistory {
-			m.history = m.history.CursorPageDown()
-			m.historyLive = m.history.CursorAtLiveEnd()
-		} else {
-			m.history = m.history.HalfPageDown()
-			m.historyLive = m.history.AtBottom()
-		}
-		return m, nil
+	if next, handled := m.handlePagingKey(k); handled {
+		return next, nil
 	}
 
-	if m.focus == focusHistory {
+	return m.handleFocusedKey(msg)
+}
+
+func (m Model) handlePagingKey(k tea.Key) (Model, bool) {
+	if m.activeFocus == focusHistory && k.Mod.Contains(tea.ModShift) {
+		return m, false
+	}
+	switch k.Code {
+	case tea.KeyPgUp:
+		return m.pageUp(), true
+	case tea.KeyPgDown:
+		return m.pageDown(), true
+	default:
+		return m, false
+	}
+}
+
+func (m Model) pageUp() Model {
+	if m.activeFocus == focusHistory {
+		m.history = m.history.ClearSelection()
+		m.history = m.history.CursorPageUp()
+		m.historyLive = m.history.CursorAtLiveEnd()
+		return m
+	}
+	m.history = m.history.HalfPageUp()
+	m.historyLive = false
+	return m
+}
+
+func (m Model) pageDown() Model {
+	if m.activeFocus == focusHistory {
+		m.history = m.history.ClearSelection()
+		m.history = m.history.CursorPageDown()
+		m.historyLive = m.history.CursorAtLiveEnd()
+		return m
+	}
+	m.history = m.history.HalfPageDown()
+	m.historyLive = m.history.AtBottom()
+	return m
+}
+
+func (m Model) handleFocusedKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.activeFocus == focusHistory {
 		return m.handleHistoryKey(msg)
 	}
 	if m.input.kind == inputApproval {
@@ -83,8 +108,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) toggleFocus() (Model, tea.Cmd) {
-	if m.focus == focusInput {
-		m.focus = focusHistory
+	if m.activeFocus == focusInput {
+		m.activeFocus = focusHistory
 		m.input.compose = m.input.compose.Blur()
 		if m.historyLive || m.history.AtBottom() {
 			m.history = m.history.GotoLiveEnd()
@@ -95,7 +120,8 @@ func (m Model) toggleFocus() (Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.focus = focusInput
+	m.history = m.history.ClearSelection()
+	m.activeFocus = focusInput
 	if m.input.kind == inputCompose {
 		return m.composeFocus()
 	}
@@ -103,8 +129,7 @@ func (m Model) toggleFocus() (Model, tea.Cmd) {
 }
 
 func (m Model) handleApprovalKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	k := msg.Key()
-	if k.Code == 'c' && k.Mod.Contains(tea.ModCtrl) {
+	if isCtrlKey(msg, 'c') {
 		// Treat Ctrl+C as cancel when an approval is active.
 		next, cmd, _ := m.handleApprovalMessage(approval.CancelMsg{})
 		return next, cmd
@@ -129,12 +154,12 @@ func (m Model) handleStagedComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case k.Code == tea.KeyEsc:
 		// Return to draft mode with the staged text loaded for editing.
 		m = m.ClearComposerStaged()
-		m.focus = focusInput
+		m.activeFocus = focusInput
 		next, focusCmd := m.composeFocus()
 		return next, tea.Batch(focusCmd, func() tea.Msg { return StagedEditMsg{} })
-	case k.Code == 'x' && k.Mod.Contains(tea.ModCtrl):
+	case isCtrlKey(msg, 'x'):
 		return m, func() tea.Msg { return StagedInterruptMsg{} }
-	case k.Code == 'c' && k.Mod.Contains(tea.ModCtrl):
+	case isCtrlKey(msg, 'c'):
 		if m.input.compose.Value() == "" {
 			return m, nil
 		}
@@ -151,7 +176,7 @@ func (m Model) handleStagedComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 func (m Model) handleDraftComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	k := msg.Key()
 	switch {
-	case k.Code == 'g' && k.Mod.Contains(tea.ModCtrl):
+	case isCtrlKey(msg, 'g'):
 		return m.startEditorCompose()
 	case k.Code == tea.KeyEnter && !k.Mod.Contains(tea.ModAlt):
 		raw := m.input.compose.Value()
@@ -172,17 +197,29 @@ func (m Model) handleDraftComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 func (m Model) handleHistoryKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	k := msg.Key()
 	if k.Mod.Contains(tea.ModCtrl) {
-		return m.handleHistoryCtrlKey(k, msg)
+		return m.handleHistoryCtrlKey(msg)
 	}
 	if k.Code == tea.KeyEsc {
-		m.focus = focusInput
+		if m.history.HasSelection() {
+			m.history = m.history.ClearSelection()
+			m.historyLive = m.history.CursorAtLiveEnd()
+			return m, nil
+		}
+		m.activeFocus = focusInput
 		if m.input.kind == inputCompose {
 			return m.composeFocus()
 		}
 		return m, nil
 	}
+	if k.Mod.Contains(tea.ModShift) {
+		if nextHistory, handled := applyHistorySelectionKey(m.history, k); handled {
+			m.history = nextHistory
+			m.historyLive = m.history.CursorAtLiveEnd()
+			return m, nil
+		}
+	}
 	if nextHistory, handled := applyHistoryCursorKey(m.history, k); handled {
-		m.history = nextHistory
+		m.history = nextHistory.ClearSelection()
 		m.historyLive = m.history.CursorAtLiveEnd()
 		return m, nil
 	}
@@ -191,17 +228,36 @@ func (m Model) handleHistoryKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) handleHistoryCtrlKey(k tea.Key, msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	switch k.Code {
-	case 'c':
-		return m, nil
-	case 'g':
+func (m Model) handleHistoryCtrlKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch {
+	case isCtrlKey(msg, 'c'):
+		return m.copyHistorySelection(), nil
+	case isCtrlKey(msg, 'g'):
 		return m.openEditorWithTranscript()
 	default:
 		var cmd tea.Cmd
 		m.history, cmd = m.history.Update(msg)
 		return m, cmd
 	}
+}
+
+func isCtrlKey(msg tea.KeyPressMsg, key rune) bool {
+	if msg.String() == "ctrl+"+string(key) {
+		return true
+	}
+	k := msg.Key()
+	return k.Code == key && k.Mod.Contains(tea.ModCtrl)
+}
+
+func (m Model) copyHistorySelection() Model {
+	selected, ok := m.history.SelectedText()
+	if !ok || m.clipboardWrite == nil {
+		return m
+	}
+	if err := m.clipboardWrite(selected); err != nil {
+		return m.AppendSystem("error: copy failed: " + err.Error())
+	}
+	return m
 }
 
 func applyHistoryCursorKey(historyModel history.Model, key tea.Key) (history.Model, bool) {
@@ -218,6 +274,29 @@ func applyHistoryCursorKey(historyModel history.Model, key tea.Key) (history.Mod
 		return historyModel.CursorLineStart(), true
 	case tea.KeyEnd:
 		return historyModel.CursorLineEnd(), true
+	default:
+		return historyModel, false
+	}
+}
+
+func applyHistorySelectionKey(historyModel history.Model, key tea.Key) (history.Model, bool) {
+	switch key.Code {
+	case tea.KeyUp:
+		return historyModel.SelectUp(), true
+	case tea.KeyDown:
+		return historyModel.SelectDown(), true
+	case tea.KeyLeft:
+		return historyModel.SelectLeft(), true
+	case tea.KeyRight:
+		return historyModel.SelectRight(), true
+	case tea.KeyHome:
+		return historyModel.SelectLineStart(), true
+	case tea.KeyEnd:
+		return historyModel.SelectLineEnd(), true
+	case tea.KeyPgUp:
+		return historyModel.SelectPageUp(), true
+	case tea.KeyPgDown:
+		return historyModel.SelectPageDown(), true
 	default:
 		return historyModel, false
 	}

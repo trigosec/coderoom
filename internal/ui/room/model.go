@@ -6,10 +6,15 @@
 package room
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
+	"os"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/atotto/clipboard"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/queue"
@@ -21,6 +26,8 @@ import (
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 	"github.com/trigosec/coderoom/internal/ui/room/staging"
 )
+
+var systemClipboardWrite = clipboard.WriteAll
 
 type roomFocus int
 
@@ -57,6 +64,11 @@ type stagedInput struct {
 	batch  *staging.Batch
 }
 
+type approvalState struct {
+	previousInputKind inputKind
+	restoreFocus      roomFocus
+}
+
 // SubmitMsg is emitted when the user submits the composer (Enter without Alt).
 // The parent should handle the text (parse, route, execute) and update the room
 // history accordingly.
@@ -84,17 +96,18 @@ type ApprovalDecisionMsg struct {
 
 // Model is the Bubble Tea component for a single room: history + composer.
 type Model struct {
-	history      history.Model
-	chat         *roomstate.Room
-	roomQueue    *queue.Queue[roomstate.Update]
-	roomVersion  uint64
-	input        inputModel
-	approvalPrev inputKind
-	focus        roomFocus
-	historyLive  bool
-	debug        bool
-	lastSize     tea.WindowSizeMsg
-	colorByAlias func(string) string
+	history        history.Model
+	chat           *roomstate.Room
+	roomQueue      *queue.Queue[roomstate.Update]
+	roomVersion    uint64
+	input          inputModel
+	approval       approvalState
+	activeFocus    roomFocus
+	historyLive    bool
+	debug          bool
+	lastSize       tea.WindowSizeMsg
+	colorByAlias   func(string) string
+	clipboardWrite func(string) error
 }
 
 // New creates a room model with a fresh history model.
@@ -113,10 +126,36 @@ func New(colorByAlias func(string) string, departedColor string) Model {
 			compose:  compose,
 			approval: approval.New(),
 		},
-		focus:        focusInput,
-		historyLive:  true,
-		colorByAlias: colorByAlias,
+		approval: approvalState{
+			previousInputKind: inputCompose,
+			restoreFocus:      focusInput,
+		},
+		activeFocus:    focusInput,
+		historyLive:    true,
+		colorByAlias:   colorByAlias,
+		clipboardWrite: defaultClipboardWriter(os.Stdout),
 	}
+}
+
+func defaultClipboardWriter(out io.Writer) func(string) error {
+	return func(text string) error {
+		if err := systemClipboardWrite(text); err == nil {
+			return nil
+		}
+		return writeOSC52(out, text)
+	}
+}
+
+func writeOSC52(out io.Writer, text string) error {
+	if out == nil {
+		return errors.New("missing terminal output")
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(text))
+	_, err := io.WriteString(out, "\x1b]52;c;"+encoded+"\a")
+	if err != nil {
+		return fmt.Errorf("write OSC52 escape: %w", err)
+	}
+	return nil
 }
 
 // Close stops the room model's background goroutines.
@@ -265,7 +304,7 @@ func (m Model) ClearComposerStaged() Model {
 	// If we blurred the textarea while staged, ensure we restore focus when the
 	// input area is focused; otherwise the composer becomes uneditable after
 	// auto-dispatch clears staging.
-	if m.focus == focusInput {
+	if m.activeFocus == focusInput {
 		m.input.compose, _ = m.input.compose.Focus()
 	}
 	if m.lastSize.Width > 0 && m.lastSize.Height > 0 {
@@ -400,11 +439,16 @@ func (m Model) RequestStagedInterrupt(statusByAlias func(alias string) (particip
 // ShowApproval switches the input area to an approval prompt.
 func (m Model) ShowApproval(req agent.ApprovalRequest) Model {
 	if m.input.kind != inputApproval {
-		m.approvalPrev = m.input.kind
+		m.approval.previousInputKind = m.input.kind
+		m.approval.restoreFocus = m.activeFocus
 	}
+	return m.enterApprovalMode(req)
+}
+
+func (m Model) enterApprovalMode(req agent.ApprovalRequest) Model {
 	m.input.approval = m.input.approval.Set(req)
 	m.input.kind = inputApproval
-	m.focus = focusInput
+	m.activeFocus = focusInput
 	m.input.compose = m.input.compose.Blur()
 	if m.lastSize.Width > 0 && m.lastSize.Height > 0 {
 		m = m.HandleResize(m.lastSize.Width, m.lastSize.Height)
@@ -414,17 +458,27 @@ func (m Model) ShowApproval(req agent.ApprovalRequest) Model {
 
 // ClearApproval returns to compose input mode and clears the approval prompt.
 func (m Model) ClearApproval() (Model, tea.Cmd) {
-	m.input.approval = m.input.approval.Clear()
-	m.input.kind = m.approvalPrev
-	m.approvalPrev = inputCompose
-	m.focus = focusInput
-	if m.lastSize.Width > 0 && m.lastSize.Height > 0 {
-		m = m.HandleResize(m.lastSize.Width, m.lastSize.Height)
-	}
-	if m.input.kind == inputCompose {
+	m = m.exitApprovalMode()
+	if m.activeFocus == focusInput && m.input.kind == inputCompose {
 		return m.composeFocus()
 	}
 	return m, nil
+}
+
+func (m Model) exitApprovalMode() Model {
+	restore := m.approval.restoreFocus
+	previousInputKind := m.approval.previousInputKind
+	m.input.approval = m.input.approval.Clear()
+	m.input.kind = previousInputKind
+	m.activeFocus = restore
+	m.approval = approvalState{
+		previousInputKind: inputCompose,
+		restoreFocus:      focusInput,
+	}
+	if m.lastSize.Width > 0 && m.lastSize.Height > 0 {
+		m = m.HandleResize(m.lastSize.Width, m.lastSize.Height)
+	}
+	return m
 }
 
 func (m Model) composeFocus() (Model, tea.Cmd) {
@@ -542,14 +596,20 @@ func (m Model) YOffset() int { return m.history.YOffset() }
 // HistoryCursorPosition returns the history cursor row and column.
 func (m Model) HistoryCursorPosition() (int, int) { return m.history.CursorPosition() }
 
+// HistoryHasSelection reports whether the history surface has an active selection.
+func (m Model) HistoryHasSelection() bool { return m.history.HasSelection() }
+
+// HistorySelectedText returns the active visible selection as plain text.
+func (m Model) HistorySelectedText() (string, bool) { return m.history.SelectedText() }
+
 func (m Model) syncHistoryAnchorAfterResize(wasAtBottom bool) Model {
 	if m.historyLive {
 		return m.syncHistoryFollowAnchor()
 	}
-	if wasAtBottom && m.focus != focusHistory {
+	if wasAtBottom && m.activeFocus != focusHistory {
 		return m.historyAtBottomBrowse()
 	}
-	if m.focus == focusHistory {
+	if m.activeFocus == focusHistory {
 		m.history = m.history.RevealCursor()
 	}
 	return m
@@ -559,7 +619,7 @@ func (m Model) syncHistoryFollowAnchor() Model {
 	if !m.historyLive {
 		return m
 	}
-	if m.focus == focusHistory {
+	if m.activeFocus == focusHistory {
 		m.history = m.history.GotoLiveEnd()
 		return m
 	}

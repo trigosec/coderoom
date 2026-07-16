@@ -38,8 +38,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleCtrlCKey(msg tea.KeyPressMsg) (Model, bool) {
-	k := msg.Key()
-	if k.Code != 'c' || !k.Mod.Contains(tea.ModCtrl) {
+	if !isCtrlKey(msg, 'c') {
 		return m, false
 	}
 	if m.input.Value() == "" {
@@ -98,4 +97,12 @@ func (m Model) handleTextKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m.recalcHeight(), cmd
+}
+
+func isCtrlKey(msg tea.KeyPressMsg, key rune) bool {
+	if msg.String() == "ctrl+"+string(key) {
+		return true
+	}
+	k := msg.Key()
+	return k.Code == key && k.Mod.Contains(tea.ModCtrl)
 }

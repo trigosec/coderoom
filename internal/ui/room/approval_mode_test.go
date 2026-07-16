@@ -166,3 +166,95 @@ func TestApprovalMode_ctrlCRestoresStagedComposer(t *testing.T) {
 		t.Fatalf("staged batch pointer changed: got %#v want %#v", got, batch)
 	}
 }
+
+func TestApprovalMode_cancelRestoresHistorySelectionState(t *testing.T) {
+	m := prepareHistorySelectionForApproval(t)
+	beforeRow, beforeCol := m.HistoryCursorPosition()
+	beforeText := requireHistorySelectedText(t, m)
+
+	m = showApprovalAndRequireInputFocus(t, m, agent.ApprovalRequest{
+		Ask:     "approve?",
+		Options: []agent.ApprovalOption{agent.OptionDecline, agent.OptionAccept},
+	})
+
+	next := cancelApproval(t, m)
+	assertHistoryFocusAndSelection(t, next)
+	assertHistoryCursorPosition(t, next, beforeRow, beforeCol)
+	assertHistorySelectedText(t, next, beforeText)
+}
+
+func prepareHistorySelectionForApproval(t *testing.T) Model {
+	t.Helper()
+
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	return m
+}
+
+func requireHistorySelectedText(t *testing.T, m Model) string {
+	t.Helper()
+
+	selected, ok := m.HistorySelectedText()
+	if !ok {
+		t.Fatal("expected active history selection before approval")
+	}
+	return selected
+}
+
+func showApprovalAndRequireInputFocus(t *testing.T, m Model, req agent.ApprovalRequest) Model {
+	t.Helper()
+
+	m = m.ShowApproval(req)
+	if m.activeFocus != focusInput {
+		t.Fatalf("expected approval to temporarily take input focus, got %v", m.activeFocus)
+	}
+	return m
+}
+
+func cancelApproval(t *testing.T, m Model) Model {
+	t.Helper()
+
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	if cmd == nil {
+		t.Fatal("expected cmd from Esc cancel")
+	}
+	cancel := cmd()
+	if _, ok := cancel.(approval.CancelMsg); !ok {
+		t.Fatalf("expected CancelMsg, got %T", cancel)
+	}
+	next, _ = next.Update(cancel)
+	return next
+}
+
+func assertHistoryFocusAndSelection(t *testing.T, m Model) {
+	t.Helper()
+
+	if m.activeFocus != focusHistory {
+		t.Fatalf("expected history focus to be restored after approval, got %v", m.activeFocus)
+	}
+	if !m.HistoryHasSelection() {
+		t.Fatal("expected history selection to remain active after approval")
+	}
+}
+
+func assertHistoryCursorPosition(t *testing.T, m Model, wantRow, wantCol int) {
+	t.Helper()
+
+	afterRow, afterCol := m.HistoryCursorPosition()
+	if afterRow != wantRow || afterCol != wantCol {
+		t.Fatalf("expected approval cancel to preserve history cursor; before=(%d,%d) after=(%d,%d)", wantRow, wantCol, afterRow, afterCol)
+	}
+}
+
+func assertHistorySelectedText(t *testing.T, m Model, want string) {
+	t.Helper()
+
+	afterText, ok := m.HistorySelectedText()
+	if !ok || afterText != want {
+		t.Fatalf("expected approval cancel to preserve selected text; before=%q after=%q active=%v", want, afterText, ok)
+	}
+}

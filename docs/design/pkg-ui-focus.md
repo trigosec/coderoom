@@ -80,6 +80,8 @@ hidden history cursor.
 Viewport is read-only.
 
 - A visible cursor moves across the rendered history surface.
+- An active keyboard selection is part of viewport/history state, not composer
+  state.
 - The cursor operates on the **visible history surface only**:
   - wrapped visible lines
   - visible separator blank lines
@@ -96,12 +98,17 @@ Viewport is read-only.
 - `Home` / `End`: move to the start / end of the current visible line.
 - `Ctrl+O`: return focus to the composer.
 - `Esc`: return focus to the composer (escape hatch).
-- `Ctrl+C`: no-op.
+- `Ctrl+C`: copy the active visible history selection as plain text.
 - `Ctrl+G`: open `$EDITOR` seeded with the transcript content in read-only
   mode (see below).
 
 If a movement would place the cursor outside the currently visible viewport, the
 viewport scrolls just enough to keep the cursor visible.
+
+If an approval prompt temporarily takes input focus while history selection is
+active, that interruption must not discard the current selection. Returning to
+history should restore the prior selection state until the user explicitly
+clears or changes it.
 
 ### PgUp / PgDn scope
 

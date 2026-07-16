@@ -45,26 +45,47 @@ func (m Model) viewportLines(showCursor bool) []string {
 	if len(m.lines) == 0 || m.viewport.Height() <= 0 {
 		return nil
 	}
-	top := m.viewport.YOffset()
-	if top < 0 {
-		top = 0
-	}
-	if top > len(m.lines) {
-		top = len(m.lines)
-	}
+	top := clampViewportRow(m.viewport.YOffset(), len(m.lines))
 	bottom := min(top+m.viewport.Height(), len(m.lines))
 	out := make([]string, 0, bottom-top)
 	for row := top; row < bottom; row++ {
-		line := m.lines[row].raw
-		if showCursor && m.cursor.Visible && row == m.cursor.Row {
-			line = renderCursorLine(line, m.cursor.Col, m.viewport.Width())
-		}
-		out = append(out, line)
+		out = append(out, m.renderViewportRow(row, showCursor))
 	}
 	return out
 }
 
+func clampViewportRow(top, lineCount int) int {
+	if top < 0 {
+		return 0
+	}
+	if top > lineCount {
+		return lineCount
+	}
+	return top
+}
+
+func (m Model) renderViewportRow(row int, showCursor bool) string {
+	line := m.lines[row].raw
+	rangeStart, rangeEnd, selected := m.selectionColumnsForRow(row)
+	cursorCol, hasCursor := m.viewportCursor(row, showCursor)
+	if !selected && !hasCursor {
+		return line
+	}
+	return renderSelectionLine(line, rangeStart, rangeEnd, selected, cursorCol, hasCursor, m.viewport.Width())
+}
+
+func (m Model) viewportCursor(row int, showCursor bool) (int, bool) {
+	if showCursor && m.cursor.Visible && row == m.cursor.Row {
+		return m.cursor.Col, true
+	}
+	return 0, false
+}
+
 func renderCursorLine(raw string, cursorCol int, width int) string {
+	return renderSelectionLine(raw, 0, 0, false, cursorCol, true, width)
+}
+
+func renderSelectionLine(raw string, selStart, selEnd int, hasSelection bool, cursorCol int, hasCursor bool, width int) string {
 	if width <= 0 {
 		return raw
 	}
@@ -72,7 +93,8 @@ func renderCursorLine(raw string, cursorCol int, width int) string {
 	cells, suffix := splitStyledCells(raw)
 	lineWidth := styledCellsWidth(cells)
 	cursorCol = normalizeCursorColumn(cursorCol, lineWidth, width)
-	return lipgloss.NewStyle().Width(width).Render(renderCursorCells(cells, suffix, cursorCol, lineWidth))
+	selStart, selEnd = normalizeSelectionColumns(selStart, selEnd, lineWidth)
+	return lipgloss.NewStyle().Width(width).Render(renderDecoratedCells(cells, suffix, selStart, selEnd, hasSelection, cursorCol, hasCursor, lineWidth))
 }
 
 type styledCell struct {
@@ -150,40 +172,63 @@ func normalizeCursorColumn(cursorCol, lineWidth, width int) int {
 	return cursorCol
 }
 
-func renderCursorCells(cells []styledCell, suffix string, cursorCol int, lineWidth int) string {
-	if cursorCol == lineWidth {
-		return renderCursorAtLineEnd(cells, suffix)
+func renderDecoratedCells(cells []styledCell, suffix string, selStart, selEnd int, hasSelection bool, cursorCol int, hasCursor bool, lineWidth int) string {
+	if hasCursor && cursorCol == lineWidth {
+		return renderDecoratedLineWithEndCursor(cells, suffix, selStart, selEnd, hasSelection)
 	}
-	return renderCursorInsideLine(cells, suffix, cursorCol)
+	return renderDecoratedInsideLine(cells, suffix, selStart, selEnd, hasSelection, cursorCol, hasCursor)
 }
 
-func renderCursorAtLineEnd(cells []styledCell, suffix string) string {
+func renderDecoratedLineWithEndCursor(cells []styledCell, suffix string, selStart, selEnd int, hasSelection bool) string {
 	cursorStyle := lipgloss.NewStyle().Reverse(true)
-	var b strings.Builder
-	for _, cell := range cells {
-		b.WriteString(cell.raw)
-	}
-	b.WriteString(suffix)
-	b.WriteString(cursorStyle.Render(" "))
-	return b.String()
+	line := renderDecoratedInsideLine(cells, suffix, selStart, selEnd, hasSelection, 0, false)
+	return line + cursorStyle.Render(" ")
 }
 
-func renderCursorInsideLine(cells []styledCell, suffix string, cursorCol int) string {
+func renderDecoratedInsideLine(cells []styledCell, suffix string, selStart, selEnd int, hasSelection bool, cursorCol int, hasCursor bool) string {
 	var b strings.Builder
 	col := 0
 	for _, cell := range cells {
 		next := col + cell.width
-		if cursorCol >= col && cursorCol < next {
-			b.WriteString("\x1b[7m")
-			b.WriteString(cell.raw)
-			b.WriteString("\x1b[27m")
-		} else {
-			b.WriteString(cell.raw)
-		}
+		renderStyledCell(&b, cell, col, next, selStart, selEnd, hasSelection, cursorCol, hasCursor)
 		col = next
 	}
 	b.WriteString(suffix)
 	return b.String()
+}
+
+func renderStyledCell(b *strings.Builder, cell styledCell, col, next, selStart, selEnd int, hasSelection bool, cursorCol int, hasCursor bool) {
+	inSelection := hasSelection && col < selEnd && next > selStart
+	hasCursorCell := hasCursor && cursorCol >= col && cursorCol < next
+	switch {
+	case inSelection:
+		b.WriteString("\x1b[48;5;238m")
+		if hasCursorCell {
+			b.WriteString("\x1b[7m")
+		}
+		b.WriteString(cell.raw)
+		if hasCursorCell {
+			b.WriteString("\x1b[27m")
+		}
+		b.WriteString("\x1b[49m")
+	default:
+		if hasCursorCell {
+			b.WriteString("\x1b[7m")
+			b.WriteString(cell.raw)
+			b.WriteString("\x1b[27m")
+			return
+		}
+		b.WriteString(cell.raw)
+	}
+}
+
+func normalizeSelectionColumns(start, end, lineWidth int) (int, int) {
+	start = clampInt(start, lineWidth)
+	end = clampInt(end, lineWidth)
+	if start > end {
+		start, end = end, start
+	}
+	return start, end
 }
 
 func ansiSequenceBodyLength(s string) int {
@@ -224,6 +269,114 @@ func ansiSingleEscapeLength(s string) int {
 		return 1
 	}
 	return 1 + size
+}
+
+func (m Model) selectionColumnsForRow(row int) (int, int, bool) {
+	if !m.hasSelection() {
+		return 0, 0, false
+	}
+	start, end := m.selectionSpan()
+	if row < start.Row || row > end.Row {
+		return 0, 0, false
+	}
+	lineEnd := lineWidth(m.lines[row])
+	switch {
+	case start.Row == end.Row:
+		return start.Col, end.Col, start.Col != end.Col
+	case row == start.Row:
+		return start.Col, lineEnd, start.Col != lineEnd
+	case row == end.Row:
+		return 0, end.Col, end.Col != 0
+	default:
+		return 0, lineEnd, lineEnd != 0
+	}
+}
+
+func (m Model) selectionSpan() (Cursor, Cursor) {
+	if compareSurfacePositions(m.cursor, m.selection.Anchor) <= 0 {
+		return m.cursor, m.selection.Anchor
+	}
+	return m.selection.Anchor, m.advanceSelectionCursor(m.cursor)
+}
+
+func (m Model) advanceSelectionCursor(cursor Cursor) Cursor {
+	if cursor.Row < 0 || cursor.Row >= len(m.lines) {
+		return cursor
+	}
+	lineEnd := lineWidth(m.lines[cursor.Row])
+	if cursor.Col >= lineEnd {
+		return cursor
+	}
+	cursor.Col++
+	cursor.PreferredCol = cursor.Col
+	return cursor
+}
+
+func compareSurfacePositions(left, right Cursor) int {
+	switch {
+	case left.Row < right.Row:
+		return -1
+	case left.Row > right.Row:
+		return 1
+	case left.Col < right.Col:
+		return -1
+	case left.Col > right.Col:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// SelectedText returns the active visible selection as plain text.
+func (m Model) SelectedText() (string, bool) {
+	if !m.hasSelection() {
+		return "", false
+	}
+	start, end := m.selectionSpan()
+	if compareSurfacePositions(start, end) == 0 {
+		return "", false
+	}
+	parts := make([]string, 0, end.Row-start.Row+1)
+	for row := start.Row; row <= end.Row; row++ {
+		selStart, selEnd, ok := m.selectionColumnsForRow(row)
+		if !ok {
+			parts = append(parts, "")
+			continue
+		}
+		parts = append(parts, visibleTextSlice(m.lines[row].plain, selStart, selEnd))
+	}
+	return strings.Join(parts, "\n"), true
+}
+
+func visibleTextSlice(raw string, startCol, endCol int) string {
+	if startCol >= endCol || raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	col := 0
+	for i := 0; i < len(raw); {
+		cluster, size, width := nextVisibleCluster(raw[i:])
+		if size == 0 {
+			break
+		}
+		next := col + width
+		if width == 0 {
+			if b.Len() > 0 {
+				b.WriteString(cluster)
+			}
+			i += size
+			continue
+		}
+		if col >= endCol {
+			break
+		}
+		if next > startCol && col < endCol {
+			b.WriteString(cluster)
+		}
+		col = next
+		i += size
+	}
+	return b.String()
 }
 
 // RenderedContent returns the raw rendered records joined by newlines; useful

@@ -1,6 +1,7 @@
 package room
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -126,5 +127,175 @@ func TestHistoryFocus_resizePreservesExistingCursor(t *testing.T) {
 	afterRow, afterCol := resized.HistoryCursorPosition()
 	if afterRow != beforeRow || afterCol != beforeCol {
 		t.Fatalf("expected resize to preserve history cursor; before=(%d,%d) after=(%d,%d)", beforeRow, beforeCol, afterRow, afterCol)
+	}
+}
+
+func TestHistoryFocus_shiftArrowStartsSelectionFromCurrentCursor(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	beforeRow, beforeCol := m.HistoryCursorPosition()
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	afterRow, afterCol := m.HistoryCursorPosition()
+	if !m.HistoryHasSelection() {
+		t.Fatal("expected Shift+Left to start a selection")
+	}
+	if afterRow != beforeRow || afterCol >= beforeCol {
+		t.Fatalf("expected Shift+Left to move cursor left from anchor; before=(%d,%d) after=(%d,%d)", beforeRow, beforeCol, afterRow, afterCol)
+	}
+	if !strings.Contains(m.renderHistoryView(), "\x1b[48;5;238m") {
+		t.Fatalf("expected selection highlight in history view, got %q", m.renderHistoryView())
+	}
+}
+
+func TestHistoryFocus_plainMovementClearsSelection(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	if !m.HistoryHasSelection() {
+		t.Fatal("expected selection after Shift+Left")
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
+	if m.HistoryHasSelection() {
+		t.Fatal("expected unmodified movement to clear selection")
+	}
+	if strings.Contains(m.renderHistoryView(), "\x1b[48;5;238m") {
+		t.Fatalf("expected selection highlight to clear, got %q", m.renderHistoryView())
+	}
+}
+
+func TestHistoryFocus_escClearsSelectionBeforeLeavingHistory(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+
+	cleared, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	if cleared.activeFocus != focusHistory {
+		t.Fatalf("expected Esc with active selection to stay in history focus, got focus=%v", cleared.activeFocus)
+	}
+	if cleared.HistoryHasSelection() {
+		t.Fatal("expected Esc to clear active selection")
+	}
+
+	exited, _ := cleared.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	if exited.activeFocus != focusInput {
+		t.Fatalf("expected second Esc to leave history focus, got focus=%v", exited.activeFocus)
+	}
+}
+
+func TestHistoryFocus_shiftPageDownExtendsSelection(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	for range 40 {
+		m = m.AppendSystem("line")
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp}))
+	beforeRow, _ := m.HistoryCursorPosition()
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModShift}))
+	afterRow, _ := m.HistoryCursorPosition()
+	if !m.HistoryHasSelection() {
+		t.Fatal("expected Shift+PgDn to start or extend a selection")
+	}
+	if afterRow <= beforeRow {
+		t.Fatalf("expected Shift+PgDn to move cursor downward; before=%d after=%d", beforeRow, afterRow)
+	}
+}
+
+func TestShiftPagingOutsideHistoryStillScrollsHistory(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	for range 40 {
+		m = m.AppendSystem("line")
+	}
+
+	before := m.YOffset()
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgUp, Mod: tea.ModShift}))
+	if next.YOffset() == before {
+		t.Fatalf("expected Shift+PgUp in compose focus to scroll history; yOffset unchanged at %d", before)
+	}
+
+	afterUp := next.YOffset()
+	next, _ = next.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyPgDown, Mod: tea.ModShift}))
+	if next.YOffset() == afterUp {
+		t.Fatalf("expected Shift+PgDn in compose focus to scroll history; yOffset unchanged at %d", afterUp)
+	}
+}
+
+func TestHistoryFocus_selectionCanReverseDirection(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	startRow, startCol := m.HistoryCursorPosition()
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: tea.ModShift}))
+	row, col := m.HistoryCursorPosition()
+	if row != startRow || col != startCol {
+		t.Fatalf("expected reversed selection to bring cursor back to anchor; start=(%d,%d) after=(%d,%d)", startRow, startCol, row, col)
+	}
+	if !m.HistoryHasSelection() {
+		t.Fatal("expected reversed selection state to remain active until cleared")
+	}
+	if strings.Contains(m.renderHistoryView(), "\x1b[48;5;238m") {
+		t.Fatalf("expected collapsed reversed selection to render no highlight, got %q", m.renderHistoryView())
+	}
+}
+
+func TestHistoryFocus_shiftEndKeepsTailSelectionHighlightedAtEOL(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello")
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd, Mod: tea.ModShift}))
+
+	view := m.renderHistoryView()
+	if strings.Count(view, "\x1b[48;5;238m") == 0 {
+		t.Fatalf("expected Shift+End tail selection to stay highlighted, got %q", view)
+	}
+	if !strings.Contains(view, "\x1b[7m") {
+		t.Fatalf("expected EOL cursor to remain visible, got %q", view)
+	}
+}
+
+func TestHistoryFocus_toggleToComposeClearsSelection(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	if !m.HistoryHasSelection() {
+		t.Fatal("expected active selection before leaving history focus")
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	if m.HistoryHasSelection() {
+		t.Fatal("expected Ctrl+O out of history to clear selection")
+	}
+	if strings.Contains(m.renderHistoryView(), "\x1b[48;5;238m") {
+		t.Fatalf("expected compose view to render no stale selection, got %q", m.renderHistoryView())
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	if m.HistoryHasSelection() {
+		t.Fatal("expected re-entering history to stay selection-free")
 	}
 }

@@ -57,7 +57,7 @@ func (m Model) View() string {
 }
 
 func (m Model) renderHistoryView() string {
-	if m.focus == focusHistory {
+	if m.activeFocus == focusHistory {
 		return m.history.View()
 	}
 	return m.history.ViewWithoutCursor()
@@ -145,10 +145,10 @@ func headerLine(width int, title, status string) string {
 
 func (m Model) separatorLabel() string {
 	label := "compose"
-	if m.focus == focusHistory {
+	if m.activeFocus == focusHistory {
 		label = "history"
 	}
-	if m.input.kind == inputApproval && m.focus != focusHistory {
+	if m.input.kind == inputApproval && m.activeFocus != focusHistory {
 		label = "approval"
 	}
 	if !m.debug {

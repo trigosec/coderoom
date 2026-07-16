@@ -39,6 +39,12 @@ type Cursor struct {
 	Visible      bool
 }
 
+// Selection tracks a caret-anchored range on the visible history surface.
+type Selection struct {
+	Anchor  Cursor
+	Visible bool
+}
+
 // Model holds the conversation record list and its viewport.
 type Model struct {
 	viewport      viewport.Model
@@ -49,6 +55,7 @@ type Model struct {
 	debugRowNums  bool
 	viewportReady bool
 	cursor        Cursor
+	selection     Selection
 	colorByAlias  func(string) string
 	departedColor string
 	colorVersion  uint64

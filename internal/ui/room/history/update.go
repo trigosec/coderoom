@@ -63,6 +63,9 @@ func (m Model) CursorVisible() bool { return m.cursor.Visible }
 // CursorPosition reports the current cursor row and column on the visible surface.
 func (m Model) CursorPosition() (int, int) { return m.cursor.Row, m.cursor.Col }
 
+// HasSelection reports whether a visible selection range is active.
+func (m Model) HasSelection() bool { return m.selection.Visible }
+
 // CursorAtLiveEnd reports whether the history cursor is at the live end.
 func (m Model) CursorAtLiveEnd() bool { return m.cursorAtLiveEnd() }
 
@@ -108,6 +111,12 @@ func (m Model) ShowCursorInViewport() Model {
 	} else {
 		m.cursor.Col = m.cursor.PreferredCol
 	}
+	return m
+}
+
+// ClearSelection drops any active selection while keeping the current cursor.
+func (m Model) ClearSelection() Model {
+	m.selection = Selection{}
 	return m
 }
 
@@ -237,6 +246,46 @@ func (m Model) CursorPageDown() Model {
 	return m.moveCursorByPage(1)
 }
 
+// SelectUp extends selection upward by one visible row.
+func (m Model) SelectUp() Model {
+	return m.extendSelection(func(next Model) Model { return next.CursorUp() })
+}
+
+// SelectDown extends selection downward by one visible row.
+func (m Model) SelectDown() Model {
+	return m.extendSelection(func(next Model) Model { return next.CursorDown() })
+}
+
+// SelectLeft extends selection one visible cell to the left.
+func (m Model) SelectLeft() Model {
+	return m.extendSelection(func(next Model) Model { return next.CursorLeft() })
+}
+
+// SelectRight extends selection one visible cell to the right.
+func (m Model) SelectRight() Model {
+	return m.extendSelection(func(next Model) Model { return next.CursorRight() })
+}
+
+// SelectLineStart extends selection to the start of the current visible line.
+func (m Model) SelectLineStart() Model {
+	return m.extendSelection(func(next Model) Model { return next.CursorLineStart() })
+}
+
+// SelectLineEnd extends selection to the end of the current visible line.
+func (m Model) SelectLineEnd() Model {
+	return m.extendSelection(func(next Model) Model { return next.CursorLineEnd() })
+}
+
+// SelectPageUp extends selection upward by one viewport page.
+func (m Model) SelectPageUp() Model {
+	return m.extendSelection(func(next Model) Model { return next.CursorPageUp() })
+}
+
+// SelectPageDown extends selection downward by one viewport page.
+func (m Model) SelectPageDown() Model {
+	return m.extendSelection(func(next Model) Model { return next.CursorPageDown() })
+}
+
 func (m Model) syncViewport(remapCursor bool) Model {
 	if !m.viewportReady {
 		return m
@@ -244,8 +293,10 @@ func (m Model) syncViewport(remapCursor bool) Model {
 	prevTop := m.viewport.YOffset()
 	wasLiveEnd := remapCursor && m.cursorAtLiveEnd()
 	cursorCoord, hasCursorCoord := surfaceCoord{}, false
+	selectionCoord, hasSelectionCoord := surfaceCoord{}, false
 	if remapCursor {
 		cursorCoord, hasCursorCoord = m.cursorSurfaceCoord()
+		selectionCoord, hasSelectionCoord = m.selectionSurfaceCoord()
 	}
 	ctx := m.viewportRenderContext()
 	rendered := make([]string, 0, len(m.records))
@@ -259,6 +310,7 @@ func (m Model) syncViewport(remapCursor bool) Model {
 	m.viewport.SetContent(content)
 	m.viewport.SetYOffset(clampViewportTop(prevTop, len(m.lines), m.viewport.Height()))
 	m = m.syncCursor(remapCursor, wasLiveEnd, cursorCoord, hasCursorCoord)
+	m = m.syncSelection(remapCursor, selectionCoord, hasSelectionCoord)
 	return m
 }
 
@@ -288,6 +340,10 @@ func joinRenderedForViewport(records []viewRecord, rendered []string) string {
 
 func (m Model) hasCursor() bool {
 	return m.cursor.Visible && len(m.lines) > 0
+}
+
+func (m Model) hasSelection() bool {
+	return m.selection.Visible && len(m.lines) > 0
 }
 
 func (m Model) cursorAtLiveEnd() bool {
@@ -320,12 +376,14 @@ func (m Model) cursorSurfaceCoord() (surfaceCoord, bool) {
 	if !m.hasCursor() {
 		return surfaceCoord{}, false
 	}
-	coord := surfaceCoord{}
-	for row := 0; row < m.cursor.Row && row < len(m.lines); row++ {
-		coord.Advance += lineWidth(m.lines[row]) + 1
+	return m.positionSurfaceCoord(m.cursor.Row, m.cursor.Col)
+}
+
+func (m Model) selectionSurfaceCoord() (surfaceCoord, bool) {
+	if !m.hasSelection() {
+		return surfaceCoord{}, false
 	}
-	coord.Advance += m.cursor.Col
-	return coord, true
+	return m.positionSurfaceCoord(m.selection.Anchor.Row, m.selection.Anchor.Col)
 }
 
 func (m Model) setCursorFromSurfaceCoord(coord surfaceCoord) Model {
@@ -333,25 +391,35 @@ func (m Model) setCursorFromSurfaceCoord(coord surfaceCoord) Model {
 		m.cursor = Cursor{}
 		return m
 	}
-	if coord.Advance < 0 {
-		coord.Advance = 0
-	}
-	row := 0
-	remaining := coord.Advance
-	for row < len(m.lines)-1 {
-		rowSpan := lineWidth(m.lines[row]) + 1
-		if remaining < rowSpan {
-			break
-		}
-		remaining -= rowSpan
-		row++
-	}
-	lineEnd := lineWidth(m.lines[row])
-	col := clampInt(remaining, lineEnd)
+	row, col := m.positionFromSurfaceCoord(coord)
 	m.cursor.Row = row
 	m.cursor.Col = col
 	m.cursor.PreferredCol = col
 	m.cursor.Visible = true
+	return m
+}
+
+func (m Model) syncSelection(remapCursor bool, selectionCoord surfaceCoord, hasSelectionCoord bool) Model {
+	if len(m.lines) == 0 {
+		m.selection = Selection{}
+		return m
+	}
+	if !m.selection.Visible {
+		return m
+	}
+	if remapCursor && hasSelectionCoord {
+		row, col := m.positionFromSurfaceCoord(selectionCoord)
+		m.selection.Anchor.Row = row
+		m.selection.Anchor.Col = col
+		m.selection.Anchor.PreferredCol = col
+		m.selection.Anchor.Visible = true
+		return m
+	}
+	m.selection.Anchor.Row = clampInt(m.selection.Anchor.Row, len(m.lines)-1)
+	lineEnd := lineWidth(m.lines[m.selection.Anchor.Row])
+	m.selection.Anchor.Col = clampInt(m.selection.Anchor.Col, lineEnd)
+	m.selection.Anchor.PreferredCol = m.selection.Anchor.Col
+	m.selection.Anchor.Visible = true
 	return m
 }
 
@@ -371,6 +439,52 @@ func (m Model) clampCursorPosition() Model {
 	}
 	m.cursor.Visible = true
 	return m
+}
+
+func (m Model) extendSelection(move func(Model) Model) Model {
+	if !m.hasCursor() {
+		return m
+	}
+	if !m.selection.Visible {
+		m.selection = Selection{
+			Anchor:  m.cursor,
+			Visible: true,
+		}
+	}
+	return move(m)
+}
+
+func (m Model) positionSurfaceCoord(row, col int) (surfaceCoord, bool) {
+	if len(m.lines) == 0 {
+		return surfaceCoord{}, false
+	}
+	row = clampInt(row, len(m.lines)-1)
+	col = clampInt(col, lineWidth(m.lines[row]))
+	coord := surfaceCoord{}
+	for i := 0; i < row && i < len(m.lines); i++ {
+		coord.Advance += lineWidth(m.lines[i]) + 1
+	}
+	coord.Advance += col
+	return coord, true
+}
+
+func (m Model) positionFromSurfaceCoord(coord surfaceCoord) (int, int) {
+	if coord.Advance < 0 {
+		coord.Advance = 0
+	}
+	row := 0
+	remaining := coord.Advance
+	for row < len(m.lines)-1 {
+		rowSpan := lineWidth(m.lines[row]) + 1
+		if remaining < rowSpan {
+			break
+		}
+		remaining -= rowSpan
+		row++
+	}
+	lineEnd := lineWidth(m.lines[row])
+	col := clampInt(remaining, lineEnd)
+	return row, col
 }
 
 func (m Model) moveCursorVertical(delta int) Model {

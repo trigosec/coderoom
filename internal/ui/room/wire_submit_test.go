@@ -107,7 +107,78 @@ func TestCtrlC_clearsComposerOnlyWhenFocused(t *testing.T) {
 
 	next2, _ := next.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
 	if got := next2.ComposeValue(); got != "draft2" {
-		t.Fatalf("expected Ctrl+C no-op in history focus, got %q", got)
+		t.Fatalf("expected Ctrl+C not to mutate composer in history focus, got %q", got)
+	}
+}
+
+func TestCtrlC_historyFocusCopiesActiveSelection(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+
+	var copied string
+	m.clipboardWrite = func(text string) error {
+		copied = text
+		return nil
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
+	if copied != "ld" {
+		t.Fatalf("copied text = %q, want %q", copied, "ld")
+	}
+	if !next.HistoryHasSelection() {
+		t.Fatal("expected copy to preserve active selection")
+	}
+}
+
+func TestCtrlC_historyFocusCopiesCursorCellWhenSelectionExtendsRight(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+
+	var copied string
+	m.clipboardWrite = func(text string) error {
+		copied = text
+		return nil
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: tea.ModShift}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: tea.ModShift}))
+
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
+	if copied != "ell" {
+		t.Fatalf("copied text = %q, want %q", copied, "ell")
+	}
+	if !next.HistoryHasSelection() {
+		t.Fatal("expected copy to preserve active selection")
+	}
+}
+
+func TestCtrlC_historyFocusWithoutSelectionDoesNothing(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello world")
+
+	calls := 0
+	m.clipboardWrite = func(_ string) error {
+		calls++
+		return nil
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
+	if calls != 0 {
+		t.Fatalf("expected no clipboard writes without a selection, got %d", calls)
+	}
+	if next.HistoryHasSelection() {
+		t.Fatal("expected copy without selection not to create a selection")
 	}
 }
 
