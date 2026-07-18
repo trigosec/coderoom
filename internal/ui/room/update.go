@@ -24,6 +24,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyRoomUpdate(roomstate.Update(msg)), awaitRoomUpdate(m.roomQueue)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
 	case tea.WindowSizeMsg:
 		// Parent is expected to call HandleResize with a height already adjusted
 		// for outer chrome; ignore direct WindowSizeMsg here.
@@ -43,6 +45,30 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.history, historyCmd = m.history.Update(msg)
 		return m, tea.Batch(inputCmd, historyCmd)
 	}
+}
+
+func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.history, cmd = m.history.Update(msg)
+	return m.syncHistoryAfterMouseWheel(), cmd
+}
+
+func (m Model) syncHistoryAfterMouseWheel() Model {
+	if m.activeFocus != focusHistory {
+		m.historyLive = m.history.AtBottom()
+		return m
+	}
+
+	m.history = m.history.ClearSelection()
+	if m.history.AtBottom() {
+		m.historyLive = true
+		m.history = m.history.GotoLiveEnd()
+		return m
+	}
+
+	m.historyLive = false
+	m.history = m.history.ShowCursorInViewport()
+	return m
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {

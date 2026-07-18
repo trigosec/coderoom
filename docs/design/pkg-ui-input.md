@@ -100,6 +100,9 @@ Principles:
 
 - Scrolling should work while the input remains focused.
 - Scrolling should not depend on the cursor position within the input.
+- Because wheel scrolling requires terminal mouse reporting, some terminals may
+  require `Shift+drag` (or an equivalent terminal override) for native text
+  selection while the app is running.
 - Do not use `Alt+…` scroll shortcuts (reserved for input composition, e.g.
   `Alt+Enter` = newline).
 - Avoid `Ctrl+PgUp/PgDn` as a default because some terminal emulators bind it to
@@ -110,6 +113,8 @@ Principles:
 - The input is always focused (no explicit “focus viewport” toggle in Phase 1).
 - The mouse wheel scrolls the viewport regardless of whether the pointer is over
   the viewport or the input row.
+- Terminal-native mouse selection may require a modifier such as `Shift` while
+  the app is capturing wheel events.
 
 Rationale: consistent behavior is easier to learn than hit-testing or implicit
 focus changes.

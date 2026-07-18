@@ -12,7 +12,7 @@ See also: `docs/design/pkg-ui-input.md` for input box interaction details.
 
 - Keep the core UX recognizable to Codex / Claude Code users.
 - Make scrolling and copy/paste straightforward.
-- Avoid mouse reporting (no Shift+drag requirement).
+- Support mouse-wheel / trackpad scrolling directly in the room UI.
 - Keep implementation maintainable (avoid terminal scrollback hacks).
 
 ## Non-goals (for now)
@@ -36,8 +36,10 @@ two modes over the same rendered transcript surface:
 - **Browse**: follow mode is disarmed and the user is reading historical
   content.
 
-Mouse selection/copy is always handled by the terminal emulator (because mouse
-reporting is not enabled).
+Mouse-wheel scrolling is handled by the app. Because that requires terminal
+mouse reporting, many terminals will require an override gesture such as
+`Shift+drag` for terminal-native text selection while Code Room is running.
+Code Room does not yet implement its own mouse drag selection semantics.
 
 This yields four valid UI states:
 
@@ -186,7 +188,8 @@ viewport, not from stale hidden cursor state left behind while composing.
 
 ## Implementation notes
 
-- Mouse reporting remains disabled.
+- Mouse reporting is enabled in cell-motion mode so wheel events reach the
+  history viewport.
 - Viewport focus is implemented by routing key events either to the textarea
   model or the viewport model depending on focus state.
 - Keep one transcript, one viewport, and one optional cursor. The explicit

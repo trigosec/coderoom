@@ -26,5 +26,6 @@ func (m Model) View() tea.View {
 	// first row appear "missing".
 	v := tea.NewView(strings.TrimRight(sb.String(), "\n"))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
