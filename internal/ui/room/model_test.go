@@ -57,3 +57,11 @@ func TestDefaultClipboardWriter_fallsBackToOSC52(t *testing.T) {
 		t.Fatalf("OSC52 fallback payload = %q, want %q", got, want)
 	}
 }
+
+func TestNew_setsSystemClipboardRead(t *testing.T) {
+	m := New(nil, "")
+	t.Cleanup(m.Close)
+	if m.clipboardRead == nil {
+		t.Fatal("expected clipboardRead to be initialized")
+	}
+}

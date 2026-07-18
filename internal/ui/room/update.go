@@ -178,6 +178,8 @@ func (m Model) handleDraftComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch {
 	case isCtrlKey(msg, 'g'):
 		return m.startEditorCompose()
+	case isCtrlKey(msg, 'v'):
+		return m.pasteComposeClipboard()
 	case k.Code == tea.KeyEnter && !k.Mod.Contains(tea.ModAlt):
 		raw := m.input.compose.Value()
 		if strings.TrimSpace(raw) == "" {
@@ -192,6 +194,20 @@ func (m Model) handleDraftComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m = m.syncAfterCompose()
 		return m, cmd
 	}
+}
+
+func (m Model) pasteComposeClipboard() (Model, tea.Cmd) {
+	if m.clipboardRead == nil {
+		return m, nil
+	}
+	text, err := m.clipboardRead()
+	if err != nil {
+		return m.AppendSystem("error: paste failed: " + err.Error()), nil
+	}
+	var cmd tea.Cmd
+	m.input.compose, cmd = m.input.compose.Update(tea.PasteMsg{Content: text})
+	m = m.syncAfterCompose()
+	return m, cmd
 }
 
 func (m Model) handleHistoryKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {

@@ -536,6 +536,11 @@ func (m Model) showWho() Model {
 }
 
 func (m Model) showHelp() Model {
+	m.room = m.room.AppendSystem(m.helpText())
+	return m
+}
+
+func (m Model) helpText() string {
 	const tmpl = `[help]
 
 Commands:
@@ -557,6 +562,8 @@ General keys:
 
 Compose focus (separator label: compose):
   Enter                submit
+  Ctrl+C               clear composer
+  Ctrl+V               paste system clipboard
   Ctrl+G               open $EDITOR for multi-line compose
   Ctrl+X               (when staged) interrupt + send
   Esc                  (when staged) edit staged message
@@ -566,6 +573,7 @@ History focus (separator label: history):
   Home / End           jump to top / jump to bottom
   Esc                  return to compose focus
   Ctrl+G               open transcript in $EDITOR (read-only)
+  Ctrl+C               copy to system clipboard
 
 Approval prompt (separator label: approval):
   ↑/↓ or j/k           change selection
@@ -577,14 +585,16 @@ UI hints:
   The separator label shows the current focus: compose/history/approval
   When history is focused, the first visible history row is highlighted`
 
-	debugBlock := ""
-	if m.debug {
-		debugBlock = "" +
-			"  /debugview           print viewport debug\n" +
-			"  /debugrows           toggle row number overlay\n"
+	return fmt.Sprintf(tmpl, m.debugHelpBlock())
+}
+
+func (m Model) debugHelpBlock() string {
+	if !m.debug {
+		return ""
 	}
-	m.room = m.room.AppendSystem(fmt.Sprintf(tmpl, debugBlock))
-	return m
+	return "" +
+		"  /debugview           print viewport debug\n" +
+		"  /debugrows           toggle row number overlay\n"
 }
 
 func (m Model) debugView() Model {

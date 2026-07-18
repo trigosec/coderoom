@@ -27,7 +27,10 @@ import (
 	"github.com/trigosec/coderoom/internal/ui/room/staging"
 )
 
-var systemClipboardWrite = clipboard.WriteAll
+var (
+	systemClipboardRead  = clipboard.ReadAll
+	systemClipboardWrite = clipboard.WriteAll
+)
 
 type roomFocus int
 
@@ -107,6 +110,7 @@ type Model struct {
 	debug          bool
 	lastSize       tea.WindowSizeMsg
 	colorByAlias   func(string) string
+	clipboardRead  func() (string, error)
 	clipboardWrite func(string) error
 }
 
@@ -133,6 +137,7 @@ func New(colorByAlias func(string) string, departedColor string) Model {
 		activeFocus:    focusInput,
 		historyLive:    true,
 		colorByAlias:   colorByAlias,
+		clipboardRead:  systemClipboardRead,
 		clipboardWrite: defaultClipboardWriter(os.Stdout),
 	}
 }

@@ -1,10 +1,12 @@
 package room
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/ui/room/staging"
 )
 
@@ -179,6 +181,64 @@ func TestCtrlC_historyFocusWithoutSelectionDoesNothing(t *testing.T) {
 	}
 	if next.HistoryHasSelection() {
 		t.Fatal("expected copy without selection not to create a selection")
+	}
+}
+
+func TestCtrlV_composeFocusPastesClipboardContent(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(40, 12)
+	m = m.SetComposeValue("hello ")
+	calls := 0
+	m.clipboardRead = func() (string, error) {
+		calls++
+		return "world\nagain", nil
+	}
+
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'v', Mod: tea.ModCtrl}))
+	if calls != 1 {
+		t.Fatalf("clipboard read calls = %d, want 1", calls)
+	}
+	if got := next.ComposeValue(); got != "hello world\nagain" {
+		t.Fatalf("compose value = %q, want %q", got, "hello world\nagain")
+	}
+}
+
+func TestCtrlShiftV_composeFocusPastesClipboardContent(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(40, 12)
+	calls := 0
+	m.clipboardRead = func() (string, error) {
+		calls++
+		return "paste", nil
+	}
+
+	next, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'v', Mod: tea.ModCtrl | tea.ModShift}))
+	if calls != 1 {
+		t.Fatalf("clipboard read calls = %d, want 1", calls)
+	}
+	if got := next.ComposeValue(); got != "paste" {
+		t.Fatalf("compose value = %q, want %q", got, "paste")
+	}
+}
+
+func TestCtrlV_composeFocusReportsClipboardReadError(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(40, 12)
+	m.clipboardRead = func() (string, error) {
+		return "", errors.New("clipboard unavailable")
+	}
+
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'v', Mod: tea.ModCtrl}))
+	if cmd != nil {
+		t.Fatalf("expected Ctrl+V read failure not to emit a command, got %v", cmd)
+	}
+	if got := next.ComposeValue(); got != "" {
+		t.Fatalf("compose value = %q, want empty", got)
+	}
+	content := ansi.Strip(next.HistoryRenderedContent())
+	content = strings.ReplaceAll(content, "\n", " ")
+	if !strings.Contains(content, "error: paste failed: clipboard unavailable") {
+		t.Fatalf("expected paste failure in history, got %q", content)
 	}
 }
 
