@@ -11,10 +11,8 @@ import (
 // InviteCommand adds an agent to the session and starts it.
 // The session uses its AgentFactory to construct the agent for the given alias.
 type InviteCommand struct {
-	Alias      string
-	Role       participant.Role
-	Initiative participant.Initiative
-	Color      string // display colour assigned by the caller; stored on the participant
+	Alias string
+	Color string
 }
 
 func (c InviteCommand) execute(s *Session) error {
@@ -36,8 +34,8 @@ func (c InviteCommand) execute(s *Session) error {
 func (c InviteCommand) buildParticipant(s *Session) *participant.Participant {
 	p := &participant.Participant{
 		Alias:      c.Alias,
-		Role:       c.Role,
-		Initiative: c.Initiative,
+		Role:       "",
+		Initiative: participant.InitiativeManual,
 		Color:      c.Color,
 	}
 	p.BeginStartup(s.now())

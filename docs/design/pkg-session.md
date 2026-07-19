@@ -42,10 +42,7 @@ The TUI parses raw user input into one of the concrete command types before call
 ```go
 // InviteCommand adds an agent to the session and starts it.
 type InviteCommand struct {
-    Backend    string
-    Alias      string
-    Role       participant.Role
-    Initiative participant.Initiative
+    Alias string
 }
 
 // CancelCommand interrupts in-flight work for an agent but keeps it in the

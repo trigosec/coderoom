@@ -135,9 +135,7 @@ func newSessionWithCodexAgents(t *testing.T, aliases ...string) (*session.Sessio
 func inviteAndWaitStarted(t *testing.T, s *session.Session, events <-chan session.Event, alias string) {
 	t.Helper()
 	if err := s.Execute(session.InviteCommand{
-		Alias:      alias,
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
+		Alias: alias,
 	}); err != nil {
 		t.Fatalf("invite %s: %v", alias, err)
 	}

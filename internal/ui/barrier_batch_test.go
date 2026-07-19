@@ -101,12 +101,7 @@ func pumpUntil(t *testing.T, m Model, pred func(session.Event) bool) Model {
 
 func inviteParticipant(t *testing.T, s *session.Session, alias, color string) {
 	t.Helper()
-	if err := s.Execute(session.InviteCommand{
-		Alias:      alias,
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
-		Color:      color,
-	}); err != nil {
+	if err := s.Execute(session.InviteCommand{Alias: alias, Color: color}); err != nil {
 		t.Fatalf("invite %s: %v", alias, err)
 	}
 }

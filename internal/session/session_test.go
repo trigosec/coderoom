@@ -217,9 +217,7 @@ func mustReceive[T session.Event](t *testing.T, ch <-chan session.Event) T {
 func invite(t *testing.T, s *session.Session, alias string) {
 	t.Helper()
 	err := s.Execute(session.InviteCommand{
-		Alias:      alias,
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
+		Alias: alias,
 	})
 	if err != nil {
 		t.Fatalf("InviteCommand %q: %v", alias, err)
@@ -383,6 +381,17 @@ func TestCancel_unknownAlias(t *testing.T) {
 	}
 }
 
+func TestInvite_duplicateAlias(t *testing.T) {
+	s := newSession(t, session.WithAgentFactory(func(_ *session.Session, _ string) agent.Agent { return newMockAgent() }))
+	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
+
+	invite(t, s, "ada")
+	err := s.Execute(session.InviteCommand{Alias: "ada"})
+	if err == nil {
+		t.Fatal("expected error on duplicate alias, got nil")
+	}
+}
+
 func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
@@ -390,10 +399,8 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
 	err := s.Execute(session.InviteCommand{
-		Alias:      "ada",
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
-		Color:      "#4ade80",
+		Alias: "ada",
+		Color: "#4ade80",
 	})
 	if err != nil {
 		t.Fatalf("InviteCommand: %v", err)
@@ -406,17 +413,6 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	}
 	if p.Color != "#4ade80" {
 		t.Errorf("expected color %q on participant, got %q", "#4ade80", p.Color)
-	}
-}
-
-func TestInvite_duplicateAlias(t *testing.T) {
-	s := newSession(t, session.WithAgentFactory(func(_ *session.Session, _ string) agent.Agent { return newMockAgent() }))
-	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
-
-	invite(t, s, "ada")
-	err := s.Execute(session.InviteCommand{Alias: "ada", Role: participant.RoleBuilder, Initiative: participant.InitiativeManual})
-	if err == nil {
-		t.Fatal("expected error on duplicate alias, got nil")
 	}
 }
 

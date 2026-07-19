@@ -131,9 +131,7 @@ func TestSession_keepaliveStopsWhenParentContextIsCancelled(t *testing.T) {
 	t.Cleanup(s.Shutdown)
 
 	if err := s.Execute(InviteCommand{
-		Alias:      "ada",
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
+		Alias: "ada",
 	}); err != nil {
 		t.Fatalf("InviteCommand: %v", err)
 	}
@@ -173,9 +171,7 @@ func TestSession_shutdownDuringKeepaliveReturnsPromptly(t *testing.T) {
 	)
 
 	if err := s.Execute(InviteCommand{
-		Alias:      "ada",
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
+		Alias: "ada",
 	}); err != nil {
 		t.Fatalf("InviteCommand: %v", err)
 	}
@@ -272,9 +268,7 @@ func newKeepaliveTestSession(tick time.Duration, factory func() agent.Agent) (*S
 func mustInviteKeepaliveTestParticipant(t *testing.T, s *Session) {
 	t.Helper()
 	if err := s.Execute(InviteCommand{
-		Alias:      keepaliveTestAlias,
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
+		Alias: keepaliveTestAlias,
 	}); err != nil {
 		t.Fatalf("InviteCommand: %v", err)
 	}

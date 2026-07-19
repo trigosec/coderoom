@@ -30,9 +30,7 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	)
 
 	if err := s.Execute(session.InviteCommand{
-		Alias:      "ada",
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
+		Alias: "ada",
 	}); err != nil {
 		t.Fatalf("invite: %v", err)
 	}

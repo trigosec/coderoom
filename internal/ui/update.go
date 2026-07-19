@@ -430,10 +430,8 @@ func (m Model) executeUIAction(a Action) (Model, tea.Cmd) {
 func (m Model) inviteAgent(alias string) Model {
 	color, nextPalette := m.palette.Next()
 	err := m.sess.Execute(session.InviteCommand{
-		Alias:      alias,
-		Role:       participant.RoleBuilder,
-		Initiative: participant.InitiativeManual,
-		Color:      color,
+		Alias: alias,
+		Color: color,
 	})
 	if err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: invite %q: %v", alias, err))

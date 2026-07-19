@@ -23,7 +23,7 @@ func (fakeAgent) Stop() error                               { return nil }
 func newParticipant(alias string) *participant.Participant {
 	return &participant.Participant{
 		Alias:      alias,
-		Role:       participant.RoleBuilder,
+		Role:       "builder",
 		Initiative: participant.InitiativeManual,
 		Status:     participant.StatusIdle,
 	}

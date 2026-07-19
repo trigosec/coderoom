@@ -37,18 +37,6 @@ var (
 	ErrNotKeepalive = errors.New("participant is not in keepalive state")
 )
 
-// Role defines the behavioural contract of a participant.
-type Role string
-
-// Supported roles.
-const (
-	RoleBuilder          Role = "builder"
-	RoleReviewer         Role = "reviewer"
-	RoleTester           Role = "tester"
-	RoleArchitect        Role = "architect"
-	RoleSecurityReviewer Role = "security-reviewer"
-)
-
 // Initiative controls how autonomously a participant acts.
 type Initiative string
 
@@ -76,7 +64,7 @@ const (
 // Participant is a named collaborator in a session.
 type Participant struct {
 	Alias      string
-	Role       Role
+	Role       string
 	Initiative Initiative
 	Status     Status
 	Color      string // hex colour code, e.g. "#4ade80"; empty means default terminal colour
