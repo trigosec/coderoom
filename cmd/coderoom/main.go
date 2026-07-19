@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
+	"github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui"
 )
@@ -49,7 +50,8 @@ func run() int {
 	if cleanup != nil {
 		defer cleanup()
 	}
-	sess := session.New(session.WithContext(ctx), factoryOpt)
+	cfg := config.New(cwd)
+	sess := session.New(session.WithContext(ctx), session.WithConfig(cfg), factoryOpt)
 
 	var opts []ui.Option
 	if strings.TrimSpace(os.Getenv("CODEROOM_DEBUG")) == "1" {

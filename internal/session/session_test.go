@@ -3,12 +3,15 @@ package session_test
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 )
@@ -392,6 +395,36 @@ func TestInvite_duplicateAlias(t *testing.T) {
 	}
 }
 
+func TestInvite_resolvesRoleFromConfig(t *testing.T) {
+	root := t.TempDir()
+	writeSessionConfigFile(t, root, ".coderoom/participants/ada.yaml", "alias: ada\nrole: reviewer\n")
+	writeSessionConfigFile(t, root, ".coderoom/prompts/roles/reviewer.md", "Focus on correctness.")
+
+	obs := newTestObserver()
+	a := newMockAgent()
+	s := newSession(
+		t,
+		session.WithObserver(obs),
+		session.WithConfig(config.New(root)),
+		fixedFactory(a),
+	)
+	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
+
+	if err := s.Execute(session.InviteCommand{Alias: "ada"}); err != nil {
+		t.Fatalf("InviteCommand: %v", err)
+	}
+	mustReceive[session.AgentStarting](t, obs.ch)
+	mustReceive[session.AgentStarted](t, obs.ch)
+
+	p, ok := s.Participant("ada")
+	if !ok {
+		t.Fatal("participant not found after invite")
+	}
+	if p.Role != "reviewer" {
+		t.Fatalf("expected role %q, got %q", "reviewer", p.Role)
+	}
+}
+
 func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
@@ -413,6 +446,18 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	}
 	if p.Color != "#4ade80" {
 		t.Errorf("expected color %q on participant, got %q", "#4ade80", p.Color)
+	}
+}
+
+func writeSessionConfigFile(t *testing.T, root, name, content string) {
+	t.Helper()
+
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
 	}
 }
 

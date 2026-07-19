@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/trigosec/coderoom/internal/agent"
+	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
 )
 
@@ -19,7 +20,11 @@ func (c InviteCommand) execute(s *Session) error {
 	if s.agentFactory == nil {
 		return fmt.Errorf("no agent factory configured on session")
 	}
-	p := c.buildParticipant(s)
+	cfg, err := s.resolveParticipantConfig(c.Alias)
+	if err != nil {
+		return err
+	}
+	p := c.buildParticipant(s, cfg)
 	if err := s.addParticipant(p); err != nil {
 		return err
 	}
@@ -31,10 +36,21 @@ func (c InviteCommand) execute(s *Session) error {
 	return nil
 }
 
-func (c InviteCommand) buildParticipant(s *Session) *participant.Participant {
+func (s *Session) resolveParticipantConfig(alias string) (roomconfig.ParticipantConfig, error) {
+	if s.config == nil {
+		return roomconfig.ParticipantConfig{Alias: alias}, nil
+	}
+	cfg, err := s.config.ForParticipant(alias)
+	if err != nil {
+		return roomconfig.ParticipantConfig{}, fmt.Errorf("resolve participant config for %q: %w", alias, err)
+	}
+	return cfg, nil
+}
+
+func (c InviteCommand) buildParticipant(s *Session, cfg roomconfig.ParticipantConfig) *participant.Participant {
 	p := &participant.Participant{
-		Alias:      c.Alias,
-		Role:       "",
+		Alias:      cfg.Alias,
+		Role:       cfg.Role,
 		Initiative: participant.InitiativeManual,
 		Color:      c.Color,
 	}

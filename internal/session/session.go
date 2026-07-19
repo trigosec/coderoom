@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
+	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
 )
 
@@ -39,6 +40,7 @@ type Session struct {
 	now           func() time.Time
 	keepaliveTick time.Duration
 	agentFactory  AgentFactory
+	config        *roomconfig.Config
 	approvals     *approvalHub
 	lifecycle     sessionLifecycle
 }
@@ -87,6 +89,11 @@ func (s *Session) AddObserver(obs Observer) {
 // wiring all backend options using session-owned facilities where applicable.
 func WithAgentFactory(f AgentFactory) Option {
 	return func(s *Session) { s.agentFactory = f }
+}
+
+// WithConfig sets the repo-local configuration resolver used during invite.
+func WithConfig(cfg *roomconfig.Config) Option {
+	return func(s *Session) { s.config = cfg }
 }
 
 // New returns an empty Session.
