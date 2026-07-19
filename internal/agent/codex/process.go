@@ -19,6 +19,7 @@ type process struct {
 	askForApproval   AskForApprovalPolicy
 	sandboxMode      SandboxMode
 	model            string
+	systemPrompt     string
 	reasoningEffort  ReasoningEffort
 	reasoningSummary ReasoningSummary
 	appServerCmd     []string

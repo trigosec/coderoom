@@ -59,12 +59,18 @@ The API follows the same model as the `http` package: calls are blocking. If the
 
 | Method | Behaviour |
 |---|---|
-| `Start()` | Launches the process; blocks until initialize + thread/start handshakes complete |
+| `Start()` | Launches the process; blocks until initialize + thread/start handshakes complete, including any configured thread-scoped startup instructions |
 | `Send(prompt)` | Writes the turn/start request to stdin and returns immediately — no stdout read |
 | `Read()` | Blocks until a meaningful message is ready; translates Codex notifications into `agent.Message` |
 | `Stop()` | Closes stdin and waits for the process to exit; kills if it hangs |
 
 `Send` is a pure write. It does not read stdout.
+
+When startup instructions are configured, `Start()` is also responsible for
+delivering them during `thread/start`. In Version 1, the intended mapping is
+the synthesized participant system prompt -> Codex `developerInstructions`.
+This keeps participant role/identity setup out of the visible conversation
+history.
 
 `Read()` blocks until it can return a meaningful message — either a stdout-derived notification (`delta`, `done`) or a queued stderr line (`log`). Unknown or unrecognised notifications are discarded; the observer records them.
 

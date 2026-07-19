@@ -16,13 +16,14 @@ import (
 	"github.com/trigosec/coderoom/internal/participant"
 )
 
-// AgentFactory constructs an agent.Agent for a given alias. The factory is
-// responsible for wiring any backend-specific options using session-owned
-// facilities (agent context, approval listener, logging) before returning.
+// AgentFactory constructs an agent.Agent for a given participant config. The
+// factory is responsible for wiring any backend-specific options using
+// session-owned facilities (agent context, approval listener, logging) before
+// returning.
 //
 // The session is passed to allow factories to use session-owned facilities
 // (e.g., approval routing) without requiring UI-owned glue code.
-type AgentFactory func(s *Session, alias string) agent.Agent
+type AgentFactory func(s *Session, cfg roomconfig.ParticipantConfig) agent.Agent
 
 type agentRuntime struct {
 	agentCancel context.CancelFunc
@@ -85,8 +86,9 @@ func (s *Session) AddObserver(obs Observer) {
 }
 
 // WithAgentFactory sets the factory used to construct agents when a participant
-// is invited. The factory receives the agent alias and is responsible for
-// wiring all backend options using session-owned facilities where applicable.
+// is invited. The factory receives the resolved participant config and is
+// responsible for wiring all backend options using session-owned facilities
+// where applicable.
 func WithAgentFactory(f AgentFactory) Option {
 	return func(s *Session) { s.agentFactory = f }
 }

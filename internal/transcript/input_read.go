@@ -174,6 +174,8 @@ func assignInputFrontMatterValue(config *Config, key, decoded string) error {
 	switch key {
 	case "model":
 		config.Model = decoded
+	case "developer_instructions":
+		config.DeveloperInstructions = decoded
 	case "ask_for_approval":
 		config.AskForApproval = codex.AskForApprovalPolicy(decoded)
 	case "sandbox":

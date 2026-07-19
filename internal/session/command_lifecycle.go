@@ -29,7 +29,7 @@ func (c InviteCommand) execute(s *Session) error {
 		return err
 	}
 	s.CreateAgentRuntime(c.Alias)
-	a := s.agentFactory(s, c.Alias)
+	a := s.agentFactory(s, cfg)
 	s.notify(ParticipantStatusChanged{Alias: c.Alias, From: "", To: p.Status, Since: p.Since})
 	s.notify(AgentStarting{Alias: c.Alias})
 	startInvitedAgent(c.Alias, a, s)

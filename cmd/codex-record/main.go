@@ -117,6 +117,7 @@ func startClient(workDir, _ string, input transcript.Config, recorder *transcrip
 		codex.WithObserver(recorder),
 		codex.WithApprovalListener(listener),
 		codex.WithModel(input.Model),
+		codex.WithSystemPrompt(input.DeveloperInstructions),
 		codex.WithAskForApprovalPolicy(input.AskForApproval),
 		codex.WithSandboxMode(input.Sandbox),
 		codex.WithReasoningEffort(input.ReasoningEffort),
@@ -183,10 +184,11 @@ func buildFixture(version, testCase string, input transcript.Input, collector *c
 		}
 	}
 	return transcript.Output{
-		Name:         testCase,
-		CodexVersion: version,
-		Model:        input.Config.Model,
-		Actions:      input.Actions,
+		Name:                  testCase,
+		CodexVersion:          version,
+		Model:                 input.Config.Model,
+		DeveloperInstructions: input.Config.DeveloperInstructions,
+		Actions:               input.Actions,
 		Expect: transcript.Expect{
 			Output: transcript.TextExpectation{NumMessages: collector.outputCount, Content: collector.outputText.String()},
 			Log:    transcript.TextExpectation{NumMessages: collector.logCount, Content: collector.logText.String()},

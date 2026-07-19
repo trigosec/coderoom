@@ -70,11 +70,12 @@ func run() int {
 
 func agentFactoryOption(cwd, agentLog string) (cleanup func(), opt session.Option, err error) {
 	if agentLog == "" {
-		return nil, session.WithAgentFactory(func(s *session.Session, alias string) agent.Agent {
+		return nil, session.WithAgentFactory(func(s *session.Session, cfg config.ParticipantConfig) agent.Agent {
 			return codex.New(
 				cwd,
-				codex.WithContext(s.CreateAgentContext(alias)),
-				codex.WithApprovalListener(s.ApprovalListener(alias)),
+				codex.WithContext(s.CreateAgentContext(cfg.Alias)),
+				codex.WithApprovalListener(s.ApprovalListener(cfg.Alias)),
+				codex.WithSystemPrompt(cfg.Prompt),
 			)
 		}), nil
 	}
@@ -87,12 +88,13 @@ func agentFactoryOption(cwd, agentLog string) (cleanup func(), opt session.Optio
 			if err := f.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "agent-log close: %v\n", err)
 			}
-		}, session.WithAgentFactory(func(s *session.Session, alias string) agent.Agent {
+		}, session.WithAgentFactory(func(s *session.Session, cfg config.ParticipantConfig) agent.Agent {
 			return codex.New(
 				cwd,
-				codex.WithContext(s.CreateAgentContext(alias)),
-				codex.WithObserver(codex.NewLogObserver(f, alias)),
-				codex.WithApprovalListener(s.ApprovalListener(alias)),
+				codex.WithContext(s.CreateAgentContext(cfg.Alias)),
+				codex.WithObserver(codex.NewLogObserver(f, cfg.Alias)),
+				codex.WithApprovalListener(s.ApprovalListener(cfg.Alias)),
+				codex.WithSystemPrompt(cfg.Prompt),
 			)
 		}), nil
 }

@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
+	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room"
@@ -179,7 +180,9 @@ func stageHandoffWithCompletedAdaOutput(t *testing.T, agents map[string]agent.Ag
 	t.Helper()
 
 	ada := agents["ada"].(*testAgent)
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -209,7 +212,9 @@ func TestBarrierBatch_stagesThenDispatchesWhenIdle(t *testing.T) {
 		"ada":    newTestAgent(),
 		"turing": newTestAgent(),
 	}
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -254,7 +259,9 @@ func TestBarrierBatch_autoDispatchPreservesFirstOutputRecord(t *testing.T) {
 		"ada":    newTestAgent(),
 		"turing": newTestAgent(),
 	}
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -300,7 +307,9 @@ func TestBarrierBatch_failedDispatchDoesNotCommitUserInput(t *testing.T) {
 	}
 	agents["ada"].sendErr = errors.New("send failed")
 
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -330,7 +339,9 @@ func TestBarrierBatch_failedDispatchDoesNotRetryOnRollbackIdle(t *testing.T) {
 	}
 	agents["ada"].sendErr = errors.New("send failed")
 
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -366,7 +377,9 @@ func TestBarrierBatch_partialDispatchCommitsUserInput(t *testing.T) {
 	}
 	agents["ada"].sendErr = errors.New("send failed")
 
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -396,7 +409,9 @@ func TestBarrierBatch_discardedTargetRestoresDraft(t *testing.T) {
 		"ada": newTestAgent(),
 	}
 
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -493,7 +508,9 @@ func newTwoAgentBarrierBatchModel(t *testing.T) (map[string]*testAgent, *session
 		"ada":    newTestAgent(),
 		"turing": newTestAgent(),
 	}
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -567,7 +584,9 @@ func stageDiscardedTargetHandoff(t *testing.T) (*testAgent, *session.Session, Mo
 		"ada":    newTestAgent(),
 		"turing": newTestAgent(),
 	}
-	s := session.New(session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent { return agents[alias] }))
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
 	t.Cleanup(s.Shutdown)
 	m := newTestModelWithSession(t, s)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})

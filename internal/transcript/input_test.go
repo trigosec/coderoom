@@ -43,6 +43,7 @@ func TestReadInputDir_PromptReasoningSettings(t *testing.T) {
 	root := t.TempDir()
 	writeInputFile(t, filepath.Join(root, "prompt.md"), `---
 model: gpt-5.4
+developer_instructions: "Treat TOKEN_7Q9 as the value 2."
 reasoning_effort: xhigh
 reasoning_summary: detailed
 ---
@@ -57,6 +58,9 @@ prompt`)
 	}
 	if got.Config.ReasoningSummary != codex.ReasoningSummaryDetailed {
 		t.Fatalf("reasoning_summary = %q, want %q", got.Config.ReasoningSummary, codex.ReasoningSummaryDetailed)
+	}
+	if got.Config.DeveloperInstructions != "Treat TOKEN_7Q9 as the value 2." {
+		t.Fatalf("developer_instructions = %q", got.Config.DeveloperInstructions)
 	}
 }
 

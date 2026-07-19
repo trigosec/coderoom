@@ -21,8 +21,9 @@ type initializeParams struct {
 }
 
 type threadStartParams struct {
-	Cwd   string  `json:"cwd"`
-	Model *string `json:"model,omitempty"`
+	Cwd                   string  `json:"cwd"`
+	Model                 *string `json:"model,omitempty"`
+	DeveloperInstructions *string `json:"developerInstructions,omitempty"`
 }
 
 type threadStartResult struct {

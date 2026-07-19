@@ -75,6 +75,13 @@ Live integration tests still launch real Codex. They remain under
 The live suite should be small. A broader smoke scenario is preferred over many
 small, overlapping live tests.
 
+The broad transcript sweep is protocol-oriented. Its purpose is to detect
+adapter/protocol regressions against a live Codex build, not to validate every
+case-specific semantic behavior. In particular, thread-scoped startup
+configuration such as `developerInstructions` should be covered by dedicated
+live integration tests that start a fresh client for the scenario under test,
+rather than by the shared transcript sweep.
+
 ---
 
 ## Boundary: what is recorded
@@ -236,6 +243,7 @@ Single-action scenarios use `prompt.md`.
 Its front matter configures the live recording run, for example:
 
 - `model`
+- `developer_instructions`
 - `ask_for_approval`
 - `sandbox`
 - `approval_strategy`

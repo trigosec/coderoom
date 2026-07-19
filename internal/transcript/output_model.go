@@ -4,12 +4,13 @@ import "github.com/trigosec/coderoom/internal/agent"
 
 // Output is the on-disk transcript fixture: front matter plus replay steps.
 type Output struct {
-	Name         string   `yaml:"name"`
-	CodexVersion string   `yaml:"codex_version,omitempty"`
-	Model        string   `yaml:"model,omitempty"`
-	Input        string   `yaml:"input,omitempty"`
-	Actions      []Action `yaml:"actions,omitempty"`
-	Expect       Expect   `yaml:"expect"`
+	Name                  string   `yaml:"name"`
+	CodexVersion          string   `yaml:"codex_version,omitempty"`
+	Model                 string   `yaml:"model,omitempty"`
+	DeveloperInstructions string   `yaml:"developer_instructions,omitempty"`
+	Input                 string   `yaml:"input,omitempty"`
+	Actions               []Action `yaml:"actions,omitempty"`
+	Expect                Expect   `yaml:"expect"`
 }
 
 // File is a compatibility alias for the recorded transcript fixture.

@@ -94,24 +94,44 @@ func writeHeader(w io.Writer, output Output) error {
 	if _, err := fmt.Fprintln(w, "---"); err != nil {
 		return fmt.Errorf("write front matter start: %w", err)
 	}
-	if _, err := fmt.Fprintf(w, "name: %s\n", output.Name); err != nil {
-		return fmt.Errorf("write transcript name: %w", err)
-	}
-	if output.CodexVersion != "" {
-		if _, err := fmt.Fprintf(w, "codex_version: %s\n", output.CodexVersion); err != nil {
-			return fmt.Errorf("write codex version: %w", err)
-		}
-	}
-	if output.Model != "" {
-		if _, err := fmt.Fprintf(w, "model: %s\n", output.Model); err != nil {
-			return fmt.Errorf("write model: %w", err)
-		}
+	if err := writeHeaderFields(w, output); err != nil {
+		return err
 	}
 	if err := writeActions(w, NormalizedActions(output)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, "expect:"); err != nil {
 		return fmt.Errorf("write expect header: %w", err)
+	}
+	return nil
+}
+
+func writeHeaderFields(w io.Writer, output Output) error {
+	if err := writeHeaderField(w, "name", output.Name); err != nil {
+		return fmt.Errorf("write transcript name: %w", err)
+	}
+	if output.CodexVersion != "" {
+		if err := writeHeaderField(w, "codex_version", output.CodexVersion); err != nil {
+			return fmt.Errorf("write codex version: %w", err)
+		}
+	}
+	if output.Model != "" {
+		if err := writeHeaderField(w, "model", output.Model); err != nil {
+			return fmt.Errorf("write model: %w", err)
+		}
+	}
+	if output.DeveloperInstructions != "" {
+		if err := writeHeaderField(w, "developer_instructions", strconv.Quote(output.DeveloperInstructions)); err != nil {
+			return fmt.Errorf("write developer instructions: %w", err)
+		}
+	}
+	return nil
+}
+
+func writeHeaderField(w io.Writer, key, value string) error {
+	_, err := fmt.Fprintf(w, "%s: %s\n", key, value)
+	if err != nil {
+		return fmt.Errorf("write header field %q: %w", key, err)
 	}
 	return nil
 }
@@ -317,6 +337,14 @@ func applyFrontMatterHeader(output *Output, trimmed string) (bool, error) {
 	}
 	if strings.HasPrefix(trimmed, "model: ") {
 		output.Model = strings.TrimSpace(strings.TrimPrefix(trimmed, "model: "))
+		return true, nil
+	}
+	if strings.HasPrefix(trimmed, "developer_instructions: ") {
+		value, err := parseQuotedValue(trimmed, "developer_instructions: ")
+		if err != nil {
+			return true, err
+		}
+		output.DeveloperInstructions = value
 		return true, nil
 	}
 	if strings.HasPrefix(trimmed, "input: ") {

@@ -23,7 +23,7 @@ func TestObserver_RecordsDirectionalSteps(t *testing.T) {
 func TestObserver_NormalizesThreadStartMatch(t *testing.T) {
 	obs := NewObserver()
 
-	obs.OnSend(`{"id":2,"method":"thread/start","params":{"cwd":"/tmp/work","model":"gpt-5.4"}}`)
+	obs.OnSend(`{"id":2,"method":"thread/start","params":{"cwd":"/tmp/work","model":"gpt-5.4","developerInstructions":"Treat TOKEN_7Q9 as the value 2."}}`)
 
 	steps := obs.Steps()
 	if len(steps) != 1 {
@@ -42,6 +42,9 @@ func TestObserver_NormalizesThreadStartMatch(t *testing.T) {
 	}
 	if params["model"] != "gpt-5.4" {
 		t.Fatalf("params[model] = %v, want gpt-5.4", params["model"])
+	}
+	if params["developerInstructions"] != "Treat TOKEN_7Q9 as the value 2." {
+		t.Fatalf("params[developerInstructions] = %v", params["developerInstructions"])
 	}
 }
 

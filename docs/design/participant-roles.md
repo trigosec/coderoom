@@ -200,7 +200,8 @@ Invite flow:
 3. if the file exists, system validates the definition
 4. if the file exists, system loads the role prompt for the configured role
 5. system synthesizes the participant's system prompt from the available data
-6. system starts the agent
+6. system passes that prompt into agent startup
+7. system starts the agent
 
 Version 1 is permissive. If the participant file does not exist, invite still
 succeeds using identification-only prompt synthesis.
@@ -236,6 +237,11 @@ You are a builder.
 
 If a role is configured, the corresponding role prompt file is appended after
 the identification and YAML-derived statements.
+
+The synthesized participant prompt is startup configuration, not a normal room
+message. For Codex, Version 1 should deliver it during `thread/start` using
+thread-scoped developer instructions rather than sending it as the participant's
+first conversational turn.
 
 If no participant definition exists for an alias, the system prompt should
 include only identification. Version 1 should not invent default role behavior
@@ -283,6 +289,8 @@ The important boundary is:
 - file loading and validation happen before agent start
 - session works with validated runtime values
 - prompt synthesis happens once per participant startup
+- agent startup receives the synthesized prompt as startup configuration, not as
+  a user-visible turn
 
 This preserves the current design where session coordinates runtime behavior and
 participant owns transition invariants.

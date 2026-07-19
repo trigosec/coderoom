@@ -109,6 +109,31 @@ func TestCodexArgs_modelNotInArgs(t *testing.T) {
 	}
 }
 
+func TestStart_threadStartIncludesSystemPrompt(t *testing.T) {
+	var stdin bytes.Buffer
+	stdout := bytes.NewBufferString(
+		line(`{"id":1,"result":{}}`) +
+			line(`{"id":2,"result":{"thread":{"id":"th1"}}}`),
+	)
+	c := New(".", WithSystemPrompt("your name is ada"))
+	c.proc.codexIn = nopWriteCloser{&stdin}
+	c.proc.codexOut = bufio.NewReader(stdout)
+	c.proc.codexErr = io.NopCloser(bytes.NewBuffer(nil))
+	c.rpc.obs = noopObserver{}
+
+	if _, err := rpcHandshake(c); err != nil {
+		t.Fatalf("rpcHandshake(): %v", err)
+	}
+
+	got := stdin.String()
+	if !strings.Contains(got, `"method":"thread/start"`) {
+		t.Fatalf("expected thread/start request, got %q", got)
+	}
+	if !strings.Contains(got, `"developerInstructions":"your name is ada"`) {
+		t.Fatalf("expected developerInstructions in thread/start request, got %q", got)
+	}
+}
+
 func TestCodexArgs_reasoningEffort(t *testing.T) {
 	t.Setenv("CODEX_VERSION_OVERRIDE", "")
 	args := codexArgs("", "", ReasoningXHigh, "")

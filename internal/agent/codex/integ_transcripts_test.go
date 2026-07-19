@@ -19,6 +19,13 @@ import (
 
 const transcriptRoot = "testdata/transcripts"
 
+// TestClientLiveTranscriptScenarios is a shared-session smoke test. It starts
+// one live Codex client, then reuses the recorded transcript scenario actions
+// as convenient real-world prompts and notices to exercise an ongoing session.
+// The goal is to catch adapter or protocol breakage while driving a realistic
+// conversation sequence, not to validate each scenario's startup configuration
+// in isolation. Scenario-level thread/start settings such as startup
+// instructions are therefore out of scope for this test.
 func TestClientLiveTranscriptScenarios(t *testing.T) {
 	versionDir := latestTranscriptVersionDir(t, transcriptRoot)
 	cases := discoverTranscriptCases(t, versionDir)

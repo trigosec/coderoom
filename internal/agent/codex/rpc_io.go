@@ -91,6 +91,9 @@ func rpcHandshake(c *Client) (string, error) {
 	if c.proc.model != "" {
 		tsParams.Model = &c.proc.model
 	}
+	if c.proc.systemPrompt != "" {
+		tsParams.DeveloperInstructions = &c.proc.systemPrompt
+	}
 	if err := rpcWrite(c, methodThreadStart, tsParams); err != nil {
 		return "", err
 	}

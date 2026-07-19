@@ -109,6 +109,12 @@ func WithModel(model string) Option {
 	return func(c *Client) { c.proc.model = model }
 }
 
+// WithSystemPrompt configures thread-scoped startup instructions that Codex
+// receives during thread/start.
+func WithSystemPrompt(prompt string) Option {
+	return func(c *Client) { c.proc.systemPrompt = prompt }
+}
+
 // WithAskForApprovalPolicy configures Codex's command approval policy.
 // See `codex --help` for possible values (e.g. "untrusted", "on-request", "never").
 // Use `AskDefault` to omit the flag and let Codex choose.

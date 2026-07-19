@@ -44,6 +44,7 @@ func runTranscriptCase(t *testing.T, path string) {
 		codex.WithAppServerCommand(command, args...),
 		codex.WithApprovalListener(listener),
 		codex.WithModel(file.Model),
+		codex.WithSystemPrompt(file.DeveloperInstructions),
 	)
 	startReplayClient(t, client)
 

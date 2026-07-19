@@ -101,7 +101,7 @@ func normalizeThreadStartMatch(msg map[string]any) map[string]any {
 	if params == nil {
 		return out
 	}
-	normParams := copySelectedMapFields(params, "model")
+	normParams := copySelectedMapFields(params, "model", "developerInstructions")
 	if len(normParams) > 0 {
 		out["params"] = normParams
 	}

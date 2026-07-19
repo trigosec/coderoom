@@ -88,6 +88,11 @@ type PrivateSendCommand struct {
 
 Each command type carries only the fields it needs. Adding a new command requires implementing `execute` — the compiler enforces it.
 
+Invite-time participant configuration is resolved inside `session`, not in the
+TUI. Session may consult repo-local config using the invited alias, derive the
+participant's runtime role, and pass the synthesized startup prompt into the
+agent factory so the backend can apply it during startup.
+
 ---
 
 ## Output model

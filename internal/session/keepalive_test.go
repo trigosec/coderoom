@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/trigosec/coderoom/internal/agent"
+	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
 )
 
@@ -114,7 +115,7 @@ func TestSession_keepaliveSweepTransitionsParticipant(t *testing.T) {
 
 func TestSession_keepaliveStopsWhenParentContextIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	agentFactory := func(_ *Session, _ string) agent.Agent {
+	agentFactory := func(_ *Session, _ roomconfig.ParticipantConfig) agent.Agent {
 		return &keepaliveTestAgent{
 			schedule: 50 * time.Millisecond,
 			readCh:   make(chan agent.Message, 1),
@@ -155,7 +156,7 @@ func TestSession_keepaliveStopsWhenParentContextIsCancelled(t *testing.T) {
 }
 
 func TestSession_shutdownDuringKeepaliveReturnsPromptly(t *testing.T) {
-	agentFactory := func(_ *Session, _ string) agent.Agent {
+	agentFactory := func(_ *Session, _ roomconfig.ParticipantConfig) agent.Agent {
 		return &keepaliveTestAgent{
 			schedule: 10 * time.Millisecond,
 			blockCh:  make(chan struct{}),
@@ -259,7 +260,7 @@ func newKeepaliveTestSession(tick time.Duration, factory func() agent.Agent) (*S
 	events := make(chan Event, 32)
 	s := New(
 		func(s *Session) { s.keepaliveTick = tick },
-		WithAgentFactory(func(_ *Session, _ string) agent.Agent { return factory() }),
+		WithAgentFactory(func(_ *Session, _ roomconfig.ParticipantConfig) agent.Agent { return factory() }),
 		WithObserver(keepaliveObserver{ch: events}),
 	)
 	return s, events

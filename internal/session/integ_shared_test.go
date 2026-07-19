@@ -9,6 +9,7 @@ import (
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
+	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
 )
@@ -117,10 +118,11 @@ func newSessionWithCodexAgents(t *testing.T, aliases ...string) (*session.Sessio
 	}
 	s := session.New(
 		session.WithObserver(chanObserver{ch: events}),
-		session.WithAgentFactory(func(_ *session.Session, alias string) agent.Agent {
-			return agents[alias]
+		session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+			return agents[cfg.Alias]
 		}),
 	)
+	t.Cleanup(s.Shutdown)
 	t.Cleanup(func() {
 		for _, alias := range aliases {
 			_ = s.Execute(session.RemoveCommand{Alias: alias})

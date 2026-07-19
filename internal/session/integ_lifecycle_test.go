@@ -9,6 +9,7 @@ import (
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
+	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/session"
 )
 
@@ -22,11 +23,12 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	var a *codex.Client
 	s := session.New(
 		session.WithObserver(chanObserver{ch: events}),
-		session.WithAgentFactory(func(_ *session.Session, _ string) agent.Agent {
+		session.WithAgentFactory(func(_ *session.Session, _ roomconfig.ParticipantConfig) agent.Agent {
 			a = codex.New(cwd)
 			return a
 		}),
 	)
+	t.Cleanup(s.Shutdown)
 
 	if err := s.Execute(session.InviteCommand{
 		Alias: "ada",
