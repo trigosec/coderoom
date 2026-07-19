@@ -42,6 +42,7 @@ install-hooks:
 .PHONY: commit
 commit:
 	git commit
+	git push
 
 .PHONY: release
 release:
