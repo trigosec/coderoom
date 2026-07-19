@@ -75,15 +75,49 @@ Start one agent:
 /invite ada
 ```
 
-`ada` is the alias you will use to address this agent in the room. For now,
-the backend (Codex) and role are implicit; a future version will let you
-specify both.
+`ada` is the alias you will use to address this agent in the room.
+
+When `.coderoom/participants/ada.yaml` exists, Code Room loads that
+participant definition and any referenced role prompt before starting the
+agent. If no participant definition exists, invite still works with
+identification-only setup.
 
 Send a message:
 
 ```text
 @ada implement a small change: ...
 ```
+
+### Participant setup
+
+Participant and role configuration lives under `.coderoom/`:
+
+```text
+.coderoom/
+  participants/
+    ada.yaml
+  prompts/
+    roles/
+      builder.md
+```
+
+Minimal participant definition:
+
+```yaml
+alias: ada
+role: builder
+```
+
+Minimal role prompt:
+
+```md
+You are a builder.
+
+Implement the requested change directly in the codebase.
+Follow existing code patterns and keep edits minimal, focused, and practical.
+```
+
+See `docs/participants.md` for the full setup and validation rules.
 
 ---
 
@@ -108,6 +142,7 @@ sending to that agent).
 
 - `docs/design/concept.md`
 - `docs/design/architecture.md`
+- `docs/design/participant-roles.md`
 
 ---
 
