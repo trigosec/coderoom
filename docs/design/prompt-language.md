@@ -1,9 +1,9 @@
-# Code Room Prompt Language: Version 0
+# coderoom Prompt Language: Version 0
 
 ## Status
 
 This document proposes the first executable slice of a prompt-based language
-for Code Room. It incorporates the existing room commands and adds the minimum
+for coderoom. It incorporates the existing room commands and adds the minimum
 syntax needed to define a reusable shell-backed command and use it as the
 termination condition for a bounded agent loop.
 
@@ -23,14 +23,14 @@ bodies.
 
 - Preserve the existing interactive room syntax.
 - Keep agent execution sequential, as it is today.
-- Let users extend Code Room without adding workflow-specific built-ins.
+- Let users extend coderoom without adding workflow-specific built-ins.
 - Treat deterministic external commands as reusable success conditions.
 - Make agent loops bounded and visible to the human.
 - Leave room for future content variables and richer command definitions.
 
 ## Existing Language
 
-Code Room already recognizes three forms of input:
+coderoom already recognizes three forms of input:
 
 ```text
 @ada inspect the current implementation   # direct shared-room send
@@ -122,7 +122,7 @@ The stored command is invoked by name:
 /tests
 ```
 
-`/shell` consumes the remaining non-empty input as its program. Code Room trims
+`/shell` consumes the remaining non-empty input as its program. coderoom trims
 the whitespace immediately after `/shell`, then passes the rest to the shell as
 written. Quotes inside that program retain their normal shell meaning:
 
@@ -186,7 +186,7 @@ cancellation onto the same result contract where needed by the interpreter.
 
 ## `/shell`
 
-`/shell` executes the remainder of its input in the Code Room workspace:
+`/shell` executes the remainder of its input in the coderoom workspace:
 
 ```text
 /shell go test ./...
@@ -200,7 +200,7 @@ It collects the process exit code, standard output, and standard error.
 - User cancellation produces `cancelled`.
 
 The shell invocation, status, and output are visible in the room. `/shell` is
-an explicit user action; an agent cannot cause Code Room to execute an
+an explicit user action; an agent cannot cause coderoom to execute an
 arbitrary host command merely by emitting this syntax in its response.
 
 The concrete shell, environment inheritance, output limits, and cancellation
@@ -242,7 +242,7 @@ unambiguous.
 Execution proceeds as follows:
 
 1. Send the participant the loop prompt.
-2. Wait for the participant's turn to finish using Code Room's existing command
+2. Wait for the participant's turn to finish using coderoom's existing command
    sequencing.
 3. Invoke the command named after `/until`.
 4. If it succeeds, finish the loop successfully.

@@ -1,8 +1,8 @@
-# Code Room
+# coderoom
 
 A programmable multi-agent coding room.
 
-Code Room brings mob programming to the terminal. You and a team of AI coding
+coderoom brings mob programming to the terminal. You and a team of AI coding
 agents work together in a shared room, with git as the common workspace and you
 as the decision authority.
 
@@ -24,7 +24,7 @@ avoid duplicated effort, and review changes with confidence. Workflow
 automation often creates the opposite problem: it hides the work behind a
 fixed pipeline and removes the human from the collaboration.
 
-Code Room combines both modes. Developers can work interactively with named
+coderoom combines both modes. Developers can work interactively with named
 agents in a shared terminal room, hand work between them, or compose bounded
 workflows from general language primitives. The human chooses how much control
 to keep at each step and can move between collaboration and automation without
@@ -34,7 +34,7 @@ leaving the room.
 
 ## How it works
 
-Code Room has four layers that build on one another:
+coderoom has four layers that build on one another:
 
 1. **Mob programming:** the developer and agents work on the same problem in a
    shared room and git workspace.
@@ -73,7 +73,7 @@ not a built-in "fix tests" workflow.
 
 ## Built with Codex
 
-Code Room was developed by dogfooding the collaboration model it provides. The
+coderoom was developed by dogfooding the collaboration model it provides. The
 developer worked with named Codex agents in the shared repository: **Ada** acted
 as the builder and **Tim** as the reviewer. Git diffs, focused handoffs, and
 small commits formed the coordination loop.
@@ -166,7 +166,7 @@ Start one agent:
 
 `ada` is the alias you will use to address this agent in the room.
 
-When `.coderoom/participants/ada.yaml` exists, Code Room loads that
+When `.coderoom/participants/ada.yaml` exists, coderoom loads that
 participant definition and any referenced role prompt before starting the
 agent. If no participant definition exists, invite still works with
 identification-only setup.

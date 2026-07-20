@@ -30,7 +30,7 @@ type agentRuntime struct {
 	stop        chan struct{}
 }
 
-// Session is the central orchestrator of a Code Room session.
+// Session is the central orchestrator of a coderoom session.
 // Execute must be called from a single goroutine (the TUI input loop).
 // It is not safe for concurrent calls to Execute.
 type Session struct {

@@ -38,8 +38,8 @@ two modes over the same rendered transcript surface:
 
 Mouse-wheel scrolling is handled by the app. Because that requires terminal
 mouse reporting, many terminals will require an override gesture such as
-`Shift+drag` for terminal-native text selection while Code Room is running.
-Code Room does not yet implement its own mouse drag selection semantics.
+`Shift+drag` for terminal-native text selection while coderoom is running.
+coderoom does not yet implement its own mouse drag selection semantics.
 
 This yields four valid UI states:
 

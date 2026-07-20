@@ -1,7 +1,7 @@
 # `.coderoom`
 
 This directory contains repo-local participant and role configuration used by
-Code Room.
+coderoom.
 
 Current contents:
 

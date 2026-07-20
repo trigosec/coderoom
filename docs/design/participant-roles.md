@@ -24,7 +24,7 @@ That is sufficient for process lifecycle, but weak for product semantics:
 - role behavior cannot be inspected or reviewed as project configuration
 - prompt construction risks being scattered across session code
 
-Code Room's design already treats participants as named collaborators with
+coderoom's design already treats participants as named collaborators with
 stable identity and a behavioral contract. Persisting participant definitions in
 the repo makes that model explicit.
 

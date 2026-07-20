@@ -25,14 +25,14 @@ The runner invokes:
 The process:
 
 - runs in the caller-provided working directory
-- inherits the Code Room process environment
+- inherits the coderoom process environment
 - captures standard output and standard error separately
 - runs in its own process group, which is terminated when the supplied context
   is cancelled so pipeline children do not outlive the shell
 - bounds the wait for inherited output pipes after the root shell exits, then
   terminates any remaining background descendants in the process group
 
-This targets the Linux and macOS platforms currently supported by Code Room.
+This targets the Linux and macOS platforms currently supported by coderoom.
 
 ## Result
 

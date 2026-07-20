@@ -2,7 +2,7 @@
 
 ## Scope
 
-The Session Controller is the central orchestrator of a Code Room session. It receives structured commands, dispatches to agents, and forwards agent output to the appropriate channel.
+The Session Controller is the central orchestrator of a coderoom session. It receives structured commands, dispatches to agents, and forwards agent output to the appropriate channel.
 
 It is the layer that owns goroutines. The agent package is synchronous; the session controller spawns one reader goroutine per agent to stream output without blocking.
 
@@ -112,7 +112,7 @@ Implementations must be fast; avoid operations that can block for non-trivial ti
 
 Multiple observers are supported (e.g. TUI + room + event logger). Per [`pkg-room.md`](pkg-room.md), `room.Room` registers as an observer for chat/record projection only. The TUI continues to register directly as its own `session.Observer` for participant and approval state, exactly as it does today — room does not replace that registration, it adds a second one alongside it.
 
-`session.Event` is the canonical runtime event model for Code Room.
+`session.Event` is the canonical runtime event model for coderoom.
 
 - session publishes `session.Event`
 - room consumes `session.Event` and projects rooms + records

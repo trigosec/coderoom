@@ -32,7 +32,7 @@ There are at least two interpretations:
    - The app becomes “an editor with panels/buffers” (shared room + per-agent
      private buffers).
 2. **Use micro as a component**:
-   - Keep Code Room’s controller/runtime, but use micro for the main view and
+   - Keep coderoom’s controller/runtime, but use micro for the main view and
      input.
 
 Either approach likely implies stopping (or heavily reducing) Bubble Tea usage.

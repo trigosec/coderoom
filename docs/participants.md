@@ -1,14 +1,14 @@
 # Participant Setup
 
 This document describes how repo-local participant and role configuration works
-in Code Room.
+in coderoom.
 
 For design rationale and runtime integration details, see
 `docs/design/participant-roles.md`.
 
 ## Overview
 
-Code Room separates two concerns:
+coderoom separates two concerns:
 
 - a **participant** is the named collaborator you invite into the room
 - a **role** is the behavioral prompt attached to that participant
@@ -83,7 +83,7 @@ When you run:
 /invite ada
 ```
 
-Code Room does the following:
+coderoom does the following:
 
 1. Checks for `.coderoom/participants/ada.yaml`.
 2. If the file exists, validates it.

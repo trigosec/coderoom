@@ -1,6 +1,6 @@
 # Package design: selection and copy while scrolling (open)
 
-This document explores how Code Room could support convenient text selection and
+This document explores how coderoom could support convenient text selection and
 copy while also supporting viewport scrolling. It describes two options and
 their tradeoffs. This is not part of the v1 implementation.
 

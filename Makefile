@@ -13,6 +13,10 @@ lint:
 check-goleak:
 	./scripts/check-goleak-testmain.sh
 
+.PHONY: check-branding
+check-branding:
+	./scripts/check-branding.sh
+
 .PHONY: test
 test:
 	go test ./...
@@ -29,7 +33,7 @@ test-integration:
 test-all: lint test-race test-integration
 
 .PHONY: pre-commit
-pre-commit: check-goleak lint test-race
+pre-commit: check-branding check-goleak lint test-race
 
 .PHONY: upgrade-codex
 upgrade-codex:

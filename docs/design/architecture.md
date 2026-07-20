@@ -1,8 +1,8 @@
-# Code Room: Architecture
+# coderoom: Architecture
 
 ## Overview
 
-A Code Room session consists of multiple AI agents sharing a git worktree. The repo is the shared workspace. `git diff` is the shared language of change.
+A coderoom session consists of multiple AI agents sharing a git worktree. The repo is the shared workspace. `git diff` is the shared language of change.
 
 The Session Controller is the central orchestrator. All commands, messages, and state changes flow through it.
 
@@ -149,7 +149,7 @@ participant and session controller.
 
 ### 6. Sandbox Controller
 
-Each agent runs inside a sandbox that constrains what it can access at the OS level. Code Room does not attempt to intercept decisions made inside the CLI tool itself. Instead, it defines the boundary within which the CLI operates.
+Each agent runs inside a sandbox that constrains what it can access at the OS level. coderoom does not attempt to intercept decisions made inside the CLI tool itself. Instead, it defines the boundary within which the CLI operates.
 
 Sandbox constraints:
 
@@ -200,7 +200,7 @@ Filesystem and network constraints are enforced by the Sandbox Controller at the
 
 ### Shared Worktree
 
-All agents operate on the same git worktree. There is no patch synchronisation problem: `git diff` gives every agent and the user a consistent view of current changes. Agents interact with git directly through their CLI tools. Code Room does not wrap or duplicate git commands.
+All agents operate on the same git worktree. There is no patch synchronisation problem: `git diff` gives every agent and the user a consistent view of current changes. Agents interact with git directly through their CLI tools. coderoom does not wrap or duplicate git commands.
 
 ### Direct File Editing
 

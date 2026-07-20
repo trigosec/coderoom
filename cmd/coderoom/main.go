@@ -1,4 +1,4 @@
-// Command coderoom is the CLI entry point for Code Room.
+// Command coderoom is the CLI entry point for coderoom.
 package main
 
 import (

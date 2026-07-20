@@ -1,5 +1,5 @@
 // Package promptlang defines and parses the user-input language understood by
-// Code Room. It is independent of the UI and session execution layers.
+// coderoom. It is independent of the UI and session execution layers.
 package promptlang
 
 import "fmt"
@@ -34,7 +34,7 @@ type Send struct {
 // Broadcast sends a message to all agents.
 type Broadcast struct{ Text string }
 
-// Shell executes a shell program in the Code Room workspace.
+// Shell executes a shell program in the coderoom workspace.
 type Shell struct{ Program string }
 
 // CommandDefinition associates a command name with an unevaluated shell expression.

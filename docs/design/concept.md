@@ -1,4 +1,4 @@
-# Code Room: Concept
+# coderoom: Concept
 
 ## The Problem
 
@@ -6,7 +6,7 @@ A single LLM does not consistently produce the quality needed for production cod
 
 Working with multiple LLMs in structured roles materially improves results. One implements. The second reviews, identifying deviations from the design. But this pattern is ad hoc today: it requires manual coordination, separate sessions, and no shared context.
 
-Working with LLMs well requires structure: clear roles, controlled autonomy, and a shared workspace where the human remains the decision authority. Code Room formalises that structure.
+Working with LLMs well requires structure: clear roles, controlled autonomy, and a shared workspace where the human remains the decision authority. coderoom formalises that structure.
 
 ---
 
@@ -27,9 +27,9 @@ The quality function changes by domain. The coordination pattern does not.
 
 ---
 
-## What Code Room Is
+## What coderoom Is
 
-Code Room is a CLI-native multi-agent coding workspace. It lets a developer invite multiple AI coding tools into a shared session, assign them roles, control their autonomy, and coordinate collaboration through structured communication channels.
+coderoom is a CLI-native multi-agent coding workspace. It lets a developer invite multiple AI coding tools into a shared session, assign them roles, control their autonomy, and coordinate collaboration through structured communication channels.
 
 It is not another coding agent. It is a coordination layer for multiple agents working together in a controlled environment.
 

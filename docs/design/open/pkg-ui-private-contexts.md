@@ -1,14 +1,14 @@
 # Package design: terminal-native transcript with private contexts (open)
 
 This document explores how to combine a terminal-native transcript architecture
-(terminal scrollback owns history, native selection/copy) with Code Room’s
+(terminal scrollback owns history, native selection/copy) with coderoom’s
 shared-room + per-agent “private” conversations.
 
 It is a design exploration, not a v1 commitment.
 
 ## Background
 
-Code Room’s channel model separates:
+coderoom’s channel model separates:
 
 - **Shared room**: visible to all agents + the user; primary coordination space.
 - **Private agent channel**: user ↔ single agent; includes operational detail

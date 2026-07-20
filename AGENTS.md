@@ -1,6 +1,6 @@
-# Code Room: Agent Instructions
+# coderoom: Agent Instructions
 
-This repo is **Code Room**: a CLI-native multi-agent coding workspace. Agents collaborate through a shared git worktree; `git diff` is the shared language of change.
+This repo is **coderoom**: a CLI-native multi-agent coding workspace. Agents collaborate through a shared git worktree; `git diff` is the shared language of change.
 
 ## Read First (design + expectations)
 

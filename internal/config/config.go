@@ -1,4 +1,4 @@
-// Package config loads repo-local Code Room configuration.
+// Package config loads repo-local coderoom configuration.
 package config
 
 import (

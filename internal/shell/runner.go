@@ -1,4 +1,4 @@
-// Package shell executes shell programs for the Code Room prompt language.
+// Package shell executes shell programs for the coderoom prompt language.
 package shell
 
 import (

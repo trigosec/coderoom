@@ -1,7 +1,7 @@
 # Package design: input box interaction
 
 This document specifies how the user interacts with the input box at the bottom
-of the Code Room TUI, including editing, submission, multi-line composition, and
+of the coderoom TUI, including editing, submission, multi-line composition, and
 how those choices coexist with scrolling the output viewport.
 
 Scope: Phase 1 UX decisions for `internal/ui` only (not session routing or agent

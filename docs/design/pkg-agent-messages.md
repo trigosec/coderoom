@@ -496,4 +496,4 @@ These exist in the ThreadItem union but are already surfaced via dedicated strea
 - `plan` (has `text`)
 - `userMessage` / `hookPrompt`
 
-Coderoom will continue treating chat/reasoning via delta notifications and handle "action/context items" via lifecycle notifications, consistent with the streaming model described above.
+coderoom will continue treating chat/reasoning via delta notifications and handle "action/context items" via lifecycle notifications, consistent with the streaming model described above.
