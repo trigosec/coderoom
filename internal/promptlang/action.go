@@ -37,6 +37,15 @@ type Broadcast struct{ Text string }
 // Shell executes a shell program in the Code Room workspace.
 type Shell struct{ Program string }
 
+// CommandDefinition associates a command name with an unevaluated shell expression.
+type CommandDefinition struct {
+	Name string
+	Body Shell
+}
+
+// CommandInvocation calls a user-defined command by name.
+type CommandInvocation struct{ Name string }
+
 // Who displays the current agent roster.
 type Who struct{}
 
@@ -52,7 +61,7 @@ type DebugView struct{}
 // DebugRows toggles viewport row-number overlay.
 type DebugRows struct{}
 
-// UnknownCommandError is returned for an unrecognized slash command.
+// UnknownCommandError is returned for an invalid user-command invocation.
 type UnknownCommandError struct {
 	Cmd string
 }
@@ -64,15 +73,17 @@ func (e UnknownCommandError) Error() string {
 	return fmt.Sprintf("unknown command: %s", e.Cmd)
 }
 
-func (Invite) isStatement()    {}
-func (Remove) isStatement()    {}
-func (Cancel) isStatement()    {}
-func (Handoff) isStatement()   {}
-func (Send) isStatement()      {}
-func (Broadcast) isStatement() {}
-func (Shell) isStatement()     {}
-func (Who) isStatement()       {}
-func (Help) isStatement()      {}
-func (Quit) isStatement()      {}
-func (DebugView) isStatement() {}
-func (DebugRows) isStatement() {}
+func (Invite) isStatement()            {}
+func (Remove) isStatement()            {}
+func (Cancel) isStatement()            {}
+func (Handoff) isStatement()           {}
+func (Send) isStatement()              {}
+func (Broadcast) isStatement()         {}
+func (Shell) isStatement()             {}
+func (CommandDefinition) isStatement() {}
+func (CommandInvocation) isStatement() {}
+func (Who) isStatement()               {}
+func (Help) isStatement()              {}
+func (Quit) isStatement()              {}
+func (DebugView) isStatement()         {}
+func (DebugRows) isStatement()         {}

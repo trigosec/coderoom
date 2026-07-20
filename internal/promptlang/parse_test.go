@@ -18,6 +18,10 @@ func TestParse_slashCommands(t *testing.T) {
 		{"/handoff ada turing", promptlang.Handoff{FromAlias: "ada", ToAlias: "turing"}},
 		{"/shell go test ./...", promptlang.Shell{Program: "go test ./..."}},
 		{`/shell echo "hello world" | tee out`, promptlang.Shell{Program: `echo "hello world" | tee out`}},
+		{"/def tests /shell go test ./...", promptlang.CommandDefinition{Name: "tests", Body: promptlang.Shell{Program: "go test ./..."}}},
+		{"/def check-tests_2 /shell go test ./...", promptlang.CommandDefinition{Name: "check-tests_2", Body: promptlang.Shell{Program: "go test ./..."}}},
+		{"/tests", promptlang.CommandInvocation{Name: "tests"}},
+		{"/check-tests_2", promptlang.CommandInvocation{Name: "check-tests_2"}},
 		{"/who", promptlang.Who{}},
 		{"/help", promptlang.Help{}},
 		{"/quit", promptlang.Quit{}},
@@ -80,12 +84,25 @@ func TestParse_errors(t *testing.T) {
 		{"/handoff ada turing extra"},
 		{"/shell"},
 		{"/shell   "},
+		{"/def"},
+		{"/def tests"},
+		{"/def tests /who"},
+		{"/def tests /shell"},
+		{"/def help /shell go test ./..."},
+		{"/def shell /shell go test ./..."},
+		{"/def 1tests /shell go test ./..."},
+		{"/def test! /shell go test ./..."},
+		{"/tests extra"},
+		{"/1tests"},
+		{"/test!"},
+		{"/"},
+		{"/who extra"},
+		{"/loop @ada fix it /until /tests /max 3"},
 		{"@ada"},
 		{"@ada   "},
 		{"@ ada hi"}, // space between @ and alias
 		{""},         // empty
 		{"   "},      // whitespace only
-		{"/unknown"},
 	}
 	for _, tt := range tests {
 		_, err := promptlang.Parse(tt.input)
