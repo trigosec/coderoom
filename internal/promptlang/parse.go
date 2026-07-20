@@ -2,6 +2,7 @@ package promptlang
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -52,10 +53,78 @@ func parseSlash(line string) (Statement, error) {
 	case "/def":
 		return parseDefinition(rest)
 	case "/loop":
-		return nil, fmt.Errorf("/loop is not supported yet")
+		return parseLoop(rest)
 	default:
 		return parseInvocation(cmd, rest)
 	}
+}
+
+func parseLoop(rest string) (Statement, error) {
+	participantReference, remainder := cutToken(rest)
+	participant := strings.TrimPrefix(participantReference, "@")
+	if !strings.HasPrefix(participantReference, "@") || !isIdentifier(participant) {
+		return nil, fmt.Errorf("invalid loop participant")
+	}
+	prompt, condition, maxTurns, err := parseLoopSuffix(remainder)
+	if err != nil {
+		return nil, err
+	}
+	return Loop{
+		Participant: participant,
+		Prompt:      prompt,
+		Condition:   condition,
+		MaxTurns:    maxTurns,
+	}, nil
+}
+
+func parseLoopSuffix(input string) (string, string, int, error) {
+	remainder, maxText := popToken(input)
+	remainder, maxKeyword := popToken(remainder)
+	remainder, conditionReference := popToken(remainder)
+	prompt, untilKeyword := popToken(remainder)
+	if maxKeyword != "/max" || untilKeyword != "/until" || strings.TrimSpace(prompt) == "" {
+		return "", "", 0, fmt.Errorf("usage: /loop @<participant> <prompt> /until /<command> /max <turns>")
+	}
+	condition, err := parseCommandReference(conditionReference)
+	if err != nil {
+		return "", "", 0, err
+	}
+	maxTurns, err := parsePositiveInteger(maxText)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return strings.TrimSpace(prompt), condition, maxTurns, nil
+}
+
+func parseCommandReference(reference string) (string, error) {
+	name := strings.TrimPrefix(reference, "/")
+	if !strings.HasPrefix(reference, "/") || !isIdentifier(name) || isReservedCommand(name) {
+		return "", fmt.Errorf("invalid loop condition")
+	}
+	return name, nil
+}
+
+func parsePositiveInteger(text string) (int, error) {
+	if !isDecimalInteger(text) {
+		return 0, fmt.Errorf("invalid positive integer")
+	}
+	value, err := strconv.Atoi(text)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("invalid positive integer")
+	}
+	return value, nil
+}
+
+func isDecimalInteger(text string) bool {
+	if text == "" {
+		return false
+	}
+	for _, char := range text {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func parseDefinition(rest string) (Statement, error) {
@@ -116,6 +185,15 @@ func cutToken(input string) (string, string) {
 		return input, ""
 	}
 	return input[:index], input[index+1:]
+}
+
+func popToken(input string) (string, string) {
+	input = strings.TrimSpace(input)
+	index := strings.LastIndexAny(input, " \t\r\n")
+	if index < 0 {
+		return "", input
+	}
+	return strings.TrimSpace(input[:index]), input[index+1:]
 }
 
 func isIdentifier(name string) bool {

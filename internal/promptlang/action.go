@@ -46,6 +46,15 @@ type CommandDefinition struct {
 // CommandInvocation calls a user-defined command by name.
 type CommandInvocation struct{ Name string }
 
+// Loop repeatedly prompts a participant until a command succeeds or the turn
+// bound is reached.
+type Loop struct {
+	Participant string
+	Prompt      string
+	Condition   string
+	MaxTurns    int
+}
+
 // Who displays the current agent roster.
 type Who struct{}
 
@@ -82,6 +91,7 @@ func (Broadcast) isStatement()         {}
 func (Shell) isStatement()             {}
 func (CommandDefinition) isStatement() {}
 func (CommandInvocation) isStatement() {}
+func (Loop) isStatement()              {}
 func (Who) isStatement()               {}
 func (Help) isStatement()              {}
 func (Quit) isStatement()              {}

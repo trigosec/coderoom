@@ -49,6 +49,59 @@ func TestParse_sendAction(t *testing.T) {
 	}
 }
 
+func TestParse_loop(t *testing.T) {
+	tests := []struct {
+		input string
+		want  promptlang.Loop
+	}{
+		{
+			"/loop @ada make the tests pass /until /tests /max 3",
+			promptlang.Loop{Participant: "ada", Prompt: "make the tests pass", Condition: "tests", MaxTurns: 3},
+		},
+		{
+			"/loop @agent-2 discuss /max and /until markers /until /check_tests /max 12",
+			promptlang.Loop{Participant: "agent-2", Prompt: "discuss /max and /until markers", Condition: "check_tests", MaxTurns: 12},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := promptlang.Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse: unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Parse = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParse_loopErrors(t *testing.T) {
+	tests := []string{
+		"/loop",
+		"/loop ada fix tests /until /tests /max 3",
+		"/loop @ fix tests /until /tests /max 3",
+		"/loop @ada /until /tests /max 3",
+		"/loop @ada fix tests /max 3",
+		"/loop @ada fix tests /until /max 3",
+		"/loop @ada fix tests /until tests /max 3",
+		"/loop @ada fix tests /until /help /max 3",
+		"/loop @ada fix tests /until /tests",
+		"/loop @ada fix tests /until /tests /max 0",
+		"/loop @ada fix tests /until /tests /max -1",
+		"/loop @ada fix tests /until /tests /max many",
+		"/loop @ada fix tests /until /tests /max 999999999999999999999999",
+		"/loop @ada fix tests /until /tests /max 3 trailing",
+	}
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			if _, err := promptlang.Parse(input); err == nil {
+				t.Fatal("Parse: expected error")
+			}
+		})
+	}
+}
+
 func TestParse_broadcast(t *testing.T) {
 	got, err := promptlang.Parse("hello everyone")
 	if err != nil {
@@ -97,7 +150,6 @@ func TestParse_errors(t *testing.T) {
 		{"/test!"},
 		{"/"},
 		{"/who extra"},
-		{"/loop @ada fix it /until /tests /max 3"},
 		{"@ada"},
 		{"@ada   "},
 		{"@ ada hi"}, // space between @ and alias
