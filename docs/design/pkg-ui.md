@@ -183,6 +183,8 @@ The session and agent packages are unchanged.
 The TUI owns:
 - Bubble Tea model, update, and view
 - Observer channel and `awaitEvent` wiring
+- A child of the application context plus shutdown tracking for local process
+  lifetime
 - Rendering room state as styled text
 - Translating parsed prompt-language statements into session and room commands
 

@@ -59,9 +59,9 @@ func run() int {
 	}
 	opts = append(opts, ui.WithStartupHelpTip(true))
 
-	if _, err := tea.NewProgram(
-		ui.New(sess, cwd, opts...),
-	).Run(); err != nil {
+	model := ui.New(ctx, sess, cwd, opts...)
+	defer model.Close()
+	if _, err := tea.NewProgram(model).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}

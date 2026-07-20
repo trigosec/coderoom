@@ -34,6 +34,9 @@ type Send struct {
 // Broadcast sends a message to all agents.
 type Broadcast struct{ Text string }
 
+// Shell executes a shell program in the Code Room workspace.
+type Shell struct{ Program string }
+
 // Who displays the current agent roster.
 type Who struct{}
 
@@ -67,6 +70,7 @@ func (Cancel) isStatement()    {}
 func (Handoff) isStatement()   {}
 func (Send) isStatement()      {}
 func (Broadcast) isStatement() {}
+func (Shell) isStatement()     {}
 func (Who) isStatement()       {}
 func (Help) isStatement()      {}
 func (Quit) isStatement()      {}

@@ -16,6 +16,8 @@ func TestParse_slashCommands(t *testing.T) {
 		{"/remove ada", promptlang.Remove{Alias: "ada"}},
 		{"/cancel ada", promptlang.Cancel{Alias: "ada"}},
 		{"/handoff ada turing", promptlang.Handoff{FromAlias: "ada", ToAlias: "turing"}},
+		{"/shell go test ./...", promptlang.Shell{Program: "go test ./..."}},
+		{`/shell echo "hello world" | tee out`, promptlang.Shell{Program: `echo "hello world" | tee out`}},
 		{"/who", promptlang.Who{}},
 		{"/help", promptlang.Help{}},
 		{"/quit", promptlang.Quit{}},
@@ -76,6 +78,8 @@ func TestParse_errors(t *testing.T) {
 		{"/handoff"},
 		{"/handoff ada"},
 		{"/handoff ada turing extra"},
+		{"/shell"},
+		{"/shell   "},
 		{"@ada"},
 		{"@ada   "},
 		{"@ ada hi"}, // space between @ and alias

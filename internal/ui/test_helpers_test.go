@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ import (
 // viewport is initialised and syncViewport calls are live.
 func makeReadyModel(t *testing.T) Model {
 	t.Helper()
-	m := New(newTestSession(t), ".")
+	m := New(context.Background(), newTestSession(t), ".")
 	t.Cleanup(m.Close)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return next.(Model)
@@ -22,7 +23,7 @@ func makeReadyModel(t *testing.T) Model {
 
 func makeReadyModelWithHeight(t *testing.T, height int) Model {
 	t.Helper()
-	m := New(newTestSession(t), ".")
+	m := New(context.Background(), newTestSession(t), ".")
 	t.Cleanup(m.Close)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: height})
 	return next.(Model)
@@ -38,7 +39,7 @@ func newTestSession(t *testing.T) *session.Session {
 
 func newTestModelWithSession(t *testing.T, sess *session.Session) Model {
 	t.Helper()
-	m := New(sess, ".")
+	m := New(context.Background(), sess, ".")
 	t.Cleanup(m.Close)
 	return m
 }

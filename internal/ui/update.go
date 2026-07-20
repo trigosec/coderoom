@@ -55,6 +55,8 @@ func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case room.StagedInterruptMsg:
 		next := m.handleStagedInterrupt()
 		return next, nil
+	case shellResultMsg:
+		return m.handleShellResult(msg), nil
 	default:
 		return m.forwardMessage(msg)
 	}
@@ -415,12 +417,15 @@ func (m Model) executeDebugAction(a promptlang.Statement) (Model, bool) {
 }
 
 func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
-	switch a.(type) {
+	switch act := a.(type) {
+	case promptlang.Shell:
+		return m, m.executeShell(act.Program)
 	case promptlang.Who:
 		return m.showWho(), nil
 	case promptlang.Help:
 		return m.showHelp(), nil
 	case promptlang.Quit:
+		m.executions.cancelActive()
 		m.sess.Shutdown()
 		return m, tea.Quit
 	default:
@@ -547,6 +552,7 @@ Commands:
   /remove <alias>      remove an agent
   /cancel <alias>      interrupt an agent's current turn
   /handoff <from> <to> transfer latest output between agents
+  /shell <program>     execute a shell program
   /who                 list agents
 %s  /help                show this message
   /quit                exit

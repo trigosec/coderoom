@@ -544,6 +544,15 @@ func (m Model) AppendSystem(text string) Model {
 	return m.refreshFromChat()
 }
 
+// AppendCommand appends a completed local command record to history.
+func (m Model) AppendCommand(alias string, command agent.Command) Model {
+	m.chat.AppendRecord(roomstate.NewAgentRecord(alias, agent.Message{
+		Mode:    agent.ModeSingle,
+		Content: command,
+	}))
+	return m.refreshFromChat()
+}
+
 // refreshFromChat re-reads the current chat snapshot into history. Used
 // right after a synchronous local append: AppendRecord already mutated
 // room state and queued an Update for it before returning, so this fresh

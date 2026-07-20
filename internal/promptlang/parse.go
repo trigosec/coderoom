@@ -24,36 +24,48 @@ func Parse(line string) (Statement, error) {
 func parseSlash(line string) (Statement, error) {
 	cmd, rest, _ := strings.Cut(line, " ")
 	rest = strings.TrimSpace(rest)
-	if cmd == "/invite" {
-		if rest == "" {
-			return nil, fmt.Errorf("usage: /invite <alias>")
-		}
-		return Invite{Alias: rest}, nil
+	if statement, matched, err := parseSlashWithArgs(cmd, rest); matched {
+		return statement, err
 	}
-	if cmd == "/remove" {
-		if rest == "" {
-			return nil, fmt.Errorf("usage: /remove <alias>")
-		}
-		return Remove{Alias: rest}, nil
-	}
-	if cmd == "/cancel" {
-		if rest == "" {
-			return nil, fmt.Errorf("usage: /cancel <alias>")
-		}
-		return Cancel{Alias: rest}, nil
-	}
-	if cmd == "/handoff" {
-		fromAlias, toAlias, err := parseHandoffArgs(rest)
-		if err != nil {
-			return nil, err
-		}
-		return Handoff{FromAlias: fromAlias, ToAlias: toAlias}, nil
-	}
-
-	if a, ok := parseSlashNoArgs(cmd); ok {
-		return a, nil
+	if statement, ok := parseSlashNoArgs(cmd); ok {
+		return statement, nil
 	}
 	return nil, UnknownCommandError{Cmd: cmd}
+}
+
+func parseSlashWithArgs(cmd, rest string) (Statement, bool, error) {
+	switch cmd {
+	case "/invite", "/remove", "/cancel":
+		statement, err := parseAliasStatement(cmd, rest)
+		return statement, true, err
+	case "/handoff":
+		fromAlias, toAlias, err := parseHandoffArgs(rest)
+		if err != nil {
+			return nil, true, err
+		}
+		return Handoff{FromAlias: fromAlias, ToAlias: toAlias}, true, nil
+	case "/shell":
+		if rest == "" {
+			return nil, true, fmt.Errorf("usage: /shell <program>")
+		}
+		return Shell{Program: rest}, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
+func parseAliasStatement(cmd, alias string) (Statement, error) {
+	if alias == "" {
+		return nil, fmt.Errorf("usage: %s <alias>", cmd)
+	}
+	switch cmd {
+	case "/invite":
+		return Invite{Alias: alias}, nil
+	case "/remove":
+		return Remove{Alias: alias}, nil
+	default:
+		return Cancel{Alias: alias}, nil
+	}
 }
 
 func parseHandoffArgs(rest string) (string, string, error) {

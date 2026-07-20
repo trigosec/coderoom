@@ -3,9 +3,12 @@
 package ui
 
 import (
+	"context"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/session"
+	"github.com/trigosec/coderoom/internal/shell"
 	"github.com/trigosec/coderoom/internal/ui/palette"
 	"github.com/trigosec/coderoom/internal/ui/room"
 	"github.com/trigosec/coderoom/internal/ui/toolbox"
@@ -13,6 +16,8 @@ import (
 
 // Option configures a Model at construction time.
 type Option func(*Model)
+
+type shellRunner func(context.Context, string, string) shell.Result
 
 // WithDebug enables developer debugging features (debug commands and optional
 // overlays). Intended to be wired to CODEROOM_DEBUG=1 in the CLI.
@@ -52,14 +57,16 @@ func (o channelObserver) OnEvent(e session.Event) {
 
 // Model is the Bubble Tea application state for the coderoom TUI.
 type Model struct {
-	sess     *session.Session
-	queue    *queue.Queue[session.Event]
-	room     room.Model
-	toolbox  toolbox.Model
-	debug    bool
-	palette  palette.ColorPalette
-	cwd      string
-	lastSize tea.WindowSizeMsg
+	sess       *session.Session
+	executions *executionLifetime
+	queue      *queue.Queue[session.Event]
+	room       room.Model
+	toolbox    toolbox.Model
+	debug      bool
+	palette    palette.ColorPalette
+	cwd        string
+	runShell   shellRunner
+	lastSize   tea.WindowSizeMsg
 
 	activeApprovalID int64
 
@@ -68,10 +75,10 @@ type Model struct {
 	showStartupHelpTip bool
 }
 
-// New creates a Model backed by the given session.
+// New creates a Model backed by the given application context and session.
 // The session must have an AgentFactory configured before any invite commands
 // are executed.
-func New(sess *session.Session, cwd string, opts ...Option) Model {
+func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option) Model {
 	q := queue.New[session.Event]()
 	sess.AddObserver(channelObserver{queue: q})
 
@@ -86,11 +93,13 @@ func New(sess *session.Session, cwd string, opts ...Option) Model {
 	sess.AddObserver(roomModel.SessionObserver())
 
 	m := Model{
-		sess:    sess,
-		queue:   q,
-		room:    roomModel,
-		toolbox: toolbox.New(),
-		cwd:     cwd,
+		sess:       sess,
+		executions: newExecutionLifetime(ctx),
+		queue:      q,
+		room:       roomModel,
+		toolbox:    toolbox.New(),
+		cwd:        cwd,
+		runShell:   shell.Run,
 	}
 	for _, o := range opts {
 		o(&m)
@@ -100,6 +109,7 @@ func New(sess *session.Session, cwd string, opts ...Option) Model {
 
 // Close stops the model-owned background queues.
 func (m Model) Close() {
+	m.executions.close()
 	m.room.Close()
 	if m.queue != nil {
 		m.queue.Close()

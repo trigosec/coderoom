@@ -6,8 +6,13 @@
 statements. It executes an explicit user-authored program, collects its result,
 and has no dependency on the TUI, room, session, or prompt-language parser.
 
-The caller owns concurrency and presentation. In particular, a future TUI
-integration must call the runner outside the Bubble Tea update loop.
+The caller owns concurrency and presentation. The TUI integration calls the
+runner through a Bubble Tea command so execution does not block the update
+loop, then maps the completed result into a canonical room command record. The
+CLI application context is passed into the UI, which derives a child context
+used by shell executions. The UI tracks active local executions and shutdown
+cancels that context, prevents new executions from starting, and waits until
+the active runners have terminated and reaped their processes.
 
 ## Execution
 

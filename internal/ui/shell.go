@@ -1,0 +1,63 @@
+package ui
+
+import (
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/shell"
+)
+
+const shellRecordAlias = "shell"
+
+type shellResultMsg struct {
+	program string
+	cwd     string
+	result  shell.Result
+}
+
+func (m Model) executeShell(program string) tea.Cmd {
+	run := m.runShell
+	executions := m.executions
+	cwd := m.cwd
+	return func() tea.Msg {
+		ctx, finish, err := executions.start()
+		if err != nil {
+			return shellResultMsg{
+				program: program,
+				cwd:     cwd,
+				result:  shell.Result{Status: shell.StatusCancelled, Err: err},
+			}
+		}
+		defer finish()
+		return shellResultMsg{
+			program: program,
+			cwd:     cwd,
+			result:  run(ctx, cwd, program),
+		}
+	}
+}
+
+func (m Model) handleShellResult(msg shellResultMsg) Model {
+	m.room = m.room.AppendCommand(shellRecordAlias, agent.Command{
+		Command:  msg.program,
+		Cwd:      msg.cwd,
+		Output:   formatShellResult(msg.result),
+		ExitCode: msg.result.ExitCode,
+	})
+	return m
+}
+
+func formatShellResult(result shell.Result) string {
+	sections := []string{"status: " + string(result.Status)}
+	if result.Stdout != "" {
+		sections = append(sections, "stdout:\n"+result.Stdout)
+	}
+	if result.Stderr != "" {
+		sections = append(sections, "stderr:\n"+result.Stderr)
+	}
+	if result.Err != nil {
+		sections = append(sections, "error:\n"+result.Err.Error())
+	}
+	return strings.Join(sections, "\n")
+}
