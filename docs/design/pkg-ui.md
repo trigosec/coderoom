@@ -186,6 +186,8 @@ The TUI owns:
 - A child of the application context plus shutdown tracking for local process
   lifetime
 - The room-scoped registry of prompt-language command definitions
+- Active bounded-loop state and transitions driven by shell results and
+  participant lifecycle events
 - Rendering room state as styled text
 - Translating parsed prompt-language statements into session and room commands
 

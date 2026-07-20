@@ -57,6 +57,8 @@ func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, nil
 	case shellResultMsg:
 		return m.handleShellResult(msg), nil
+	case loopConditionResultMsg:
+		return m.handleLoopConditionResult(msg)
 	default:
 		return m.forwardMessage(msg)
 	}
@@ -245,9 +247,10 @@ func (m Model) handleEvent(e session.Event) (Model, tea.Cmd) {
 	// Best-effort only — see DrainObserverUpdates' doc comment.
 	next.room = next.room.DrainObserverUpdates()
 	next = next.maybeAdvanceStagedBatch(e)
-	var cmd tea.Cmd
-	next.toolbox, cmd = next.toolbox.SetParticipants(next.sess.Roster())
-	return next, cmd
+	next, loopCmd := next.advanceLoopForEvent(e)
+	var toolboxCmd tea.Cmd
+	next.toolbox, toolboxCmd = next.toolbox.SetParticipants(next.sess.Roster())
+	return next, tea.Batch(loopCmd, toolboxCmd)
 }
 
 func (m Model) handleMessageEvent(e session.Event) Model {
@@ -424,6 +427,8 @@ func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 		return m.defineCommand(act), nil
 	case promptlang.CommandInvocation:
 		return m.invokeCommand(act)
+	case promptlang.Loop:
+		return m.startLoop(act), nil
 	case promptlang.Who:
 		return m.showWho(), nil
 	case promptlang.Help:
@@ -566,8 +571,7 @@ func (m Model) showHelp() Model {
 	return m
 }
 
-func (m Model) helpText() string {
-	const tmpl = `[help]
+const helpTextTemplate = `[help]
 
 Commands:
   /invite <alias>      start an agent
@@ -578,6 +582,8 @@ Commands:
   /def <name> /shell <program>
                        define a shell-backed command
   /<name>              invoke a defined command
+  /loop @<alias> <prompt> /until /<name> /max <turns>
+                       run a bounded participant loop
   /who                 list agents
 %s  /help                show this message
   /quit                exit
@@ -615,7 +621,8 @@ UI hints:
   The separator label shows the current focus: compose/history/approval
   When history is focused, the first visible history row is highlighted`
 
-	return fmt.Sprintf(tmpl, m.debugHelpBlock())
+func (m Model) helpText() string {
+	return fmt.Sprintf(helpTextTemplate, m.debugHelpBlock())
 }
 
 func (m Model) debugHelpBlock() string {

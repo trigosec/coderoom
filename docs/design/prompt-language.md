@@ -241,17 +241,17 @@ unambiguous.
 
 Execution proceeds as follows:
 
-1. Invoke the command named after `/until`.
-2. If it succeeds, finish the loop successfully without sending a participant
-   message.
-3. If it is cancelled, cancel the loop.
-4. If it fails and the maximum number of participant turns has been reached,
-   finish the loop with the last failed result.
-5. Send the participant the loop prompt together with the condition command's
-   name, exit code, output, and error.
-6. Wait for the participant's turn to finish using Code Room's existing command
+1. Send the participant the loop prompt.
+2. Wait for the participant's turn to finish using Code Room's existing command
    sequencing.
-7. Repeat from step 1.
+3. Invoke the command named after `/until`.
+4. If it succeeds, finish the loop successfully.
+5. If it is cancelled, cancel the loop.
+6. If it fails and the maximum number of participant turns has been reached,
+   finish the loop with the last failed result.
+7. Send the participant the loop prompt together with the failed condition's
+   name, exit code, output, and error.
+8. Repeat from step 2.
 
 `/max` counts participant turns, not condition evaluations. It is mandatory in
 Version 0 so an agent loop cannot consume unbounded time or credits.
@@ -260,7 +260,8 @@ The assessment and every participant turn remain visible in the shared room.
 The human can cancel the active participant with the existing `/cancel`
 command; cancelling that turn cancels the loop rather than silently continuing.
 
-The participant receives a structured prompt equivalent to:
+The participant receives the original prompt on the first turn. After a failed
+condition evaluation, the next turn receives a structured prompt equivalent to:
 
 ```text
 Make the tests pass without weakening them

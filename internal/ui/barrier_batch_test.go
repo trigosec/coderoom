@@ -18,6 +18,7 @@ type testAgent struct {
 	ch        chan agent.Message
 	sendErr   error
 	sendCalls int
+	sent      []string
 }
 
 type gateStartAgent struct {
@@ -33,8 +34,9 @@ func (a *testAgent) Start() error { return nil }
 
 const testTurnAnchor = agent.StreamID("test:turn-anchor")
 
-func (a *testAgent) Send(string) (agent.StreamID, error) {
+func (a *testAgent) Send(text string) (agent.StreamID, error) {
 	a.sendCalls++
+	a.sent = append(a.sent, text)
 	if a.sendErr != nil {
 		return "", a.sendErr
 	}

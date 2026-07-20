@@ -21,24 +21,22 @@ func (m Model) executeShell(program string) tea.Cmd {
 }
 
 func (m Model) executeShellCommand(command, program string) tea.Cmd {
+	return m.executeShellProgram(program, func(result shell.Result) tea.Msg {
+		return shellResultMsg{command: command, cwd: m.cwd, result: result}
+	})
+}
+
+func (m Model) executeShellProgram(program string, message func(shell.Result) tea.Msg) tea.Cmd {
 	run := m.runShell
 	executions := m.executions
 	cwd := m.cwd
 	return func() tea.Msg {
 		ctx, finish, err := executions.start()
 		if err != nil {
-			return shellResultMsg{
-				command: command,
-				cwd:     cwd,
-				result:  shell.Result{Status: shell.StatusCancelled, Err: err},
-			}
+			return message(shell.Result{Status: shell.StatusCancelled, Err: err})
 		}
 		defer finish()
-		return shellResultMsg{
-			command: command,
-			cwd:     cwd,
-			result:  run(ctx, cwd, program),
-		}
+		return message(run(ctx, cwd, program))
 	}
 }
 

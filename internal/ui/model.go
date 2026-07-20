@@ -68,6 +68,7 @@ type Model struct {
 	palette    palette.ColorPalette
 	cwd        string
 	runShell   shellRunner
+	activeLoop *loopExecution
 	lastSize   tea.WindowSizeMsg
 
 	activeApprovalID int64
