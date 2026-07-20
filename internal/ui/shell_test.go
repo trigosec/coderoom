@@ -56,6 +56,70 @@ func TestHandleSubmit_shellRunsAsynchronouslyAndRecordsResult(t *testing.T) {
 	assertShellCommand(t, command)
 }
 
+func TestHandleSubmit_defineAndInvokeShellCommand(t *testing.T) {
+	m := makeReadyModel(t)
+	runs := 0
+	m.runShell = func(_ context.Context, _, program string) shell.Result {
+		runs++
+		if program != "go test ./..." {
+			t.Errorf("program = %q, want stored shell program", program)
+		}
+		return shell.Result{Status: shell.StatusSuccess}
+	}
+
+	m, cmd := m.handleSubmit("/def tests /shell go test ./...")
+	if cmd != nil {
+		t.Fatal("definition returned an execution command")
+	}
+	if runs != 0 {
+		t.Fatalf("definition executed shell %d times, want 0", runs)
+	}
+	if !hasRecord(m, record.KindSystem, "[defined] /tests") {
+		t.Fatal("expected room-visible definition outcome")
+	}
+
+	for invocation := 1; invocation <= 2; invocation++ {
+		var next Model
+		next, cmd = m.handleSubmit("/tests")
+		if cmd == nil {
+			t.Fatal("invocation did not return an execution command")
+		}
+		updated, _ := next.Update(cmd())
+		m = updated.(Model)
+	}
+	if runs != 2 {
+		t.Errorf("shell runs = %d, want 2", runs)
+	}
+	if command := shellCommandRecord(t, m); command.Command != "/tests" {
+		t.Errorf("rendered command = %q, want /tests", command.Command)
+	}
+}
+
+func TestHandleSubmit_definitionErrorsAreVisible(t *testing.T) {
+	tests := []struct {
+		name   string
+		inputs []string
+	}{
+		{"duplicate definition", []string{
+			"/def tests /shell true",
+			"/def tests /shell false",
+		}},
+		{"undefined invocation", []string{"/tests"}},
+		{"reserved name", []string{"/def help /shell true"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := makeReadyModel(t)
+			for _, input := range tt.inputs {
+				m, _ = m.handleSubmit(input)
+			}
+			if !hasRecord(m, record.KindSystem, "error:") {
+				t.Fatal("expected room-visible error")
+			}
+		})
+	}
+}
+
 func TestShellExecutionStopsWithUILifetime(t *testing.T) {
 	tests := []struct {
 		name string

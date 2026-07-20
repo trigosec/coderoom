@@ -420,6 +420,10 @@ func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 	switch act := a.(type) {
 	case promptlang.Shell:
 		return m, m.executeShell(act.Program)
+	case promptlang.CommandDefinition:
+		return m.defineCommand(act), nil
+	case promptlang.CommandInvocation:
+		return m.invokeCommand(act)
 	case promptlang.Who:
 		return m.showWho(), nil
 	case promptlang.Help:
@@ -431,6 +435,24 @@ func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m Model) defineCommand(definition promptlang.CommandDefinition) Model {
+	if err := m.commands.Define(definition); err != nil {
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: define /%s: %v", definition.Name, err))
+		return m
+	}
+	m.room = m.room.AppendSystem("[defined] /" + definition.Name)
+	return m
+}
+
+func (m Model) invokeCommand(invocation promptlang.CommandInvocation) (Model, tea.Cmd) {
+	body, err := m.commands.Resolve(invocation)
+	if err != nil {
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: invoke /%s: %v", invocation.Name, err))
+		return m, nil
+	}
+	return m, m.executeShellCommand("/"+invocation.Name, body.Program)
 }
 
 func (m Model) inviteAgent(alias string) Model {
@@ -553,6 +575,9 @@ Commands:
   /cancel <alias>      interrupt an agent's current turn
   /handoff <from> <to> transfer latest output between agents
   /shell <program>     execute a shell program
+  /def <name> /shell <program>
+                       define a shell-backed command
+  /<name>              invoke a defined command
   /who                 list agents
 %s  /help                show this message
   /quit                exit

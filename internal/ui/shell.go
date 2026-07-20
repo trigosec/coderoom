@@ -11,12 +11,16 @@ import (
 const shellRecordAlias = "shell"
 
 type shellResultMsg struct {
-	program string
+	command string
 	cwd     string
 	result  shell.Result
 }
 
 func (m Model) executeShell(program string) tea.Cmd {
+	return m.executeShellCommand(program, program)
+}
+
+func (m Model) executeShellCommand(command, program string) tea.Cmd {
 	run := m.runShell
 	executions := m.executions
 	cwd := m.cwd
@@ -24,14 +28,14 @@ func (m Model) executeShell(program string) tea.Cmd {
 		ctx, finish, err := executions.start()
 		if err != nil {
 			return shellResultMsg{
-				program: program,
+				command: command,
 				cwd:     cwd,
 				result:  shell.Result{Status: shell.StatusCancelled, Err: err},
 			}
 		}
 		defer finish()
 		return shellResultMsg{
-			program: program,
+			command: command,
 			cwd:     cwd,
 			result:  run(ctx, cwd, program),
 		}
@@ -40,7 +44,7 @@ func (m Model) executeShell(program string) tea.Cmd {
 
 func (m Model) handleShellResult(msg shellResultMsg) Model {
 	m.room = m.room.AppendCommand(shellRecordAlias, agent.Command{
-		Command:  msg.program,
+		Command:  msg.command,
 		Cwd:      msg.cwd,
 		Output:   formatShellResult(msg.result),
 		ExitCode: msg.result.ExitCode,

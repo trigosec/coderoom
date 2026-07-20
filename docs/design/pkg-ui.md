@@ -185,11 +185,13 @@ The TUI owns:
 - Observer channel and `awaitEvent` wiring
 - A child of the application context plus shutdown tracking for local process
   lifetime
+- The room-scoped registry of prompt-language command definitions
 - Rendering room state as styled text
 - Translating parsed prompt-language statements into session and room commands
 
-The `internal/promptlang` package owns raw user-input parsing and its
-UI-independent statement model.
+The `internal/promptlang` package owns raw user-input parsing, its
+UI-independent statement model, and command-definition registration and
+resolution rules. The TUI holds one registry for the lifetime of the room.
 
 The session controller owns everything else. The TUI never reads session internals directly — it only calls `Execute` and receives events through the observer channel.
 

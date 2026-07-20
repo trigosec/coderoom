@@ -6,6 +6,7 @@ import (
 	"context"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/shell"
@@ -59,6 +60,7 @@ func (o channelObserver) OnEvent(e session.Event) {
 type Model struct {
 	sess       *session.Session
 	executions *executionLifetime
+	commands   *promptlang.Registry
 	queue      *queue.Queue[session.Event]
 	room       room.Model
 	toolbox    toolbox.Model
@@ -95,6 +97,7 @@ func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option)
 	m := Model{
 		sess:       sess,
 		executions: newExecutionLifetime(ctx),
+		commands:   promptlang.NewRegistry(),
 		queue:      q,
 		room:       roomModel,
 		toolbox:    toolbox.New(),
