@@ -55,7 +55,9 @@ The Session Controller is the central orchestrator. All commands, messages, and 
 
 The UI is intentionally lean. It projects session and participant state; it does
 not talk to agent processes directly. All workflow invariants are enforced below
-the UI layer.
+the UI layer. Raw user input is parsed by `internal/promptlang` into
+UI-independent statements; the UI translates those statements into session,
+room, or presentation operations as appropriate.
 
 ---
 
@@ -63,7 +65,7 @@ the UI layer.
 
 Central orchestrator. Responsible for:
 
-- Parsing commands
+- Dispatching structured session commands
 - Routing messages to agents or channels
 - Enforcing policies (capabilities, initiative levels)
 - Tracking session state

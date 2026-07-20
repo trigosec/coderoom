@@ -6,6 +6,7 @@ import (
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
@@ -284,19 +285,19 @@ func TestHandleEvent_agentStoppedClearsStreaming(t *testing.T) {
 
 func TestRoutingFor(t *testing.T) {
 	ps := []participant.Participant{{Alias: "ada"}, {Alias: "bob"}}
-	if got := routingFor(Broadcast{Text: "hi"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
+	if got := routingFor(promptlang.Broadcast{Text: "hi"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
 		t.Errorf("broadcast routing: got %v, want [ada bob]", got)
 	}
-	if got := routingFor(Send{Alias: "ada", Text: "hi"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
+	if got := routingFor(promptlang.Send{Alias: "ada", Text: "hi"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
 		t.Errorf("send routing: got %v, want [ada bob]", got)
 	}
-	if got := routingFor(Send{Alias: "nobody", Text: "hi"}, ps); !slices.Equal(got, []string{"nobody", "ada", "bob"}) {
+	if got := routingFor(promptlang.Send{Alias: "nobody", Text: "hi"}, ps); !slices.Equal(got, []string{"nobody", "ada", "bob"}) {
 		t.Errorf("send routing for missing alias: got %v, want [nobody ada bob]", got)
 	}
-	if got := routingFor(Handoff{FromAlias: "ada", ToAlias: "bob"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
+	if got := routingFor(promptlang.Handoff{FromAlias: "ada", ToAlias: "bob"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
 		t.Errorf("handoff routing: got %v, want [ada bob]", got)
 	}
-	if got := routingFor(Help{}, ps); got != nil {
+	if got := routingFor(promptlang.Help{}, ps); got != nil {
 		t.Errorf("help routing: got %v, want nil", got)
 	}
 }

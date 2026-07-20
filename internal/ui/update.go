@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room"
 	"github.com/trigosec/coderoom/internal/ui/room/staging"
@@ -106,9 +107,9 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 		m.room = m.room.AppendSystem("error: message already staged (Esc to edit, Ctrl+X to send)")
 		return m, nil
 	}
-	action, err := Parse(raw)
+	action, err := promptlang.Parse(raw)
 	if err != nil {
-		var unknown UnknownCommandError
+		var unknown promptlang.UnknownCommandError
 		if errors.As(err, &unknown) {
 			m.room = m.room.AppendSystem("error: " + err.Error() + " (type /help)")
 			m.room = m.room.SetComposeValue("")
@@ -121,7 +122,7 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 
 	// Barrier-batch applies to user-authored Send/Broadcast/Handoff only.
 	switch action.(type) {
-	case Send, Broadcast, Handoff:
+	case promptlang.Send, promptlang.Broadcast, promptlang.Handoff:
 		return m.handleBarrierBatchSubmit(raw, action), nil
 	default:
 	}
@@ -134,8 +135,8 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 
 // routingFor returns the aliases that will receive the action, used to
 // populate the routing footer on the echoed user-input record.
-func routingFor(a Action, ps []participant.Participant) []string {
-	if _, ok := a.(Broadcast); ok {
+func routingFor(a promptlang.Statement, ps []participant.Participant) []string {
+	if _, ok := a.(promptlang.Broadcast); ok {
 		aliases := make([]string, len(ps))
 		for i, p := range ps {
 			aliases[i] = p.Alias
@@ -143,7 +144,7 @@ func routingFor(a Action, ps []participant.Participant) []string {
 		slices.Sort(aliases)
 		return aliases
 	}
-	if s, ok := a.(Send); ok {
+	if s, ok := a.(promptlang.Send); ok {
 		listeners := make([]string, 0, len(ps))
 		for _, p := range ps {
 			if p.Alias == s.Alias {
@@ -154,7 +155,7 @@ func routingFor(a Action, ps []participant.Participant) []string {
 		slices.Sort(listeners)
 		return append([]string{s.Alias}, listeners...)
 	}
-	if h, ok := a.(Handoff); ok {
+	if h, ok := a.(promptlang.Handoff); ok {
 		if h.FromAlias == h.ToAlias {
 			return []string{h.FromAlias}
 		}
@@ -277,7 +278,7 @@ func (m Model) handleApprovalCleared(e session.ApprovalCleared) Model {
 	return m
 }
 
-func (m Model) handleBarrierBatchSubmit(raw string, action Action) Model {
+func (m Model) handleBarrierBatchSubmit(raw string, action promptlang.Statement) Model {
 	ps := m.sess.BarrierParticipants()
 	if len(ps) == 0 {
 		m.room = m.room.AppendSystem("[no agents — use /invite <alias> to start one]")
@@ -364,7 +365,7 @@ func shouldRecheckHandoffOnMessage(staged *staging.Batch, e session.Event) bool 
 	return ok && msg.Alias == staged.Action.FromAlias
 }
 
-func (m Model) executeAction(a Action) (Model, tea.Cmd) {
+func (m Model) executeAction(a promptlang.Statement) (Model, tea.Cmd) {
 	if out, ok := m.executeAgentAction(a); ok {
 		return out, nil
 	}
@@ -374,34 +375,34 @@ func (m Model) executeAction(a Action) (Model, tea.Cmd) {
 	return m.executeUIAction(a)
 }
 
-func (m Model) executeAgentAction(a Action) (Model, bool) {
+func (m Model) executeAgentAction(a promptlang.Statement) (Model, bool) {
 	switch act := a.(type) {
-	case Invite:
+	case promptlang.Invite:
 		return m.inviteAgent(act.Alias), true
-	case Remove:
+	case promptlang.Remove:
 		return m.removeAgent(act.Alias), true
-	case Cancel:
+	case promptlang.Cancel:
 		return m.cancelAgent(act.Alias), true
-	case Send:
+	case promptlang.Send:
 		return m.sendToAgent(act.Alias, act.Text), true
-	case Broadcast:
+	case promptlang.Broadcast:
 		return m.broadcastAll(act.Text), true
-	case Handoff:
+	case promptlang.Handoff:
 		return m.handoff(act.FromAlias, act.ToAlias), true
 	default:
 		return m, false
 	}
 }
 
-func (m Model) executeDebugAction(a Action) (Model, bool) {
+func (m Model) executeDebugAction(a promptlang.Statement) (Model, bool) {
 	switch a.(type) {
-	case DebugView:
+	case promptlang.DebugView:
 		if !m.debug {
 			m.room = m.room.AppendSystem("error: debug commands disabled (set CODEROOM_DEBUG=1)")
 			return m, true
 		}
 		return m.debugView(), true
-	case DebugRows:
+	case promptlang.DebugRows:
 		if !m.debug {
 			m.room = m.room.AppendSystem("error: debug commands disabled (set CODEROOM_DEBUG=1)")
 			return m, true
@@ -413,13 +414,13 @@ func (m Model) executeDebugAction(a Action) (Model, bool) {
 	}
 }
 
-func (m Model) executeUIAction(a Action) (Model, tea.Cmd) {
+func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 	switch a.(type) {
-	case Who:
+	case promptlang.Who:
 		return m.showWho(), nil
-	case Help:
+	case promptlang.Help:
 		return m.showHelp(), nil
-	case Quit:
+	case promptlang.Quit:
 		m.sess.Shutdown()
 		return m, tea.Quit
 	default:
@@ -510,7 +511,7 @@ func (m Model) executeBroadcastAll(text string) (Model, []string, error) {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: broadcast: %v", err))
 		return m, session.DeliveredAliases(err), fmt.Errorf("broadcast: %w", err)
 	}
-	return m, routingFor(Broadcast{Text: text}, m.sess.RoutableParticipants()), nil
+	return m, routingFor(promptlang.Broadcast{Text: text}, m.sess.RoutableParticipants()), nil
 }
 
 func (m Model) broadcastAll(text string) Model {

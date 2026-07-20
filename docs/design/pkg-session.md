@@ -6,7 +6,8 @@ The Session Controller is the central orchestrator of a Code Room session. It re
 
 It is the layer that owns goroutines. The agent package is synchronous; the session controller spawns one reader goroutine per agent to stream output without blocking.
 
-It is **not** responsible for parsing raw user input or rendering output — those belong to the TUI layer.
+It is **not** responsible for parsing raw user input or rendering output. The
+prompt-language package owns parsing; rendering belongs to the TUI layer.
 
 State ownership model:
 
@@ -37,7 +38,9 @@ type Command interface {
 }
 ```
 
-The TUI parses raw user input into one of the concrete command types before calling `Execute`:
+The prompt-language package parses raw user input. The TUI translates the
+resulting statement into one of the concrete session command types before
+calling `Execute`:
 
 ```go
 // InviteCommand adds an agent to the session and starts it.
@@ -296,11 +299,14 @@ The room package owns:
 - Record accumulation / finalization for streaming agent output
 - The canonical room data model consumed by the UI
 
+The prompt-language package owns:
+- Parsing raw user input into UI-independent statements
+
 The TUI owns:
-- Parsing raw user input into commands
 - Rendering room state
 - Reading participant/session snapshots
-- Forwarding commands to session / room as appropriate
+- Translating statements and forwarding commands to session / room as
+  appropriate
 
 The TUI does not talk to agents directly and should not assemble chat semantics
 from raw session events.

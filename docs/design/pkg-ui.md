@@ -184,7 +184,10 @@ The TUI owns:
 - Bubble Tea model, update, and view
 - Observer channel and `awaitEvent` wiring
 - Rendering room state as styled text
-- Parsing user input into session commands
+- Translating parsed prompt-language statements into session and room commands
+
+The `internal/promptlang` package owns raw user-input parsing and its
+UI-independent statement model.
 
 The session controller owns everything else. The TUI never reads session internals directly — it only calls `Execute` and receives events through the observer channel.
 
