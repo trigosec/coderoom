@@ -41,10 +41,14 @@ func (m Model) executeShellProgram(program string, message func(shell.Result) te
 }
 
 func (m Model) handleShellResult(msg shellResultMsg) Model {
+	return m.appendShellResult(msg, formatShellResult(msg.result))
+}
+
+func (m Model) appendShellResult(msg shellResultMsg, output string) Model {
 	m.room = m.room.AppendCommand(shellRecordAlias, agent.Command{
 		Command:  msg.command,
 		Cwd:      msg.cwd,
-		Output:   formatShellResult(msg.result),
+		Output:   output,
 		ExitCode: msg.result.ExitCode,
 	})
 	return m

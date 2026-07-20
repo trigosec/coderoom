@@ -56,6 +56,13 @@ func TestHandleSubmit_shellRunsAsynchronouslyAndRecordsResult(t *testing.T) {
 	assertShellCommand(t, command)
 }
 
+func TestFormatShellResult_keepsOrdinaryShellOutputCompact(t *testing.T) {
+	got := formatShellResult(shell.Result{Status: shell.StatusFailure})
+	if got != "status: failure" {
+		t.Errorf("formatShellResult = %q, want compact status", got)
+	}
+}
+
 func TestHandleSubmit_defineAndInvokeShellCommand(t *testing.T) {
 	m := makeReadyModel(t)
 	runs := 0

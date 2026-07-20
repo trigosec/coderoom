@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/shell"
+	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
 func TestLoop_sendsParticipantBeforeEvaluatingCondition(t *testing.T) {
@@ -48,32 +51,116 @@ func TestLoop_alternatesConditionAndBoundedParticipantTurns(t *testing.T) {
 	m.runShell = func(context.Context, string, string) shell.Result {
 		conditionRuns++
 		exitCode := 1
-		return shell.Result{Status: shell.StatusFailure, ExitCode: &exitCode, Stdout: "tests failed"}
+		return shell.Result{
+			Status:   shell.StatusFailure,
+			ExitCode: &exitCode,
+			Stdout:   fmt.Sprintf("failure %d", conditionRuns),
+			Stderr:   "failure details",
+			Err:      errors.New("runner problem"),
+		}
 	}
 
-	m = m.startLoop(testLoop(2))
+	m = m.startLoop(testLoop(3))
 	assertLoopCounts(t, participantAgent, conditionRuns, 1, 0)
 
-	m, conditionCmd := completeLoopTurn(t, m, participantAgent)
-	if conditionRuns != 0 {
-		t.Fatal("condition evaluation ran synchronously")
-	}
-
-	m, nextCmd := applyLoopCondition(t, m, conditionCmd)
+	m, nextCmd := completeAndApplyLoopCondition(t, m, participantAgent)
 	if nextCmd != nil {
 		t.Fatal("failed condition scheduled asynchronous work before the next participant turn")
 	}
 	assertLoopCounts(t, participantAgent, conditionRuns, 2, 1)
-	if !strings.Contains(participantAgent.sent[1], "Condition command: /tests") {
-		t.Fatalf("second participant prompt missing condition evidence: %q", participantAgent.sent[1])
-	}
+	assertLoopEvidence(t, participantAgent.sent[1], "failure 1")
 
-	m, conditionCmd = completeLoopTurn(t, m, participantAgent)
-	m, nextCmd = applyLoopCondition(t, m, conditionCmd)
+	m, nextCmd = completeAndApplyLoopCondition(t, m, participantAgent)
+	if nextCmd != nil {
+		t.Fatal("failed condition scheduled asynchronous work before the next participant turn")
+	}
+	assertLoopCounts(t, participantAgent, conditionRuns, 3, 2)
+	assertLoopEvidence(t, participantAgent.sent[2], "failure 2")
+
+	m, nextCmd = completeAndApplyLoopCondition(t, m, participantAgent)
 	if nextCmd != nil || m.activeLoop != nil {
 		t.Fatal("failed final condition did not finish loop")
 	}
-	assertLoopCounts(t, participantAgent, conditionRuns, 2, 2)
+	assertLoopCounts(t, participantAgent, conditionRuns, 3, 3)
+	assertLoopConditionRecord(t, shellCommandRecord(t, m))
+	if !hasRecord(m, record.KindSystem, "[loop] turn 3/3 sent to @ada") {
+		t.Fatal("room records do not show the participant turn sequence")
+	}
+}
+
+func assertLoopConditionRecord(t *testing.T, command agent.Command) {
+	t.Helper()
+	if command.Command != "/tests" {
+		t.Errorf("condition room record = %q, want /tests", command.Command)
+	}
+	for _, want := range []string{
+		"status: failure",
+		"exit code: 1",
+		"stdout:\nfailure 1",
+		"stderr:\nfailure details",
+		"error:\nrunner problem",
+	} {
+		if !strings.Contains(command.Output, want) {
+			t.Errorf("condition room record missing %q:\n%s", want, command.Output)
+		}
+	}
+}
+
+func TestFormatLoopPrompt_includesEmptyMetadata(t *testing.T) {
+	got := formatLoopPrompt(testLoop(1), shell.Result{Status: shell.StatusFailure})
+	for _, want := range []string{
+		"make the tests pass",
+		"The completion condition is failing.",
+		"Condition command: /tests",
+		"Status: failure",
+		"Exit code: (none)",
+		"Stdout:\n(none)",
+		"Stderr:\n(none)",
+		"Error:\n(none)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatted prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFormatLoopConditionResult_includesEmptyMetadata(t *testing.T) {
+	got := formatLoopConditionResult(shell.Result{Status: shell.StatusFailure})
+	for _, want := range []string{
+		"status: failure",
+		"exit code: (none)",
+		"stdout:\n(none)",
+		"stderr:\n(none)",
+		"error:\n(none)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatted condition result missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func completeAndApplyLoopCondition(t *testing.T, m Model, participantAgent *testAgent) (Model, tea.Cmd) {
+	t.Helper()
+	m, conditionCmd := completeLoopTurn(t, m, participantAgent)
+	return applyLoopCondition(t, m, conditionCmd)
+}
+
+func assertLoopEvidence(t *testing.T, prompt, stdout string) {
+	t.Helper()
+	for _, want := range []string{
+		"make the tests pass",
+		"The completion condition is failing.",
+		"Condition command: /tests",
+		"Status: failure",
+		"Exit code: 1",
+		"Stdout:\n" + stdout,
+		"Stderr:\nfailure details",
+		"Error:\nrunner problem",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("participant prompt missing %q:\n%s", want, prompt)
+		}
+	}
 }
 
 func applyLoopCondition(t *testing.T, m Model, cmd tea.Cmd) (Model, tea.Cmd) {

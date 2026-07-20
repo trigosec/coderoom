@@ -266,17 +266,26 @@ condition evaluation, the next turn receives a structured prompt equivalent to:
 ```text
 Make the tests pass without weakening them
 
+The completion condition is failing. Continue working on the task using
+the evidence below.
+
 Condition command: /tests
+Status: failure
 Exit code: 1
-Output:
+Stdout:
 <standard output>
 
+Stderr:
+<standard error>
+
 Error:
-<standard error or execution error>
+<execution error or (none)>
 ```
 
-The exact presentation may evolve, but none of the collected evidence should
-be silently discarded.
+Empty result fields are shown as `(none)`. Version 0 passes the complete result
+without truncation; if output limits are introduced later, the truncation must
+be explicit in both the participant message and room record. None of the
+collected evidence is silently discarded.
 
 ## Examples
 

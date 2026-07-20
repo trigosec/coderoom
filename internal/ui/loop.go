@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/participant"
@@ -57,11 +59,12 @@ func (m Model) evaluateLoopCondition() tea.Cmd {
 }
 
 func (m Model) handleLoopConditionResult(msg loopConditionResultMsg) (Model, tea.Cmd) {
-	m = m.handleShellResult(shellResultMsg{
+	shellMsg := shellResultMsg{
 		command: "/" + msg.condition,
 		cwd:     msg.cwd,
 		result:  msg.result,
-	})
+	}
+	m = m.appendShellResult(shellMsg, formatLoopConditionResult(msg.result))
 	if m.activeLoop == nil || m.activeLoop.phase != loopEvaluating {
 		return m, nil
 	}
@@ -101,8 +104,50 @@ func (m Model) sendLoopTurn(prompt string) Model {
 }
 
 func formatLoopPrompt(statement promptlang.Loop, result shell.Result) string {
-	return fmt.Sprintf("%s\n\nCondition command: /%s\n%s",
-		statement.Prompt, statement.Condition, formatShellResult(result))
+	errorText := ""
+	if result.Err != nil {
+		errorText = result.Err.Error()
+	}
+	return strings.Join([]string{
+		statement.Prompt,
+		"",
+		"The completion condition is failing. Continue working on the task using the evidence below.",
+		"",
+		"Condition command: /" + statement.Condition,
+		"Status: " + string(result.Status),
+		"Exit code: " + formatExitCode(result.ExitCode),
+		"Stdout:\n" + formatEvidence(result.Stdout),
+		"Stderr:\n" + formatEvidence(result.Stderr),
+		"Error:\n" + formatEvidence(errorText),
+	}, "\n")
+}
+
+func formatLoopConditionResult(result shell.Result) string {
+	errorText := ""
+	if result.Err != nil {
+		errorText = result.Err.Error()
+	}
+	return strings.Join([]string{
+		"status: " + string(result.Status),
+		"exit code: " + formatExitCode(result.ExitCode),
+		"stdout:\n" + formatEvidence(result.Stdout),
+		"stderr:\n" + formatEvidence(result.Stderr),
+		"error:\n" + formatEvidence(errorText),
+	}, "\n")
+}
+
+func formatExitCode(exitCode *int) string {
+	if exitCode == nil {
+		return "(none)"
+	}
+	return strconv.Itoa(*exitCode)
+}
+
+func formatEvidence(text string) string {
+	if text == "" {
+		return "(none)"
+	}
+	return text
 }
 
 func (m Model) advanceLoopForEvent(event session.Event) (Model, tea.Cmd) {
