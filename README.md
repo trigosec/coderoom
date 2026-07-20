@@ -1,8 +1,16 @@
 # Code Room
 
-A CLI-native workspace for coordinating AI coding agents.
+A programmable multi-agent coding room.
 
-Code Room brings mob programming to the terminal: a small team of specialised agents (builder, architect, reviewer, security) working together in a shared room, with git as the common workspace and you as the decision authority.
+Code Room brings mob programming to the terminal. You and a team of AI coding
+agents work together in a shared room, with git as the common workspace and you
+as the decision authority.
+
+Start by collaborating step by step. When a coordination pattern becomes
+repetitive, automate it with the same conversational primitives using Code
+Room's prompt-based programming language.
+
+> Collaborate first. Automate when ready.
 
 ---
 
@@ -10,21 +18,70 @@ Code Room brings mob programming to the terminal: a small team of specialised ag
 
 Mob programming is a high-bandwidth way to work. The whole team focuses on one task, sharing ideas, challenging assumptions, and converging on better solutions for hard problems.
 
-AI agents are powerful, but without a mob-style workflow the work can fragment across tools and threads. It becomes harder to keep a shared understanding, avoid duplicated effort, and review the changes with confidence.
+AI agents are powerful, but without a mob-style workflow the work can fragment
+across tools and threads. It becomes harder to maintain shared understanding,
+avoid duplicated effort, and review changes with confidence. Workflow
+automation often creates the opposite problem: it hides the work behind a
+fixed pipeline and removes the human from the collaboration.
 
-Code Room aims to replicate the mob programming experience in the terminal, with named roles, a shared room for coordination, and a shared git workspace where the human remains the decision authority.
+Code Room combines both modes. Developers can work interactively with named
+agents in a shared terminal room, hand work between them, or compose bounded
+workflows from general language primitives. The human chooses how much control
+to keep at each step and can move between collaboration and automation without
+leaving the room.
 
 ---
 
-## Status (Shared Room Alpha)
+## How it works
+
+Code Room has four layers that build on one another:
+
+1. **Mob programming:** the developer and agents work on the same problem in a
+   shared room and git workspace.
+2. **Multi-agent collaboration:** named participants can be addressed directly
+   and work can be handed between them.
+3. **A prompt-based programming language:** room interactions and deterministic
+   checks become composable commands.
+4. **Progressive automation:** the developer decides whether to interact one
+   step at a time or let a bounded workflow run.
+
+For example, the same session can move from an ordinary participant message:
+
+```text
+@ada investigate the failing tests
+```
+
+to coordination between agents:
+
+```text
+/handoff ada turing
+```
+
+to an automated, bounded workflow:
+
+```text
+/def tests /shell go test ./...
+/loop @ada make the tests pass without weakening them /until /tests /max 3
+```
+
+The loop asks Ada to work, evaluates `/tests` after each turn, and continues
+with the latest failure evidence until the command succeeds or three agent
+turns have completed. This behavior is composed from general primitives; it is
+not a built-in "fix tests" workflow.
+
+---
+
+## Status (Prompt Language Version 0)
 
 This repository is early-stage:
 
-- The UI is a **single shared room** (no private agent tabs yet).
-- The focus is on **comfortable single-agent use**.
+- The UI is a **single shared room** for the developer and named agents.
 - The current backend is **Codex app-server** (driven over JSON-RPC via stdio).
-
-Roadmap: see `docs/roadmap.md`.
+- The prompt language supports direct messages, broadcasts, handoffs, shell
+  commands, shell-backed command definitions, and bounded loops.
+- Definitions are scoped to the running room and accept no parameters.
+- Loop bodies contain one participant prompt and one shell-backed completion
+  condition. Nested or concurrent loops are not supported.
 
 ---
 
@@ -119,18 +176,24 @@ Follow existing code patterns and keep edits minimal, focused, and practical.
 
 See `docs/participants.md` for the full setup and validation rules.
 
----
-
-## Using Code Room (today)
+## Commands
 
 Useful commands:
 
 ```text
-/who            # show roster
-/help           # show commands
-/cancel <alias> # interrupt current work (best-effort)
-/remove <alias> # stop + remove agent
-/quit           # exit
+/invite <alias>                         # start an agent
+@<alias> <prompt>                       # send to one agent
+<prompt>                                # broadcast to all agents
+/handoff <from> <to>                    # transfer latest output
+/shell <program>                        # execute a shell program
+/def <name> /shell <program>            # define a reusable command
+/<name>                                 # invoke a defined command
+/loop @<alias> <prompt> /until /<name> /max <turns>
+/who                                    # show roster
+/cancel <alias>                         # interrupt current work (best-effort)
+/remove <alias>                         # stop and remove an agent
+/help                                   # show commands
+/quit                                   # exit
 ```
 
 If only one agent is present, plain text is broadcast to it (equivalent to
@@ -143,6 +206,7 @@ sending to that agent).
 - `docs/design/concept.md`
 - `docs/design/architecture.md`
 - `docs/design/participant-roles.md`
+- `docs/design/prompt-language.md`
 
 ---
 
