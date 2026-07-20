@@ -71,6 +71,38 @@ not a built-in "fix tests" workflow.
 
 ---
 
+## Built with Codex
+
+Code Room was developed by dogfooding the collaboration model it provides. The
+developer worked with named Codex agents in the shared repository: **Ada** acted
+as the builder and **Tim** as the reviewer. Git diffs, focused handoffs, and
+small commits formed the coordination loop.
+
+Codex, powered by GPT-5.6, accelerated the implementation by exploring the
+existing architecture, extracting the prompt-language parser, implementing
+shell execution and loop state transitions, writing tests and documentation,
+and turning the implementation plan into small GitHub issues. The reviewer
+agent repeatedly found lifecycle and presentation problems, such as shell
+processes surviving shutdown, condition timing, and command output becoming
+hidden in the room preview, which were addressed before moving to the next
+slice.
+
+The developer made the key product and language decisions. These included
+rejecting workflow-specific commands such as `/review`, choosing general
+primitives instead, removing unnecessary quoting, parsing `/loop` control
+clauses from the end of the line, separating `/def` from invocation, and
+correcting the loop from a preconditioned `while` model to `do...until`
+semantics. The developer also chose the progressive-automation positioning and
+the split between compact human-facing shell previews and complete condition
+evidence sent to agents.
+
+The final result reflects that division of work: GPT-5.6 and Codex shortened
+the distance from design discussion to tested implementation, while the human
+set the product direction, resolved semantic ambiguities, and decided what
+belonged in the language.
+
+---
+
 ## Status (Prompt Language Version 0)
 
 This repository is early-stage:
