@@ -108,22 +108,16 @@ there is no routing signal to show (e.g. `/invite`, `/who`, `/help`).
 
 ## Agent colour
 
-Each agent is assigned a colour from a fixed palette when it joins. The colour is stored in `participant.Participant.Color` (a hex colour string, e.g. `"#4ade80"`) and used wherever the agent's alias appears (header bullet, routing footer).
+Each agent is assigned a generated colour when it joins. The colour is stored in
+`participant.Participant.Color` as a CSS/HTML hex string (for example,
+`"#4ADE80"`) and used wherever the agent's alias appears (header bullet, routing
+footer).
 
-**Palette** (hex, spread across the hue wheel for contrast on dark backgrounds):
-
-| Slot | Colour | Hex |
-|------|--------|-----|
-| 0 | Green  | `#4ade80` |
-| 1 | Blue   | `#60a5fa` |
-| 2 | Amber  | `#fbbf24` |
-| 3 | Pink   | `#f472b6` |
-| 4 | Purple | `#c084fc` |
-| 5 | Orange | `#fb923c` |
-| 6 | Cyan   | `#22d3ee` |
-| 7 | Lime   | `#a3e635` |
-
-Assignment is round-robin. Colour is released when the agent leaves but not reused within the same session, to avoid confusion between past and present participants.
+Colours are generated deterministically in OKLCH space, with hues advanced by
+the golden angle to spread successive assignments around the hue wheel. The
+result is converted to 24-bit sRGB. Assignment does not exhaust a short fixed
+list, and a generated colour is not reused within the same session, including
+after its participant leaves.
 
 **Departed agents**: when an agent stops or crashes, all of its historical records (agent output headers, routing footer aliases) are immediately re-rendered in `ColorDeparted` (`#6b7280`, muted grey). This repaint persists across terminal resizes. The effect signals that the output belongs to a past participant without losing the authorship structure of the record.
 
