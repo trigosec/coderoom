@@ -1,163 +1,406 @@
-# coderoom Prompt Language: Version 0
+# coderoom Prompt Language
 
 ## Status
 
-This document proposes the first executable slice of a prompt-based language
-for coderoom. It incorporates the existing room commands and adds the minimum
-syntax needed to define a reusable shell-backed command and use it as the
-termination condition for a bounded agent loop.
+This document defines the target prompt language for coderoom. The
+implementation currently supports a subset of the design; the remaining work
+is listed under Implementation Status.
 
-The canonical Version 0 program is:
+The canonical program is:
 
 ```text
-/def tests /shell go test ./...
-/loop @ada make the tests pass without weakening them /until /tests /max 3
-```
+/def tests = /shell go test ./...
 
-The purpose of this slice is to validate the language model, not to anticipate
-the complete language. In particular, Version 0 does not add content variables,
-parameters, general expressions, conditionals, or multi-command function
-bodies.
+/def fix @agent $task = /seq
+  @agent task
+  /tests
+/end
+
+/fix ada make the tests pass without weakening them
+```
 
 ## Design Goals
 
-- Preserve the existing interactive room syntax.
-- Keep agent execution sequential, as it is today.
-- Let users extend coderoom without adding workflow-specific built-ins.
-- Treat deterministic external commands as reusable success conditions.
-- Make agent loops bounded and visible to the human.
-- Leave room for future content variables and richer command definitions.
+- Preserve natural participant prompts as the primary interaction.
+- Let users extend coderoom through reusable commands.
+- Support runtime-managed completion conditions and bounded agent loops.
+- Let commands accept participant aliases and free-form prompts.
+- Keep parameters local to an invocation without adding global variables.
+- Keep built-in and user-defined commands in one command namespace.
+- Treat prompts as opaque content rather than strings or language syntax.
+- Make multiline definitions easy to paste and diagnose.
 
-## Existing Language
+## Language Forms
 
-coderoom already recognizes three forms of input:
-
-```text
-@ada inspect the current implementation   # direct shared-room send
-Please inspect the current implementation # broadcast
-/handoff ada turing                       # built-in command
-```
-
-The current user-facing built-ins are:
+coderoom recognizes participant sends, broadcasts, built-in commands, and
+user-defined commands:
 
 ```text
-/invite <alias>
-/remove <alias>
-/cancel <alias>
-/handoff <from> <to>
-/who
-/help
-/quit
+@ada inspect the parser                 # direct send
+Please inspect the parser               # broadcast
+/shell go test ./...                    # built-in command
+/tests                                  # user-defined command
 ```
 
-Version 0 preserves these forms. It adds `/shell`, `/def`, user-defined command
-invocation, and `/loop`.
+An agent response is always content. coderoom only interprets language syntax
+submitted explicitly by the user.
 
-## Syntax
+## Grammar
 
-The grammar below uses simplified EBNF. `/shell` consumes the raw remainder of
-its input, while `/loop` identifies its control clauses from the end of the
-line and treats the text between its participant and those clauses as a prompt.
+The grammar uses simplified EBNF. Shell programs and prompt arguments consume
+raw remaining input where noted.
 
 ```ebnf
-input               = statement ;
+input                  = statement ;
 
-statement           = participant_send
-                    | broadcast
-                    | builtin_command
-                    | user_command ;
+statement              = participant_send
+                       | broadcast
+                       | builtin_command
+                       | user_command ;
 
-participant_send    = participant_reference, free_text ;
-broadcast           = free_text ;
+participant_send       = "@", identifier, prompt ;
+broadcast              = prompt ;
+prompt                 = ? remaining non-empty input ? ;
+quoted_prompt_literal  = '"', prompt_literal_character,
+                         { prompt_literal_character }, '"' ;
+prompt_literal_character = ? any character except '"' or newline ? ;
 
-builtin_command     = invite
-                    | remove
-                    | cancel
-                    | handoff
-                    | who
-                    | help
-                    | quit
-                    | shell
-                    | define
-                    | loop ;
+builtin_command        = invite
+                       | remove
+                       | cancel
+                       | handoff
+                       | who
+                       | help
+                       | quit
+                       | shell
+                       | define
+                       | loop ;
 
-invite              = "/invite", identifier ;
-remove              = "/remove", identifier ;
-cancel              = "/cancel", identifier ;
-handoff             = "/handoff", identifier, identifier ;
-who                 = "/who" ;
-help                = "/help" ;
-quit                = "/quit" ;
+invite                 = "/invite", identifier ;
+remove                 = "/remove", identifier ;
+cancel                 = "/cancel", identifier ;
+handoff                = "/handoff", identifier, identifier ;
+who                    = "/who" ;
+help                   = "/help" ;
+quit                   = "/quit" ;
 
-shell               = "/shell", shell_program ;
-define              = "/def", identifier, command_expression ;
-loop                = "/loop", participant_reference, loop_prompt,
-                      "/until", command_reference, "/max", integer ;
+shell                  = "/shell", shell_program ;
 
-command_expression  = shell ;
-user_command        = command_reference ;
-command_reference   = "/", identifier ;
-participant_reference = "@", identifier ;
+define                 = "/def", identifier, { alias_parameter },
+                         [ prompt_parameter ], "=", definition_body ;
+alias_parameter        = "@", identifier ;
+prompt_parameter       = "$", identifier ;
 
-identifier          = identifier_start, { identifier_part } ;
-identifier_start    = letter ;
-identifier_part     = letter | digit | "-" | "_" ;
-loop_prompt         = ? non-empty text before the terminal /until clause ? ;
-shell_program       = ? remaining non-empty input ? ;
-free_text           = ? remaining non-empty input ? ;
-integer             = digit, { digit } ;
+definition_body        = executable_statement
+                       | concurrent_block
+                       | sequential_block ;
+concurrent_block       = "/do", newline, statement_block, end_marker ;
+sequential_block       = "/seq", newline, statement_block, end_marker ;
+statement_block        = { blank_line }, block_statement, newline,
+                         { blank_line | block_statement, newline } ;
+block_statement        = whitespace, executable_statement ;
+end_marker             = [ whitespace ], "/end", [ whitespace ] ;
+
+executable_statement   = participant_send
+                       | broadcast
+                       | executable_builtin
+                       | user_command ;
+executable_builtin     = invite | remove | cancel | handoff | who | shell
+                       | loop ;
+
+user_command           = command_reference, { alias_argument },
+                         [ prompt_argument ] ;
+command_reference      = "/", identifier ;
+alias_argument         = identifier ;
+prompt_argument        = ? remaining non-empty input ? ;
+
+loop                   = "/loop", "@", identifier, loop_prompt,
+                         "/until", command_reference, "/max", integer ;
+loop_prompt            = ? non-empty text before the terminal /until clause ? ;
+shell_program          = ? remaining non-empty input ? ;
+
+identifier             = identifier_start, { identifier_part } ;
+identifier_start       = letter ;
+identifier_part        = letter | digit | "-" | "_" ;
+integer                = digit, { digit } ;
+letter                 = "A" | ... | "Z" | "a" | ... | "z" ;
+digit                  = "0" | ... | "9" ;
+whitespace             = { " " | "\\t" } ;
+blank_line             = whitespace, newline ;
+newline                = "\\n" | "\\r\\n" ;
 ```
 
-`command_expression` intentionally contains only `/shell` in Version 0. This
-makes the following a complete command definition rather than an eager command
-execution:
+Identifiers are case-sensitive. Command names are written without a slash in a
+definition and with a slash at invocation. Contextual parameter resolution in
+definition bodies is described below; it does not change the surface grammar
+of participant sends or broadcasts. `quoted_prompt_literal` is recognized only
+when resolving the complete prompt field of a definition-body statement.
+
+## Commands and Namespaces
+
+Built-ins and user-defined commands occupy one command namespace for the
+running room:
 
 ```text
-/def tests /shell go test ./...
-```
-
-The stored command is invoked by name:
-
-```text
+/help
 /tests
+/review
 ```
 
-`/shell` consumes the remaining non-empty input as its program. coderoom trims
-the whitespace immediately after `/shell`, then passes the rest to the shell as
-written. Quotes inside that program retain their normal shell meaning:
+A user definition cannot replace a built-in or an existing definition.
+Participant aliases are runtime participant references, not entries in the
+command namespace.
+
+`do`, `seq`, and `end` are reserved structural names and cannot be defined as
+user commands.
+
+The command namespace is global within the running room. This describes
+visibility, not persistence. Persisting commands in room or project files is a
+separate design question.
+
+## Command Definitions
+
+`/def` associates a command name and signature with an unevaluated body.
+Defining a command does not execute it.
+
+### Single-command bodies
+
+A single executable statement may follow `=` on the definition line:
 
 ```text
-/shell echo "hello world"
-/shell go test ./... | tee test-output.txt
+/def tests = /shell go test ./...
+/def ask @agent $question = @agent question
 ```
 
-The shell expression must therefore be the final part of a single-line command
-definition in Version 0.
+The definition returns that statement's result unchanged.
 
-## Names and References
+### `/do` blocks
 
-Participants and commands occupy separate namespaces:
+`/do` groups multiple statements under the runtime's normal scheduling model:
 
 ```text
-@tests # participant named tests
-/tests # user-defined command named tests
+/def inspect @builder @reviewer $task = /do
+  @builder task
+  @reviewer task
+
+  /shell go test ./...
+/end
 ```
 
-Built-in command names are reserved. A definition such as `/def help ...` is
-invalid because `/help` already exists. Redefining an existing user-defined
-command is also an error in Version 0; an explicit replacement operation can be
-designed later if needed.
+The block executor submits statements in source order without waiting for each
+to complete before submitting the next. Source order guarantees submission
+order only; it does not guarantee effect order. Independent work may overlap,
+while runtime constraints still prevent incompatible work such as concurrent
+turns for one participant. A command that depends on an earlier command's
+effect must use `/seq`.
 
-Command names are written without a slash in a definition and with a slash at
-the call site:
+`/do` is a concurrent execution primitive, not a reuse of the composer's
+single staged submission. Its executor owns all pending child executions,
+schedules them independently of composer staging, and completes only after
+every submitted child completes.
+
+### `/seq` blocks
+
+`/seq` adds a completion barrier between statements:
 
 ```text
-/def tests /shell go test ./...
-/tests
+/def review-and-test @reviewer $task = /seq
+  @reviewer task
+
+  /shell go test ./...
+/end
 ```
 
-The `:` prefix remains available for future content variables. Version 0 does
-not assign semantics to it.
+Each statement starts only after the previous statement has completed. A
+participant call therefore waits for the participant's entire turn before the
+next statement starts.
+
+For both block forms, `/do` or `/seq` must be the final token on the opening
+line. `/end` appears on its own line and allows surrounding whitespace. Blank
+lines do not terminate a block and are ignored during execution. A block must
+contain at least one executable statement.
+
+`/end` is only special while parsing a multiline definition. At top level it
+is an unexpected command. Block literals and definitions cannot be lexically
+nested. Composition may produce runtime nesting when a block invokes a command
+whose body is another block.
+
+### Statement boundaries
+
+A block is a sequence of statements, not an implicit multiline string:
+
+- Each non-blank physical line is one statement.
+- Leading indentation used to format the body is ignored.
+- Each statement must be valid independently.
+
+The complete definition is submitted to the parser in one composer submission;
+the parser does not retain a line-by-line collection mode. Ctrl+C clears the
+unsubmitted draft. A missing `/end` is a parse error, and the draft should
+remain available for correction.
+
+## Parameters
+
+Parameters are immutable bindings local to one invocation. They do not
+introduce assignment, global variables, or a general value namespace.
+
+A definition may declare zero or more alias parameters followed by at most one
+prompt parameter:
+
+```text
+/def compare @author @reviewer $task = /do
+  @author task
+  @reviewer task
+/end
+```
+
+Parameter names must be unique across the signature.
+
+### Alias parameters
+
+An alias parameter is declared with `@`:
+
+```text
+/def ask @participant $question = @participant question
+/ask ada What should we change?
+```
+
+The signature establishes the argument type, so its invocation argument is the
+bare alias `ada`, not `@ada`. Alias parameters supply participant-bearing
+fields in body statements, including participant-call targets and compatible
+arguments forwarded to built-in or user-defined commands. They cannot be
+substituted into command names, shell programs, or prompt content.
+
+`@name` in a body remains ordinary participant-call syntax, but `name` must
+match an alias parameter in the definition's signature. The bound alias then
+supplies the call target. Definitions cannot capture participants from the
+running room by literal alias:
+
+```text
+/def notify-ada $message = @ada message
+```
+
+This is invalid because `@ada` is absent from the signature. Declare the
+participant dependency instead:
+
+```text
+/def notify @recipient $message = @recipient message
+/notify ada deployment finished
+```
+
+Participant existence or absence is checked according to the expanded command
+when it executes, not when the definition is stored.
+
+### Prompt parameters
+
+A prompt parameter is declared with `$` and forwarded by name as the complete
+prompt of a participant call or broadcast:
+
+```text
+/def review @reviewer $task = @reviewer task
+/review turing inspect the parser and identify ambiguous cases
+```
+
+It binds the trimmed, non-empty remainder of the invocation. It does not need
+quotes. Because it consumes the remainder, a definition may have at most one
+prompt parameter and it must be last.
+
+A body prompt whose complete trimmed content is an unquoted identifier matching
+a declared prompt parameter forwards that prompt unchanged. A complete prompt
+enclosed in double quotes is always literal and the delimiting quotes are not
+part of the prompt:
+
+```text
+/def example @agent $task = @agent task
+/def literal-example @agent $task = @agent "task"
+```
+
+The first definition forwards `task`; the second sends the literal prompt
+`task`. Any other prompt text is also literal, so `@agent Please handle task`
+does not reference the parameter. An empty or whitespace-only quoted prompt is
+invalid because participant sends and broadcasts require content. Quoting is
+only a disambiguator for a whole prompt literal in a definition body; it does
+not introduce a general string value. Embedded quote and escape syntax are
+deferred with richer prompt literals.
+
+The parameter can be forwarded more than once, but it cannot be interpolated
+into or combined with literal text. Prompt construction and modification
+require a future prompt-operation design.
+
+A prompt parameter can also be forwarded as a broadcast:
+
+```text
+/def announce $message = message
+/announce Preserve $HOME and the literal ${value}
+```
+
+This resolves to a broadcast containing the invocation prompt unchanged. The
+participant set is resolved when the broadcast executes. If no participant is
+routable, execution uses the same error path as an ordinary broadcast.
+
+A prompt is not a general string or shell argument. Parameter names have no
+meaning inside a shell program:
+
+```text
+/def run $arguments = /shell go test $arguments
+```
+
+Here `$arguments` in the shell program retains its ordinary shell meaning; it
+does not refer to the prompt parameter. The definition may warn that its prompt
+parameter is unused, but prompt contents are never inserted into the program.
+
+Future scalar values, prompt operations, or command arguments must define their
+own syntax and semantics rather than broadening the meaning of `$prompt`.
+
+### Forwarding through composed commands
+
+Alias and prompt parameters may be forwarded unchanged into compatible
+argument positions of another user-defined command:
+
+```text
+/def review @reviewer $task = @reviewer task
+
+/def pipeline @agent $work = /seq
+  /review agent work
+  /tests
+/end
+```
+
+Here `agent` supplies `/review`'s alias argument and `work` supplies its complete
+prompt argument. Resolution uses the callee's signature and typed parameter
+bindings; it does not turn either value into source text.
+
+Only unchanged forwarding is supported. Prompt concatenation, interpolation,
+construction, inspection, and decomposition are deferred to a future prompt
+operations design.
+
+## Structural Expansion
+
+Invocation binds arguments and produces executable statement values. It does
+not concatenate source text and parse it again.
+
+For example:
+
+```text
+/def ask @participant $question = @participant question
+/ask ada Is this API boundary correct?
+```
+
+resolves conceptually to:
+
+```go
+Send{
+    Alias: "ada",
+    Text:  "Is this API boundary correct?",
+}
+```
+
+The body refers to a prompt parameter only when the entire prompt field is its
+bare parameter name. Prompt contents are never inspected, interpolated, or
+reparsed. They cannot introduce another command or change the send target,
+even when they begin with `/`, `@`, or `$`.
+
+Each invocation receives a fresh parameter scope. The bindings are discarded
+when the invocation completes.
 
 ## Command Results
 
@@ -169,189 +412,246 @@ CommandResult {
     exit_code: optional integer
     output:    text
     error:     text
+    children:  ordered command results
 }
 ```
 
-`output` contains standard output. `error` contains standard error or an error
-that prevented the command from starting. Keeping them separate preserves the
-information even if the first UI representation chooses to collapse them into
-one record.
+The result is runtime state. It is rendered in the room and may be consumed by
+control-flow commands, but it is not an assignable value.
 
-The result is runtime state, not a user-visible value type in Version 0. It is
-rendered in the room and consumed by `/loop`, but cannot yet be assigned to a
-variable or inspected through expressions.
+A single-command definition returns its command's result unchanged. `/do` and
+`/seq` blocks retain each child result and derive one aggregate status:
 
-Existing commands map successful completion, validation failure, and
-cancellation onto the same result contract where needed by the interpreter.
+- Explicitly cancelling the block produces `cancelled`.
+- Otherwise, any failed or cancelled child makes the aggregate `failure`.
+- Otherwise, the aggregate is `success`.
+
+Both block forms attempt every statement; scheduling is independent of failure
+policy. Child output remains attached to the child command and is not
+duplicated into aggregate output.
+
+A participant call completes when the participant's turn completes. Normal
+turn completion produces `success`, failure to start or a crash produces
+`failure`, and interruption produces `cancelled`. The runtime does not infer a
+semantic result from participant prose. A future result-producing participant
+protocol may enrich this behavior without changing definition syntax.
+
+Other executable statements produce results as follows:
+
+| Statement | Completion and result |
+|---|---|
+| Broadcast | Completes after every targeted participant turn. No routable participants or any child that cannot start or crashes produces `failure`; otherwise it succeeds. |
+| `/invite` | Completes successfully when the participant is ready; startup failure produces `failure`. |
+| `/remove` | Completes successfully when removal finishes; an invalid target or stop failure produces `failure`. |
+| `/cancel` | Completes when the interrupt request is accepted; rejection produces `failure`. It does not wait for the target turn's eventual outcome. |
+| `/handoff` | Completes after the destination participant turn; source resolution or destination-turn failure produces `failure`. |
+| `/who` | Completes immediately with the roster as output. |
+| `/loop` | Uses the loop result rules defined below. |
+| User command | Binding, resolution, or recursion errors produce `failure`; otherwise it returns its body result. |
+
+Cancellation of a child participant call contributes a failed child to its
+enclosing block; it does not mean the block itself was cancelled. Block-level
+`cancelled` is currently an internal runtime/lifecycle result, for example when
+the room shuts down. There is no user-facing command for cancelling an active
+block in this version. Ctrl+C only clears an unsubmitted composer draft.
 
 ## `/shell`
 
-`/shell` executes the remainder of its input in the coderoom workspace:
+`/shell` executes the remaining input in the coderoom workspace:
 
 ```text
 /shell go test ./...
+/shell echo "hello world" | tee output.txt
 ```
 
-It collects the process exit code, standard output, and standard error.
+The program is passed to the shell as written after trimming whitespace
+immediately following `/shell`.
 
 - Exit code zero produces `success`.
 - A non-zero exit code produces `failure`.
-- Failure to start the process produces `failure` without an exit code.
+- Failure to start produces `failure` without an exit code.
 - User cancellation produces `cancelled`.
 
-The shell invocation, status, and output are visible in the room. `/shell` is
-an explicit user action; an agent cannot cause coderoom to execute an
-arbitrary host command merely by emitting this syntax in its response.
-
-The concrete shell, environment inheritance, output limits, and cancellation
-mechanism are implementation decisions that must be settled before `/shell` is
-considered production-ready.
-
-## `/def`
-
-`/def` associates a name with an unevaluated command expression:
-
-```text
-/def tests /shell go test ./...
-```
-
-Defining `tests` does not execute the shell program. Invoking `/tests` evaluates
-the stored expression and returns its result. A Version 0 definition has no
-parameters, contains exactly one command expression, and returns that command's
-result unchanged.
-
-Definitions are scoped to the running room in Version 0. Persistence and
-project-level command files are future design questions.
+The invocation, status, standard output, and standard error are visible in the
+room. Parameter interpolation into shell programs is not supported.
 
 ## `/loop`
 
-`/loop` repeatedly asks one participant to change the workspace until a
-user-defined command succeeds:
+`/loop` repeatedly prompts one participant until a user-defined command
+succeeds or the turn bound is reached:
 
 ```text
-/loop @ada make the tests pass without weakening them /until /tests /max 3
+/def tests = /shell go test ./...
+/loop @ada make the tests pass /until /tests /max 3
 ```
 
-The parser resolves the statement from both ends. It reads `/loop` and the
-participant reference from the start, then reads `/max <integer>` and
-`/until <command-reference>` backwards from the end. The remaining non-empty
-text is the participant prompt. This makes the embedded agent instruction look
-like the ordinary `@alias <text>` form while keeping the loop controls
-unambiguous.
+The parser reads the participant from the start and the control clauses from
+the end. The non-empty text between them is the participant prompt.
 
-Execution proceeds as follows:
+`/loop` has do-while semantics. The runtime starts one participant turn before
+the first condition evaluation. After the turn completes, it invokes the
+condition. A successful condition ends the loop; otherwise another turn starts
+unless `/max` participant turns have completed.
 
-1. Send the participant the loop prompt.
-2. Wait for the participant's turn to finish using coderoom's existing command
-   sequencing.
-3. Invoke the command named after `/until`.
-4. If it succeeds, finish the loop successfully.
-5. If it is cancelled, cancel the loop.
-6. If it fails and the maximum number of participant turns has been reached,
-   finish the loop with the last failed result.
-7. Send the participant the loop prompt together with the failed condition's
-   name, exit code, output, and error.
-8. Repeat from step 2.
+The condition must be parameterless because `/until` does not supply command
+arguments. The runtime invokes the command and ends the loop when its aggregate
+result is `success`; the loop participant does not self-report completion.
 
-`/max` counts participant turns, not condition evaluations. It is mandatory in
-Version 0 so an agent loop cannot consume unbounded time or credits.
+The condition need not be deterministic. A shell-only command offers a
+deterministic condition when its underlying program is deterministic. A
+condition may also call participants, but an ordinary participant call succeeds
+when its turn completes, regardless of what its prose says. Nested or
+concurrent loops are not supported.
 
-The assessment and every participant turn remain visible in the shared room.
-The human can cancel the active participant with the existing `/cancel`
-command; cancelling that turn cancels the loop rather than silently continuing.
+The loop result is `success` when the condition succeeds, `failure` when a
+participant turn fails or the final condition is still failing after `/max`,
+and `cancelled` when the loop execution is cancelled. It retains every
+completed participant turn and condition evaluation as child results in
+execution order. If a turn fails, that failure is the final child; if the loop
+reaches `/max`, the final condition result is the final child.
 
-The participant receives the original prompt on the first turn. After a failed
-condition evaluation, the next turn receives a structured prompt equivalent to:
+## Command Composition and Recursion
+
+A command body may invoke another user-defined command, but that command must
+already exist. The definition is checked immediately against the callee's
+signature, including argument count, types, and forwarded parameter
+compatibility. The body stores a resolved command reference rather than an
+unresolved name.
+
+Definitions are immutable. Because every dependency points to an earlier
+definition, the command graph is acyclic by construction: direct self-reference
+is rejected and indirect recursion cannot be formed through valid definitions.
+A command body may itself be a `/do` or `/seq` block, but definitions and
+additional block literals cannot appear as child statements within that body.
+Runtime block nesting remains possible through command composition.
+
+The ordering rule applies to every user-command reference in a body, including
+a `/loop` condition. When a definition contains a loop, its condition command
+must already exist and have a parameterless signature; both requirements are
+validated before the containing definition is stored.
+
+The runtime still tracks the active invocation stack as a defensive invariant.
+Encountering a repeated command fails rather than recursing indefinitely:
 
 ```text
-Make the tests pass without weakening them
-
-The completion condition is failing. Continue working on the task using
-the evidence below.
-
-Condition command: /tests
-Status: failure
-Exit code: 1
-Stdout:
-<standard output>
-
-Stderr:
-<standard error>
-
-Error:
-<execution error or (none)>
+cannot invoke /one: recursive invocation through /one -> /two -> /one
 ```
 
-Empty result fields are shown as `(none)`. Version 0 passes the complete result
-without truncation; if output limits are introduced later, the truncation must
-be explicit in both the participant message and room record. None of the
-collected evidence is silently discarded.
-
-## Examples
-
-Run a shell command directly:
+Definition order is therefore significant:
 
 ```text
-/shell go test ./...
+/def pipeline = /tests
+/def tests = /shell go test ./...
 ```
 
-Define and invoke it:
+The first definition is rejected because `/tests` does not exist yet. Define
+dependencies before the commands that compose them.
+
+## Validation and Errors
+
+Definition-time validation rejects:
+
+- a missing `=` or empty body
+- malformed or duplicate parameters
+- more than one prompt parameter
+- an alias parameter after a prompt parameter
+- a participant reference not declared as an alias parameter
+- parameter forwarding into an incompatible field or argument
+- an unterminated quoted prompt literal
+- an empty or whitespace-only quoted prompt literal
+- nested definitions
+- direct self-reference
+- a reference to a command that is not yet defined
+- reserved or previously defined command names
+- a `/do` or `/seq` block without `/end`
+
+Invocation-time validation rejects:
+
+- missing alias arguments
+- invalid alias identifiers
+- a missing or empty prompt argument
+- arguments supplied to a parameterless command
+- arguments that cannot be bound to the signature
+
+Errors should identify the command and parameter when known:
 
 ```text
-/def tests /shell go test ./...
-/tests
+definition /review: expected '=' after parameter $task
+definition /review: $task consumes the remaining input and must be last
+definition /review is missing the closing /end for its /seq block
+definition /notify-ada: participant @ada is not declared in the parameter list
+cannot define /pipeline: /review is not defined; define dependencies first
+/review argument 1 (@reviewer) must be an alias such as ada
+/review requires prompt parameter $task
 ```
 
-Use it as a bounded success condition:
+An incomplete block error points back to its opening `/do` or `/seq`. Because a
+definition is submitted as one input, the parser does not retain partial
+definition state after reporting the error.
 
-```text
-/def tests /shell go test ./...
-/loop @ada fix the failing tests without changing their assertions /until /tests /max 3
-```
+## Implementation Shape
 
-Define another project-specific condition without adding a built-in:
+The implementation preserves the separation between parsing, resolution, and
+execution:
 
-```text
-/def lint /shell go vet ./...
-/loop @ada resolve the reported static-analysis findings /until /lint /max 2
-```
+1. Parse definitions into typed parameter declarations and one of the three
+   body forms.
+2. Parse `/do` and `/seq` blocks from one complete composer submission.
+3. Resolve composed command references against definitions already in the
+   registry and validate their arguments before storing the definition.
+4. Parse a user invocation into its command name and unbound remainder.
+5. Resolve the command, bind its signature, and structurally expand its body.
+6. Execute the resulting statement or schedule the block through the existing
+   session and UI paths. The `/do` executor owns multiple pending children and
+   completion tracking independently of composer staging.
 
-## Invalid Version 0 Programs
+Invocation parsing depends on the resolved signature, while the current
+`Parse` function is registry-independent. Basic parsing should therefore
+retain the unbound invocation remainder. Signature-aware binding belongs in
+resolution.
 
-```text
-/def help /shell go test ./...     # conflicts with a built-in
-/def tests                         # missing command expression
-/def tests /who                    # unsupported definition body
-/loop ada fix tests /until /tests /max 3      # participant requires @
-/loop @ada /until /tests /max 3               # missing prompt
-/loop @ada fix tests /until /tests             # missing bound
-```
+Typed AST nodes represent alias targets, opaque prompt forwarding, and block
+scheduling. Raw string replacement is not part of the design.
+
+## Implementation Status
+
+Currently implemented:
+
+- participant sends and broadcasts
+- built-in room commands
+- direct shell execution
+- parameterless shell-backed command definitions and invocations
+- bounded loops with a parameterless command condition
+
+Not yet implemented:
+
+- the `=` definition boundary
+- `/do` and `/seq` blocks
+- alias and prompt parameters
+- structural parameter binding and expansion
+- unchanged parameter forwarding through composed commands
+- aggregate block results and runtime recursion protection
 
 ## Non-goals
 
-Version 0 does not define:
+This design does not introduce:
 
-- content variables or `/set`
-- function parameters or return expressions
-- multi-command function bodies
-- `/if`, `/while`, `/break`, or `/continue`
+- global variables or assignment
+- general string, number, boolean, list, or result values
+- parameterized shell programs
+- named, optional, or default arguments
+- multiple or non-final prompt parameters
+- multiline prompt literals
+- nested or lexical command definitions
+- recursive commands
+- conditionals, returns, or early exit
+- command overloading or redefinition
+- persistent or project-level definitions
 - nested or concurrent loops
-- arbitrary command expressions after `/until`
-- persistent or repository-defined functions
-- participant outputs as assignable values
-- automatic commits, reverts, or acceptance decisions
-
-These features should be designed from experience with the Version 0 execution
-model rather than inferred in advance.
 
 ## Open Questions
 
-- Which shell should `/shell` use on each supported platform?
-- How much output should be retained and shown for long-running commands?
-- Should user-defined commands persist in room state or live in a project file?
-- Should `/def` eventually accept a block, parameters, or both?
-- Should `/loop` accept an inline command expression as well as a named command?
-- How should a failed participant turn differ from a cancelled turn at the loop
-  boundary?
-- Should future participant arguments consistently require `@`, including a
-  future revision of `/handoff`?
+- Should an invoked definition render an outer command record in addition to
+  the records produced by its statements?
+- Which future syntax should represent prompt operations, scalar strings, or
+  escaped command arguments without changing the opaque meaning of `$prompt`?

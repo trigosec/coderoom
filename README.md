@@ -103,7 +103,7 @@ belonged in the language.
 
 ---
 
-## Status (Prompt Language Version 0)
+## Current Prompt-Language Implementation
 
 This repository is early-stage:
 
