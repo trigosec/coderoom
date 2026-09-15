@@ -70,10 +70,11 @@ func parseRuntimeCommand(cmd, rest string) (Statement, error) {
 
 func parsePolicy(rest string) (Statement, error) {
 	action, name := cutToken(rest)
-	if action != "enable" || strings.TrimSpace(name) != string(policy.SendNotices) {
-		return nil, fmt.Errorf("usage: /policy enable send-notices")
+	policyName := policy.Name(strings.TrimSpace(name))
+	if action != "enable" || (policyName != policy.SendNotices && policyName != policy.EchoInvites) {
+		return nil, fmt.Errorf("usage: /policy enable <send-notices|echo-invites>")
 	}
-	return PolicyEnable{Name: policy.SendNotices}, nil
+	return PolicyEnable{Name: policyName}, nil
 }
 
 func parseLoop(rest string) (Statement, error) {

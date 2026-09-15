@@ -7,6 +7,7 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/policy"
 )
 
 // InviteCommand adds an agent to the session and starts it.
@@ -17,6 +18,10 @@ type InviteCommand struct {
 }
 
 func (c InviteCommand) execute(s *Session) error {
+	backend := AgentBackendDefault
+	if s.policies.Enabled(policy.EchoInvites) {
+		backend = AgentBackendEcho
+	}
 	if s.agentFactory == nil {
 		return fmt.Errorf("no agent factory configured on session")
 	}
@@ -28,8 +33,9 @@ func (c InviteCommand) execute(s *Session) error {
 	if err := s.addParticipant(p); err != nil {
 		return err
 	}
+	s.hasInvited = true
 	s.CreateAgentRuntime(c.Alias)
-	a := s.agentFactory(s, cfg)
+	a := s.agentFactory(s, cfg, backend)
 	s.notify(ParticipantStatusChanged{Alias: c.Alias, From: "", To: p.Status, Since: p.Since})
 	s.notify(AgentStarting{Alias: c.Alias})
 	startInvitedAgent(c.Alias, a, s)

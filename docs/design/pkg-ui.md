@@ -141,6 +141,7 @@ Input is parsed on submit (Enter):
 |---|---|---|
 | `/invite <alias>` | `InviteCommand` | |
 | `/policy enable send-notices` | `EnablePolicyCommand` | Enables listener notices for subsequent direct sends |
+| `/policy enable echo-invites` | `EnablePolicyCommand` | Uses deterministic echo agents; must precede every invitation |
 | `/cancel <alias>` | `CancelCommand` | Soft stop: cancels in-flight work for the agent but keeps it in the room |
 | `/remove <alias>` | `RemoveCommand` | Hard stop: removes the agent from the room and stops its process |
 | `/who` | — | Renders current roster inline; no session command needed |

@@ -118,7 +118,7 @@ func newSessionWithCodexAgents(t *testing.T, aliases ...string) (*session.Sessio
 	}
 	s := session.New(
 		session.WithObserver(chanObserver{ch: events}),
-		session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig, _ session.AgentBackend) agent.Agent {
 			return agents[cfg.Alias]
 		}),
 	)

@@ -607,6 +607,8 @@ const helpTextTemplate = `[help]
 Commands:
 	/policy enable send-notices
 	                     notify listeners after direct sends
+	/policy enable echo-invites
+	                     use deterministic echo agents for invitations
   /invite <alias>      start an agent
   /remove <alias>      remove an agent
   /cancel <alias>      interrupt an agent's current turn

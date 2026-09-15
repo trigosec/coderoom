@@ -17,14 +17,23 @@ import (
 	"github.com/trigosec/coderoom/internal/policy"
 )
 
-// AgentFactory constructs an agent.Agent for a given participant config. The
-// factory is responsible for wiring any backend-specific options using
-// session-owned facilities (agent context, approval listener, logging) before
-// returning.
+// AgentFactory constructs the adapter selected by the session for a participant
+// config. The application composition root maps backend values to concrete
+// packages and wires session-owned facilities before returning.
 //
 // The session is passed to allow factories to use session-owned facilities
 // (e.g., approval routing) without requiring UI-owned glue code.
-type AgentFactory func(s *Session, cfg roomconfig.ParticipantConfig) agent.Agent
+type AgentFactory func(s *Session, cfg roomconfig.ParticipantConfig, backend AgentBackend) agent.Agent
+
+// AgentBackend identifies the adapter implementation requested by room policy.
+type AgentBackend string
+
+const (
+	// AgentBackendDefault requests the application's ordinary agent adapter.
+	AgentBackendDefault AgentBackend = "default"
+	// AgentBackendEcho requests the deterministic echo adapter.
+	AgentBackendEcho AgentBackend = "echo"
+)
 
 type agentRuntime struct {
 	agentCancel context.CancelFunc
@@ -44,6 +53,7 @@ type Session struct {
 	agentFactory  AgentFactory
 	config        *roomconfig.Config
 	policies      policy.Set
+	hasInvited    bool
 	approvals     *approvalHub
 	lifecycle     sessionLifecycle
 }

@@ -182,6 +182,7 @@ Useful commands:
 
 ```text
 /policy enable send-notices             # notify other agents after @alias sends
+/policy enable echo-invites             # use echo agents for this room's invitations
 /invite <alias>                         # start an agent
 @<alias> <prompt>                       # send to one agent
 <prompt>                                # broadcast to all agents

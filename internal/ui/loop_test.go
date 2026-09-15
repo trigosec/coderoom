@@ -196,7 +196,7 @@ func completeLoopTurn(t *testing.T, m Model, participantAgent *testAgent) (Model
 func newLoopTestModel(t *testing.T) (Model, *testAgent) {
 	t.Helper()
 	participantAgent := newTestAgent()
-	sess := session.New(session.WithAgentFactory(func(*session.Session, roomconfig.ParticipantConfig) agent.Agent {
+	sess := session.New(session.WithAgentFactory(func(*session.Session, roomconfig.ParticipantConfig, session.AgentBackend) agent.Agent {
 		return participantAgent
 	}))
 	t.Cleanup(sess.Shutdown)

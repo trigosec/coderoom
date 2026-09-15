@@ -7,18 +7,22 @@ import (
 )
 
 func TestSetEnable(t *testing.T) {
-	policies := policy.NewSet()
-	if policies.Enabled(policy.SendNotices) {
-		t.Fatal("send notices should be disabled by default")
-	}
-	if err := policies.Enable(policy.SendNotices); err != nil {
-		t.Fatalf("Enable: %v", err)
-	}
-	if err := policies.Enable(policy.SendNotices); err != nil {
-		t.Fatalf("second Enable: %v", err)
-	}
-	if !policies.Enabled(policy.SendNotices) {
-		t.Fatal("send notices should be enabled")
+	for _, name := range []policy.Name{policy.SendNotices, policy.EchoInvites} {
+		t.Run(string(name), func(t *testing.T) {
+			policies := policy.NewSet()
+			if policies.Enabled(name) {
+				t.Fatal("policy should be disabled by default")
+			}
+			if err := policies.Enable(name); err != nil {
+				t.Fatalf("Enable: %v", err)
+			}
+			if err := policies.Enable(name); err != nil {
+				t.Fatalf("second Enable: %v", err)
+			}
+			if !policies.Enabled(name) {
+				t.Fatal("policy should be enabled")
+			}
+		})
 	}
 }
 

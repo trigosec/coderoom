@@ -13,6 +13,8 @@ type Name string
 const (
 	// SendNotices enables listener notices for direct shared-room sends.
 	SendNotices Name = "send-notices"
+	// EchoInvites makes subsequent invitations use the deterministic echo adapter.
+	EchoInvites Name = "echo-invites"
 )
 
 // Set provides concurrency-safe access to enabled room policies. Copies refer
@@ -35,7 +37,7 @@ func NewSet() Set {
 
 // Enable turns on name. Enabling an already-enabled policy is a no-op.
 func (p Set) Enable(name Name) error {
-	if name != SendNotices {
+	if name != SendNotices && name != EchoInvites {
 		return fmt.Errorf("unknown policy %q", name)
 	}
 	if p.state == nil {

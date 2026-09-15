@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/agent/codex"
+	"github.com/trigosec/coderoom/internal/agent/echo"
 	"github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui"
@@ -42,7 +43,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cleanup, factoryOpt, err := agentFactoryOption(cwd, *agentLog)
+	cleanup, factory, err := agentFactory(cwd, *agentLog)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent factory: %v\n", err)
 		return 1
@@ -51,7 +52,11 @@ func run() int {
 		defer cleanup()
 	}
 	cfg := config.New(cwd)
-	sess := session.New(session.WithContext(ctx), session.WithConfig(cfg), factoryOpt)
+	sess := session.New(
+		session.WithContext(ctx),
+		session.WithConfig(cfg),
+		session.WithAgentFactory(factory),
+	)
 
 	var opts []ui.Option
 	if strings.TrimSpace(os.Getenv("CODEROOM_DEBUG")) == "1" {
@@ -68,16 +73,19 @@ func run() int {
 	return 0
 }
 
-func agentFactoryOption(cwd, agentLog string) (cleanup func(), opt session.Option, err error) {
+func agentFactory(cwd, agentLog string) (cleanup func(), factory session.AgentFactory, err error) {
 	if agentLog == "" {
-		return nil, session.WithAgentFactory(func(s *session.Session, cfg config.ParticipantConfig) agent.Agent {
+		return nil, func(s *session.Session, cfg config.ParticipantConfig, backend session.AgentBackend) agent.Agent {
+			if backend == session.AgentBackendEcho {
+				return echo.New()
+			}
 			return codex.New(
 				cwd,
 				codex.WithContext(s.CreateAgentContext(cfg.Alias)),
 				codex.WithApprovalListener(s.ApprovalListener(cfg.Alias)),
 				codex.WithSystemPrompt(cfg.Prompt),
 			)
-		}), nil
+		}, nil
 	}
 
 	f, err := os.OpenFile(filepath.Clean(agentLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -88,7 +96,10 @@ func agentFactoryOption(cwd, agentLog string) (cleanup func(), opt session.Optio
 			if err := f.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "agent-log close: %v\n", err)
 			}
-		}, session.WithAgentFactory(func(s *session.Session, cfg config.ParticipantConfig) agent.Agent {
+		}, func(s *session.Session, cfg config.ParticipantConfig, backend session.AgentBackend) agent.Agent {
+			if backend == session.AgentBackendEcho {
+				return echo.New()
+			}
 			return codex.New(
 				cwd,
 				codex.WithContext(s.CreateAgentContext(cfg.Alias)),
@@ -96,5 +107,5 @@ func agentFactoryOption(cwd, agentLog string) (cleanup func(), opt session.Optio
 				codex.WithApprovalListener(s.ApprovalListener(cfg.Alias)),
 				codex.WithSystemPrompt(cfg.Prompt),
 			)
-		}), nil
+		}, nil
 }

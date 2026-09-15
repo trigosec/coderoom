@@ -23,7 +23,7 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	var a *codex.Client
 	s := session.New(
 		session.WithObserver(chanObserver{ch: events}),
-		session.WithAgentFactory(func(_ *session.Session, _ roomconfig.ParticipantConfig) agent.Agent {
+		session.WithAgentFactory(func(_ *session.Session, _ roomconfig.ParticipantConfig, _ session.AgentBackend) agent.Agent {
 			a = codex.New(cwd)
 			return a
 		}),

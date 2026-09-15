@@ -107,6 +107,13 @@ TUI. Session may consult repo-local config using the invited alias, derive the
 participant's runtime role, and pass the synthesized startup prompt into the
 agent factory so the backend can apply it during startup.
 
+Session owns the invite-backend decision and passes either `default` or `echo`
+to one backend-aware agent factory. When `echo-invites` was enabled before the
+first invitation, Session requests `echo`; otherwise it requests `default`.
+The application composition root maps that choice to a concrete adapter. The
+TUI still issues the same `InviteCommand`, and both adapters follow the ordinary
+participant lifecycle.
+
 ---
 
 ## Output model

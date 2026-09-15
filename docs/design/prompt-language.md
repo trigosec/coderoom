@@ -706,10 +706,10 @@ Currently implemented:
 - parameterless shell-backed command definitions and invocations
 - bounded loops with a parameterless command condition
 - `/policy enable send-notices`
+- `/policy enable echo-invites` and the echo backend
 
 Not yet implemented:
 
-- `/policy enable echo-invites` and the echo backend
 - `/loop` bodies using `/seq` or `/do`
 - the `=` definition boundary
 - `/do` and `/seq` blocks
