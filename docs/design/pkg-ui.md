@@ -140,11 +140,12 @@ Input is parsed on submit (Enter):
 | Input | Command | Notes |
 |---|---|---|
 | `/invite <alias>` | `InviteCommand` | |
+| `/policy enable send-notices` | `EnablePolicyCommand` | Enables listener notices for subsequent direct sends |
 | `/cancel <alias>` | `CancelCommand` | Soft stop: cancels in-flight work for the agent but keeps it in the room |
 | `/remove <alias>` | `RemoveCommand` | Hard stop: removes the agent from the room and stops its process |
 | `/who` | — | Renders current roster inline; no session command needed |
 | `/help` | — | Renders available commands inline |
-| `@<alias> <text>` | `SharedSendCommand` | |
+| `@<alias> <text>` | `SharedSendCommand` | Only the addressed participant is targeted unless `send-notices` is enabled |
 | `<text>` | `BroadcastCommand` | Equivalent to direct send for single-agent sessions |
 | `/quit` | `session.Shutdown()` + `tea.Quit` | Best-effort stop all agents before exit |
 

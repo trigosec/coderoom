@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/trigosec/coderoom/internal/policy"
 )
 
 var noArgCommands = map[string]Statement{
@@ -45,11 +47,8 @@ func parseSlash(line string) (Statement, error) {
 			return nil, err
 		}
 		return Handoff{FromAlias: fromAlias, ToAlias: toAlias}, nil
-	case "/shell":
-		if rest == "" {
-			return nil, fmt.Errorf("usage: /shell <program>")
-		}
-		return Shell{Program: rest}, nil
+	case "/shell", "/policy":
+		return parseRuntimeCommand(cmd, rest)
 	case "/def":
 		return parseDefinition(rest)
 	case "/loop":
@@ -57,6 +56,24 @@ func parseSlash(line string) (Statement, error) {
 	default:
 		return parseInvocation(cmd, rest)
 	}
+}
+
+func parseRuntimeCommand(cmd, rest string) (Statement, error) {
+	if cmd == "/policy" {
+		return parsePolicy(rest)
+	}
+	if rest == "" {
+		return nil, fmt.Errorf("usage: /shell <program>")
+	}
+	return Shell{Program: rest}, nil
+}
+
+func parsePolicy(rest string) (Statement, error) {
+	action, name := cutToken(rest)
+	if action != "enable" || strings.TrimSpace(name) != string(policy.SendNotices) {
+		return nil, fmt.Errorf("usage: /policy enable send-notices")
+	}
+	return PolicyEnable{Name: policy.SendNotices}, nil
 }
 
 func parseLoop(rest string) (Statement, error) {
@@ -217,7 +234,7 @@ func isIdentifierPart(char rune) bool {
 func isReservedCommand(name string) bool {
 	switch name {
 	case "invite", "remove", "cancel", "handoff", "who", "help", "quit",
-		"shell", "def", "loop", "debugview", "debugrows":
+		"policy", "shell", "def", "loop", "debugview", "debugrows":
 		return true
 	default:
 		return false

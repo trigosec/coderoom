@@ -285,19 +285,19 @@ func TestHandleEvent_agentStoppedClearsStreaming(t *testing.T) {
 
 func TestRoutingFor(t *testing.T) {
 	ps := []participant.Participant{{Alias: "ada"}, {Alias: "bob"}}
-	if got := routingFor(promptlang.Broadcast{Text: "hi"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
+	if got := routingFor(promptlang.Broadcast{Text: "hi"}, ps, nil); !slices.Equal(got, []string{"ada", "bob"}) {
 		t.Errorf("broadcast routing: got %v, want [ada bob]", got)
 	}
-	if got := routingFor(promptlang.Send{Alias: "ada", Text: "hi"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
-		t.Errorf("send routing: got %v, want [ada bob]", got)
+	if got := routingFor(promptlang.Send{Alias: "ada", Text: "hi"}, ps, []string{"ada"}); !slices.Equal(got, []string{"ada"}) {
+		t.Errorf("send routing: got %v, want [ada]", got)
 	}
-	if got := routingFor(promptlang.Send{Alias: "nobody", Text: "hi"}, ps); !slices.Equal(got, []string{"nobody", "ada", "bob"}) {
-		t.Errorf("send routing for missing alias: got %v, want [nobody ada bob]", got)
+	if got := routingFor(promptlang.Send{Alias: "nobody", Text: "hi"}, ps, []string{"nobody"}); !slices.Equal(got, []string{"nobody"}) {
+		t.Errorf("send routing for missing alias: got %v, want [nobody]", got)
 	}
-	if got := routingFor(promptlang.Handoff{FromAlias: "ada", ToAlias: "bob"}, ps); !slices.Equal(got, []string{"ada", "bob"}) {
+	if got := routingFor(promptlang.Handoff{FromAlias: "ada", ToAlias: "bob"}, ps, nil); !slices.Equal(got, []string{"ada", "bob"}) {
 		t.Errorf("handoff routing: got %v, want [ada bob]", got)
 	}
-	if got := routingFor(promptlang.Help{}, ps); got != nil {
+	if got := routingFor(promptlang.Help{}, ps, nil); got != nil {
 		t.Errorf("help routing: got %v, want nil", got)
 	}
 }
@@ -325,7 +325,7 @@ func TestShowWho_noAgents(t *testing.T) {
 func TestShowHelp_coversAllCommands(t *testing.T) {
 	m := makeReadyModel(t)
 	m = m.showHelp()
-	for _, cmd := range []string{"/invite", "/remove", "/cancel", "/handoff", "/shell", "/def", "/<name>", "/loop", "/who", "/help", "@<alias>", "/quit"} {
+	for _, cmd := range []string{"/policy", "/invite", "/remove", "/cancel", "/handoff", "/shell", "/def", "/<name>", "/loop", "/who", "/help", "@<alias>", "/quit"} {
 		if !hasRecord(m, record.KindSystem, cmd) {
 			t.Errorf("help output missing %q; records: %v", cmd, m.room.HistoryRecords())
 		}

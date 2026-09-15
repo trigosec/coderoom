@@ -3,6 +3,7 @@ package promptlang_test
 import (
 	"testing"
 
+	"github.com/trigosec/coderoom/internal/policy"
 	"github.com/trigosec/coderoom/internal/promptlang"
 )
 
@@ -16,6 +17,7 @@ func TestParse_slashCommands(t *testing.T) {
 		{"/remove ada", promptlang.Remove{Alias: "ada"}},
 		{"/cancel ada", promptlang.Cancel{Alias: "ada"}},
 		{"/handoff ada turing", promptlang.Handoff{FromAlias: "ada", ToAlias: "turing"}},
+		{"/policy enable send-notices", promptlang.PolicyEnable{Name: policy.SendNotices}},
 		{"/shell go test ./...", promptlang.Shell{Program: "go test ./..."}},
 		{`/shell echo "hello world" | tee out`, promptlang.Shell{Program: `echo "hello world" | tee out`}},
 		{"/def tests /shell go test ./...", promptlang.CommandDefinition{Name: "tests", Body: promptlang.Shell{Program: "go test ./..."}}},
@@ -135,6 +137,11 @@ func TestParse_errors(t *testing.T) {
 		{"/handoff"},
 		{"/handoff ada"},
 		{"/handoff ada turing extra"},
+		{"/policy"},
+		{"/policy enable"},
+		{"/policy disable send-notices"},
+		{"/policy enable unknown"},
+		{"/policy enable send-notices extra"},
 		{"/shell"},
 		{"/shell   "},
 		{"/def"},

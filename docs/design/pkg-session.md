@@ -70,14 +70,18 @@ type BroadcastCommand struct {
 }
 
 // SharedSendCommand sends a message to one agent in the shared room.
-// TextDirect is sent to the addressed agent; TextListeners is sent to all
-// other agents. The caller supplies both texts — the session controller does
-// not format messages. A shared room event is emitted so the TUI displays
-// it to everyone.
+// TextDirect is sent to the addressed agent. When the send-notices policy is
+// enabled, TextListeners is sent to all other agents. The caller supplies both
+// texts — the session controller does not format messages. A shared room event
+// is emitted so the TUI displays it to everyone.
 type SharedSendCommand struct {
     Alias         string
     TextDirect    string
     TextListeners string
+}
+
+type EnablePolicyCommand struct {
+    Name policy.Name
 }
 
 // PrivateSendCommand sends a message directly to one agent's private channel.
@@ -263,7 +267,8 @@ when it exits), then calls `agent.Stop`.
 | Command | Routing |
 |---|---|
 | `BroadcastCommand` | Emits `Broadcast`; sends text to all agents regardless of initiative |
-| `SharedSendCommand` | Sends `TextDirect` to addressed agent; sends `TextListeners` to all other agents; emits one `SharedSend` event (addressed agent) and one `SharedNotice` event per notified listener |
+| `SharedSendCommand` | Sends `TextDirect` to the addressed agent; when `send-notices` is enabled, sends `TextListeners` to all other agents; emits one `SharedSend` event and one `SharedNotice` event per notified listener |
+| `EnablePolicyCommand` | Idempotently enables a room-local runtime policy; unknown policies fail |
 | `PrivateSendCommand` | Sends text to the addressed agent only; no shared room event; no other agents notified |
 
 Shared room visibility is a property of the event kind, but the session does

@@ -256,6 +256,75 @@ func TestBarrierBatch_stagesThenDispatchesWhenIdle(t *testing.T) {
 	assertHistoryContainsUserInput(t, m, "next turn")
 }
 
+func TestBarrierBatch_directSendIgnoresUnrelatedBusyParticipantByDefault(t *testing.T) {
+	agents := map[string]*testAgent{
+		"ada":    newTestAgent(),
+		"turing": newTestAgent(),
+	}
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
+	t.Cleanup(s.Shutdown)
+	m := newTestModelWithSession(t, s)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+
+	inviteParticipant(t, s, "ada", "#4ade80")
+	inviteParticipant(t, s, "turing", "#60a5fa")
+	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
+	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
+		t.Fatalf("make turing busy: %v", err)
+	}
+
+	next, _ = m.Update(room.SubmitMsg{Text: "@ada do it"})
+	m = next.(Model)
+
+	if m.room.HasStagedBatch() {
+		t.Fatal("direct send should not wait for an unrelated participant")
+	}
+	if agents["ada"].sendCalls != 1 {
+		t.Fatalf("ada send calls = %d, want 1", agents["ada"].sendCalls)
+	}
+	assertHistoryContainsUserInput(t, m, "@ada do it")
+}
+
+func TestBarrierBatch_sendNoticesPolicyIncludesBusyListener(t *testing.T) {
+	agents := map[string]*testAgent{
+		"ada":    newTestAgent(),
+		"turing": newTestAgent(),
+	}
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
+		return agents[cfg.Alias]
+	}))
+	t.Cleanup(s.Shutdown)
+	m := newTestModelWithSession(t, s)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+
+	inviteParticipant(t, s, "ada", "#4ade80")
+	inviteParticipant(t, s, "turing", "#60a5fa")
+	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
+	next, _ = m.Update(room.SubmitMsg{Text: "/policy enable send-notices"})
+	m = next.(Model)
+	if !hasRecord(m, record.KindSystem, "[policy] send-notices enabled") {
+		t.Fatalf("expected policy confirmation; records: %v", m.room.HistoryRecords())
+	}
+	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
+		t.Fatalf("make turing busy: %v", err)
+	}
+
+	next, _ = m.Update(room.SubmitMsg{Text: "@ada do it"})
+	m = next.(Model)
+
+	if !m.room.HasStagedBatch() {
+		t.Fatal("direct send should wait for a listener when send-notices is enabled")
+	}
+	_, targets, ok := m.room.StagedDispatchCandidate()
+	if !ok || len(targets) != 2 || targets[0] != "ada" || targets[1] != "turing" {
+		t.Fatalf("staged targets = %v, want [ada turing]", targets)
+	}
+}
+
 func TestBarrierBatch_autoDispatchPreservesFirstOutputRecord(t *testing.T) {
 	agents := map[string]*testAgent{
 		"ada":    newTestAgent(),

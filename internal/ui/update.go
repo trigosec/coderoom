@@ -131,7 +131,7 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 	default:
 	}
 
-	routing := routingFor(action, m.sess.RoutableParticipants())
+	routing := m.routingFor(action)
 	m.room = m.room.AppendUserInput(raw, routing)
 	m.room = m.room.SetComposeValue("")
 	return m.executeAction(action)
@@ -139,7 +139,16 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 
 // routingFor returns the aliases that will receive the action, used to
 // populate the routing footer on the echoed user-input record.
-func routingFor(a promptlang.Statement, ps []participant.Participant) []string {
+func (m Model) routingFor(a promptlang.Statement) []string {
+	ps := m.sess.RoutableParticipants()
+	var sharedSendRecipients []string
+	if send, ok := a.(promptlang.Send); ok {
+		sharedSendRecipients = m.sess.SharedSendRecipients(send.Alias)
+	}
+	return routingFor(a, ps, sharedSendRecipients)
+}
+
+func routingFor(a promptlang.Statement, ps []participant.Participant, sharedSendRecipients []string) []string {
 	if _, ok := a.(promptlang.Broadcast); ok {
 		aliases := make([]string, len(ps))
 		for i, p := range ps {
@@ -148,16 +157,8 @@ func routingFor(a promptlang.Statement, ps []participant.Participant) []string {
 		slices.Sort(aliases)
 		return aliases
 	}
-	if s, ok := a.(promptlang.Send); ok {
-		listeners := make([]string, 0, len(ps))
-		for _, p := range ps {
-			if p.Alias == s.Alias {
-				continue
-			}
-			listeners = append(listeners, p.Alias)
-		}
-		slices.Sort(listeners)
-		return append([]string{s.Alias}, listeners...)
+	if _, ok := a.(promptlang.Send); ok {
+		return sharedSendRecipients
 	}
 	if h, ok := a.(promptlang.Handoff); ok {
 		if h.FromAlias == h.ToAlias {
@@ -290,10 +291,7 @@ func (m Model) handleBarrierBatchSubmit(raw string, action promptlang.Statement)
 		m.room = m.room.SetComposeValue("")
 		return m
 	}
-	barrier := make([]string, 0, len(ps))
-	for _, p := range ps {
-		barrier = append(barrier, p.Alias)
-	}
+	barrier := m.barrierAliases(action, ps)
 	b := staging.NewBatch(raw, toStagedAction(action), barrier)
 	nextRoom, shouldDispatch := m.room.StageBatchOrDispatch(b, m.stagedSnapshotStatus)
 	m.room = nextRoom
@@ -301,6 +299,17 @@ func (m Model) handleBarrierBatchSubmit(raw string, action promptlang.Statement)
 		return m.dispatchRoomStagedBatch()
 	}
 	return m
+}
+
+func (m Model) barrierAliases(action promptlang.Statement, ps []participant.Participant) []string {
+	if send, ok := action.(promptlang.Send); ok {
+		return m.sess.SharedSendRecipients(send.Alias)
+	}
+	aliases := make([]string, len(ps))
+	for i, p := range ps {
+		aliases[i] = p.Alias
+	}
+	return aliases
 }
 
 func (m Model) handleStagedInterrupt() Model {
@@ -394,9 +403,20 @@ func (m Model) executeAgentAction(a promptlang.Statement) (Model, bool) {
 		return m.broadcastAll(act.Text), true
 	case promptlang.Handoff:
 		return m.handoff(act.FromAlias, act.ToAlias), true
+	case promptlang.PolicyEnable:
+		return m.enablePolicy(act), true
 	default:
 		return m, false
 	}
+}
+
+func (m Model) enablePolicy(act promptlang.PolicyEnable) Model {
+	if err := m.sess.Execute(session.EnablePolicyCommand{Name: act.Name}); err != nil {
+		m.room = m.room.AppendSystem("error: policy: " + err.Error())
+		return m
+	}
+	m.room = m.room.AppendSystem("[policy] " + string(act.Name) + " enabled")
+	return m
 }
 
 func (m Model) executeDebugAction(a promptlang.Statement) (Model, bool) {
@@ -543,7 +563,7 @@ func (m Model) executeBroadcastAll(text string) (Model, []string, error) {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: broadcast: %v", err))
 		return m, session.DeliveredAliases(err), fmt.Errorf("broadcast: %w", err)
 	}
-	return m, routingFor(promptlang.Broadcast{Text: text}, m.sess.RoutableParticipants()), nil
+	return m, m.routingFor(promptlang.Broadcast{Text: text}), nil
 }
 
 func (m Model) broadcastAll(text string) Model {
@@ -574,6 +594,8 @@ func (m Model) showHelp() Model {
 const helpTextTemplate = `[help]
 
 Commands:
+	/policy enable send-notices
+	                     notify listeners after direct sends
   /invite <alias>      start an agent
   /remove <alias>      remove an agent
   /cancel <alias>      interrupt an agent's current turn

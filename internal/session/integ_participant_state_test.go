@@ -8,6 +8,7 @@ import (
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/policy"
 	"github.com/trigosec/coderoom/internal/session"
 )
 
@@ -123,6 +124,9 @@ func TestSession_broadcastMarksAllWorkingUntilFlush(t *testing.T) {
 func TestSession_sharedSendNoticeMarksListenerWorkingUntilFlush(t *testing.T) {
 	s, events := newSessionWithCodexAgents(t, "ada", "turing")
 	b := newEventBuf(events)
+	if err := s.Execute(session.EnablePolicyCommand{Name: policy.SendNotices}); err != nil {
+		t.Fatalf("enable send notices: %v", err)
+	}
 
 	if err := s.Execute(session.SharedSendCommand{
 		Alias:         "ada",

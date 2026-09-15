@@ -4,7 +4,8 @@
 
 This document defines the target prompt language for coderoom. The
 implementation currently supports a subset of the design; the remaining work
-is listed under Implementation Status.
+is listed under Implementation Status and tracked in
+[GitHub issue #46](https://github.com/trigosec/coderoom/issues/46).
 
 The canonical program is:
 
@@ -72,6 +73,7 @@ builtin_command        = invite
                        | who
                        | help
                        | quit
+                       | policy
                        | shell
                        | define
                        | loop ;
@@ -83,6 +85,8 @@ handoff                = "/handoff", identifier, identifier ;
 who                    = "/who" ;
 help                   = "/help" ;
 quit                   = "/quit" ;
+policy                 = "/policy", "enable", policy_name ;
+policy_name            = "send-notices" | "echo-invites" ;
 
 shell                  = "/shell", shell_program ;
 
@@ -114,8 +118,16 @@ command_reference      = "/", identifier ;
 alias_argument         = identifier ;
 prompt_argument        = ? remaining non-empty input ? ;
 
-loop                   = "/loop", "@", identifier, loop_prompt,
-                         "/until", command_reference, "/max", integer ;
+loop                   = loop_single | loop_sequential | loop_concurrent ;
+loop_single            = "/loop", "@", identifier, loop_prompt,
+                         loop_control ;
+loop_sequential        = "/loop", "/seq", newline, statement_block,
+                         loop_end_marker ;
+loop_concurrent        = "/loop", "/do", newline, statement_block,
+                         loop_end_marker ;
+loop_end_marker        = [ whitespace ], "/end", loop_control,
+                         [ whitespace ] ;
+loop_control           = "/until", command_reference, "/max", integer ;
 loop_prompt            = ? non-empty text before the terminal /until clause ? ;
 shell_program          = ? remaining non-empty input ? ;
 
@@ -157,6 +169,48 @@ user commands.
 The command namespace is global within the running room. This describes
 visibility, not persistence. Persisting commands in room or project files is a
 separate design question.
+
+## `/policy` and `/invite`
+
+Participant sends do not notify the other participants by default. A room may
+opt into those listener notices explicitly:
+
+```text
+/policy enable send-notices
+```
+
+`send-notices` affects only the notices generated for a direct `@alias` send.
+It does not turn broadcasts, handoffs, or private sends into notices, and it
+does not notify the addressed participant twice. This avoids waking unrelated
+participants merely because another participant was addressed.
+
+`/invite` assigns an alias and starts a participant:
+
+```text
+/invite ada
+```
+
+By default it uses the Codex adapter and Codex's configured model. Selecting a
+different CLI or model through `/invite` is outside this version.
+
+Scripts can opt into deterministic participants before inviting anyone:
+
+```text
+/policy enable echo-invites
+/invite ada
+/invite tester
+```
+
+While `echo-invites` is enabled, every `/invite` creates an echo participant
+that returns each received prompt unchanged and then completes its turn. The
+echo adapter uses the same participant and session lifecycle as Codex.
+
+Policies are room-local, non-persistent, and idempotent. They are valid only as
+top-level statements, not inside a definition or block, and cannot be disabled
+during the room. `echo-invites` must be enabled before the first participant is
+invited and affects participant creation only: `/shell` remains a real
+workspace command and no sandbox is implied. `send-notices` may be enabled at
+any time and affects subsequent direct sends.
 
 ## Command Definitions
 
@@ -220,10 +274,12 @@ line. `/end` appears on its own line and allows surrounding whitespace. Blank
 lines do not terminate a block and are ignored during execution. A block must
 contain at least one executable statement.
 
-`/end` is only special while parsing a multiline definition. At top level it
-is an unexpected command. Block literals and definitions cannot be lexically
-nested. Composition may produce runtime nesting when a block invokes a command
-whose body is another block.
+`/end` is only special while parsing a multiline construct. At top level it is
+an unexpected command. Definitions and standalone block literals cannot appear
+as child statements. A loop is an executable command, so its body may contain
+another loop, including one with its own `/seq` or `/do` body. Composition may
+also produce runtime nesting when a block invokes a command whose body is
+another block.
 
 ### Statement boundaries
 
@@ -441,6 +497,7 @@ Other executable statements produce results as follows:
 | Statement | Completion and result |
 |---|---|
 | Broadcast | Completes after every targeted participant turn. No routable participants or any child that cannot start or crashes produces `failure`; otherwise it succeeds. |
+| `/policy` | Completes immediately when the policy change is accepted; invalid placement or state produces `failure`. |
 | `/invite` | Completes successfully when the participant is ready; startup failure produces `failure`. |
 | `/remove` | Completes successfully when removal finishes; an invalid target or stop failure produces `failure`. |
 | `/cancel` | Completes when the interrupt request is accepted; rejection produces `failure`. It does not wait for the target turn's eventual outcome. |
@@ -477,21 +534,31 @@ room. Parameter interpolation into shell programs is not supported.
 
 ## `/loop`
 
-`/loop` repeatedly prompts one participant until a user-defined command
-succeeds or the turn bound is reached:
+`/loop` repeatedly executes a body until a user-defined command succeeds or
+the iteration bound is reached. Its body may be a single participant send, a
+sequential block, or a concurrent block:
 
 ```text
 /def tests = /shell go test ./...
 /loop @ada make the tests pass /until /tests /max 3
+
+/loop /seq
+  @ada fix the problem
+  @ben verify the fix
+/end /until /tests /max 3
 ```
 
-The parser reads the participant from the start and the control clauses from
-the end. The non-empty text between them is the participant prompt.
+The single-send form retains the concise existing syntax. In a block form,
+`/end /until ... /max ...` is one contextual terminator; a plain `/end` does
+not terminate the loop. Lexical block nesting remains prohibited. Immediate
+top-level loop bodies may use literal participant aliases because, unlike
+definition bodies, they do not capture variables.
 
-`/loop` has do-while semantics. The runtime starts one participant turn before
-the first condition evaluation. After the turn completes, it invokes the
-condition. A successful condition ends the loop; otherwise another turn starts
-unless `/max` participant turns have completed.
+`/loop` has do-while semantics. The runtime executes the complete body before
+the first condition evaluation. After the body completes successfully, it
+invokes the condition. A successful condition ends the loop; otherwise another
+body iteration starts unless `/max` body iterations have completed. A failed
+or cancelled body stops the loop without evaluating the condition again.
 
 The condition must be parameterless because `/until` does not supply command
 arguments. The runtime invokes the command and ends the loop when its aggregate
@@ -500,15 +567,31 @@ result is `success`; the loop participant does not self-report completion.
 The condition need not be deterministic. A shell-only command offers a
 deterministic condition when its underlying program is deterministic. A
 condition may also call participants, but an ordinary participant call succeeds
-when its turn completes, regardless of what its prose says. Nested or
-concurrent loops are not supported.
+when its turn completes, regardless of what its prose says.
 
-The loop result is `success` when the condition succeeds, `failure` when a
-participant turn fails or the final condition is still failing after `/max`,
-and `cancelled` when the loop execution is cancelled. It retains every
-completed participant turn and condition evaluation as child results in
-execution order. If a turn fails, that failure is the final child; if the loop
-reaches `/max`, the final condition result is the final child.
+Loops may be nested directly or through command composition. A `/do` body may
+also start multiple loop executions concurrently. Each loop owns its iteration
+bound, condition evaluations, cancellation propagation, and result subtree;
+the surrounding block treats the complete loop as one child command. Command
+recursion remains prohibited independently of loop nesting.
+
+The loop result is `success` when the condition succeeds, `failure` when a body
+fails or the final condition is still failing after `/max`, and `cancelled`
+when the loop execution is cancelled. It retains each body result followed by
+its condition result as children in execution order. If a body fails, that
+failure is the final child; if the loop reaches `/max`, the final condition
+result is the final child.
+
+### Open question: failed-condition feedback
+
+The current single-participant loop can include evidence from a failed
+condition in the participant's next prompt. A multi-command body has no
+obvious equivalent recipient or delivery mechanism. Before multi-command loop
+bodies are implemented, decide whether that feedback is forwarded at all; who
+receives it in `/seq` and `/do`; whether the author selects recipients; and
+whether delivery mutates prompts, creates a separate runtime notice, or uses a
+future result-producing participant protocol. This question does not change
+the result ordering or do-while semantics above.
 
 ## Command Composition and Recursion
 
@@ -622,9 +705,12 @@ Currently implemented:
 - direct shell execution
 - parameterless shell-backed command definitions and invocations
 - bounded loops with a parameterless command condition
+- `/policy enable send-notices`
 
 Not yet implemented:
 
+- `/policy enable echo-invites` and the echo backend
+- `/loop` bodies using `/seq` or `/do`
 - the `=` definition boundary
 - `/do` and `/seq` blocks
 - alias and prompt parameters
@@ -647,7 +733,6 @@ This design does not introduce:
 - conditionals, returns, or early exit
 - command overloading or redefinition
 - persistent or project-level definitions
-- nested or concurrent loops
 
 ## Open Questions
 

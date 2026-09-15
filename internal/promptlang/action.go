@@ -2,7 +2,11 @@
 // coderoom. It is independent of the UI and session execution layers.
 package promptlang
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/trigosec/coderoom/internal/policy"
+)
 
 // Statement is a sealed interface representing a parsed user input line.
 // Only types defined in this package can implement it.
@@ -33,6 +37,9 @@ type Send struct {
 
 // Broadcast sends a message to all agents.
 type Broadcast struct{ Text string }
+
+// PolicyEnable enables a room-local runtime policy.
+type PolicyEnable struct{ Name policy.Name }
 
 // Shell executes a shell program in the coderoom workspace.
 type Shell struct{ Program string }
@@ -88,6 +95,7 @@ func (Cancel) isStatement()            {}
 func (Handoff) isStatement()           {}
 func (Send) isStatement()              {}
 func (Broadcast) isStatement()         {}
+func (PolicyEnable) isStatement()      {}
 func (Shell) isStatement()             {}
 func (CommandDefinition) isStatement() {}
 func (CommandInvocation) isStatement() {}

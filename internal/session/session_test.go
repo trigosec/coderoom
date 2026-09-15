@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/policy"
 	"github.com/trigosec/coderoom/internal/session"
 )
 
@@ -224,6 +226,13 @@ func invite(t *testing.T, s *session.Session, alias string) {
 	})
 	if err != nil {
 		t.Fatalf("InviteCommand %q: %v", alias, err)
+	}
+}
+
+func enableSendNotices(t *testing.T, s *session.Session) {
+	t.Helper()
+	if err := s.Execute(session.EnablePolicyCommand{Name: policy.SendNotices}); err != nil {
+		t.Fatalf("enable send notices: %v", err)
 	}
 }
 
@@ -752,6 +761,7 @@ func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
 	mustReceive[session.AgentStarted](t, obs.ch)
+	enableSendNotices(t, s)
 
 	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
@@ -778,6 +788,56 @@ func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 	turing.mu.Unlock()
 }
 
+func TestSharedSend_doesNotNotifyOthersByDefault(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newMockAgent()
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada": ada, "turing": turing,
+	}))
+	t.Cleanup(func() {
+		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
+	})
+
+	invite(t, s, "ada")
+	mustReceive[session.AgentStarted](t, obs.ch)
+	invite(t, s, "turing")
+	mustReceive[session.AgentStarted](t, obs.ch)
+
+	if err := s.Execute(session.SharedSendCommand{
+		Alias: "ada", TextDirect: "do it", TextListeners: "notice",
+	}); err != nil {
+		t.Fatalf("SharedSendCommand: %v", err)
+	}
+	_ = mustReceive[session.SharedSend](t, obs.ch)
+
+	turing.mu.Lock()
+	defer turing.mu.Unlock()
+	if len(turing.sends) != 0 {
+		t.Fatalf("listener received sends by default: %v", turing.sends)
+	}
+}
+
+func TestSharedSendRecipientsFollowPolicy(t *testing.T) {
+	obs := newTestObserver()
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada": newMockAgent(), "ben": newMockAgent(), "turing": newMockAgent(),
+	}))
+	for _, alias := range []string{"turing", "ada", "ben"} {
+		invite(t, s, alias)
+		mustReceive[session.AgentStarted](t, obs.ch)
+	}
+
+	if got := s.SharedSendRecipients("ada"); !slices.Equal(got, []string{"ada"}) {
+		t.Fatalf("default recipients = %v, want [ada]", got)
+	}
+	enableSendNotices(t, s)
+	if got := s.SharedSendRecipients("ada"); !slices.Equal(got, []string{"ada", "ben", "turing"}) {
+		t.Fatalf("enabled recipients = %v, want [ada ben turing]", got)
+	}
+}
+
 func TestSharedSend_noticeMarksListenerWorkingUntilFlush(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
@@ -796,6 +856,7 @@ func TestSharedSend_noticeMarksListenerWorkingUntilFlush(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
 	mustReceive[session.AgentStarted](t, obs.ch)
+	enableSendNotices(t, s)
 
 	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do it", TextListeners: "notice"}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
@@ -845,6 +906,7 @@ func TestSharedSend_noticeDoesNotResetWorkingSince(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
 	mustReceive[session.AgentStarted](t, obs.ch)
+	enableSendNotices(t, s)
 
 	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
 		t.Fatalf("PrivateSendCommand: %v", err)
@@ -936,6 +998,7 @@ func TestSharedSend_noticeErrorReportsDeliveredAlias(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
 	mustReceive[session.AgentStarted](t, obs.ch)
+	enableSendNotices(t, s)
 
 	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
 	if err == nil {
@@ -963,6 +1026,7 @@ func TestSharedSend_noticeErrorDoesNotReviveCrashedListener(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
 	mustReceive[session.AgentStarted](t, obs.ch)
+	enableSendNotices(t, s)
 
 	turing.noticeHook = func(string) error {
 		_ = turing.Stop()

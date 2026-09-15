@@ -14,6 +14,7 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/policy"
 )
 
 // AgentFactory constructs an agent.Agent for a given participant config. The
@@ -42,6 +43,7 @@ type Session struct {
 	keepaliveTick time.Duration
 	agentFactory  AgentFactory
 	config        *roomconfig.Config
+	policies      policy.Set
 	approvals     *approvalHub
 	lifecycle     sessionLifecycle
 }
@@ -105,6 +107,7 @@ func New(opts ...Option) *Session {
 		agents:        make(map[string]agentRuntime),
 		now:           time.Now,
 		keepaliveTick: 30 * time.Second,
+		policies:      policy.NewSet(),
 	}
 	s.lifecycle.ctx, s.lifecycle.cancelFn = context.WithCancel(context.Background()) //nolint:gosec // cancel stored and invoked by Shutdown
 	s.approvals = newApprovalHub(s.notify)

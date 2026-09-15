@@ -3,9 +3,11 @@ package session
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/policy"
 )
 
 // BroadcastCommand sends a message to all agents.
@@ -43,14 +45,32 @@ func (c BroadcastCommand) execute(s *Session) error {
 }
 
 // SharedSendCommand sends a message to one agent in the shared room.
-// TextDirect is sent to the addressed agent; TextListeners is sent to all
-// other agents. The caller is responsible for both texts — the session
-// controller does not construct or format messages. One SharedSend event is
-// emitted to observers.
+// TextDirect is sent to the addressed agent. When send-notices is enabled,
+// TextListeners is sent to all other agents. The caller is responsible for
+// both texts — the session controller does not construct or format messages.
+// One SharedSend event is emitted to observers.
 type SharedSendCommand struct {
 	Alias         string
 	TextDirect    string
 	TextListeners string
+}
+
+// SharedSendRecipients returns the participants targeted by a direct shared
+// send under the room's current policy. The addressed alias is retained even
+// when it does not currently resolve so the UI can render the user's intent.
+func (s *Session) SharedSendRecipients(addressedAlias string) []string {
+	recipients := []string{addressedAlias}
+	if !s.policies.Enabled(policy.SendNotices) {
+		return recipients
+	}
+	var listeners []string
+	for _, p := range s.RoutableParticipants() {
+		if p.Alias != addressedAlias {
+			listeners = append(listeners, p.Alias)
+		}
+	}
+	slices.Sort(listeners)
+	return append(recipients, listeners...)
 }
 
 func (c SharedSendCommand) execute(s *Session) error {
@@ -62,8 +82,10 @@ func (c SharedSendCommand) execute(s *Session) error {
 		return err
 	}
 	s.notify(SharedSend{Alias: c.Alias, Text: c.TextDirect})
-	if err := sendSharedNotices(c.Alias, c.TextListeners, s); err != nil {
-		return newDeliveryError([]string{c.Alias}, err)
+	if s.policies.Enabled(policy.SendNotices) {
+		if err := sendSharedNotices(c.Alias, c.TextListeners, s); err != nil {
+			return newDeliveryError([]string{c.Alias}, err)
+		}
 	}
 	return nil
 }
