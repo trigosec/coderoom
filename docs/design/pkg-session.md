@@ -70,15 +70,22 @@ type BroadcastCommand struct {
 }
 
 // SharedSendCommand sends a message to one agent in the shared room.
-// TextDirect is sent to the addressed agent. When the send-notices policy is
-// enabled, TextListeners is sent to all other agents. The caller supplies both
+// Plan freezes the policy-aware routing decision. The caller supplies both
 // texts — the session controller does not format messages. A shared room event
 // is emitted so the TUI displays it to everyone.
 type SharedSendCommand struct {
-    Alias         string
+    Plan          SharedSendPlan
     TextDirect    string
     TextListeners string
 }
+
+// SharedSendPlan is an opaque, immutable routing decision created by Session.
+type SharedSendPlan struct {
+    // session ownership, addressed alias, and listener aliases are private
+}
+
+func (s *Session) PlanSharedSend(alias string) SharedSendPlan
+func (p SharedSendPlan) Targets() []string
 
 type EnablePolicyCommand struct {
     Name policy.Name
@@ -267,13 +274,20 @@ when it exits), then calls `agent.Stop`.
 | Command | Routing |
 |---|---|
 | `BroadcastCommand` | Emits `Broadcast`; sends text to all agents regardless of initiative |
-| `SharedSendCommand` | Sends `TextDirect` to the addressed agent; when `send-notices` is enabled, sends `TextListeners` to all other agents; emits one `SharedSend` event and one `SharedNotice` event per notified listener |
+| `SharedSendCommand` | Executes a session-created `SharedSendPlan`: sends `TextDirect` to its addressed participant and `TextListeners` to its frozen listeners; emits one `SharedSend` event and one `SharedNotice` event per delivered listener |
 | `EnablePolicyCommand` | Idempotently enables a room-local runtime policy; unknown policies fail |
 | `PrivateSendCommand` | Sends text to the addressed agent only; no shared room event; no other agents notified |
 
 Shared room visibility is a property of the event kind, but the session does
 not own the final chat projection. It emits runtime events; the room package
 decides how those events become rooms and records for the UI.
+
+`PlanSharedSend` freezes the policy-aware audience when the user submits the
+message. Enabling `send-notices` later or making another participant routable
+does not alter an existing plan. Planning is not a reservation: participants
+may become unavailable before execution, and those delivery attempts fail
+normally. Plans are immutable to callers, valid only for their creating
+session, and execution reports all successful recipients on partial failure.
 
 ---
 

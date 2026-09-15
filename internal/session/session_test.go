@@ -763,7 +763,7 @@ func TestSharedSend_sendsToAddressedAndNotifiesOthers(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 	enableSendNotices(t, s)
 
-	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"}); err != nil {
+	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "do the thing", TextListeners: "ada is working on something"}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
 	}
 	_ = mustReceive[session.SharedSend](t, obs.ch)
@@ -806,7 +806,7 @@ func TestSharedSend_doesNotNotifyOthersByDefault(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 
 	if err := s.Execute(session.SharedSendCommand{
-		Alias: "ada", TextDirect: "do it", TextListeners: "notice",
+		Plan: s.PlanSharedSend("ada"), TextDirect: "do it", TextListeners: "notice",
 	}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
 	}
@@ -829,12 +829,113 @@ func TestSharedSendRecipientsFollowPolicy(t *testing.T) {
 		mustReceive[session.AgentStarted](t, obs.ch)
 	}
 
-	if got := s.SharedSendRecipients("ada"); !slices.Equal(got, []string{"ada"}) {
+	if got := s.PlanSharedSend("ada").Targets(); !slices.Equal(got, []string{"ada"}) {
 		t.Fatalf("default recipients = %v, want [ada]", got)
 	}
 	enableSendNotices(t, s)
-	if got := s.SharedSendRecipients("ada"); !slices.Equal(got, []string{"ada", "ben", "turing"}) {
+	if got := s.PlanSharedSend("ada").Targets(); !slices.Equal(got, []string{"ada", "ben", "turing"}) {
 		t.Fatalf("enabled recipients = %v, want [ada ben turing]", got)
+	}
+}
+
+func TestSharedSendPlanTargetsAreImmutable(t *testing.T) {
+	s := newSession(t)
+	plan := s.PlanSharedSend("ada")
+	targets := plan.Targets()
+	targets[0] = "changed"
+	if got := plan.Targets(); !slices.Equal(got, []string{"ada"}) {
+		t.Fatalf("plan targets changed through returned slice: %v", got)
+	}
+}
+
+func TestSharedSendPlanRejectsDifferentSession(t *testing.T) {
+	first := newSession(t)
+	second := newSession(t)
+	err := second.Execute(session.SharedSendCommand{
+		Plan: first.PlanSharedSend("ada"), TextDirect: "do it",
+	})
+	if err == nil {
+		t.Fatal("expected cross-session plan error")
+	}
+}
+
+func TestSharedSendPlanDoesNotAddNewlyRoutableListener(t *testing.T) {
+	obs := newTestObserver()
+	ada := newMockAgent()
+	turing := newMockAgent()
+	ben := newMockAgent()
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada": ada, "turing": turing, "ben": ben,
+	}))
+	for _, alias := range []string{"ada", "turing"} {
+		invite(t, s, alias)
+		mustReceive[session.AgentStarted](t, obs.ch)
+	}
+	enableSendNotices(t, s)
+	plan := s.PlanSharedSend("ada")
+	invite(t, s, "ben")
+	mustReceive[session.AgentStarted](t, obs.ch)
+
+	if err := s.Execute(session.SharedSendCommand{
+		Plan: plan, TextDirect: "do it", TextListeners: "notice",
+	}); err != nil {
+		t.Fatalf("SharedSendCommand: %v", err)
+	}
+	ben.mu.Lock()
+	defer ben.mu.Unlock()
+	if len(ben.sends) != 0 {
+		t.Fatalf("new participant received frozen send: %v", ben.sends)
+	}
+}
+
+func TestSharedSendPlanDoesNotGainListenersWhenPolicyChanges(t *testing.T) {
+	obs := newTestObserver()
+	turing := newMockAgent()
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada": newMockAgent(), "turing": turing,
+	}))
+	for _, alias := range []string{"ada", "turing"} {
+		invite(t, s, alias)
+		mustReceive[session.AgentStarted](t, obs.ch)
+	}
+	plan := s.PlanSharedSend("ada")
+	enableSendNotices(t, s)
+
+	if err := s.Execute(session.SharedSendCommand{
+		Plan: plan, TextDirect: "do it", TextListeners: "notice",
+	}); err != nil {
+		t.Fatalf("SharedSendCommand: %v", err)
+	}
+	turing.mu.Lock()
+	defer turing.mu.Unlock()
+	if len(turing.sends) != 0 {
+		t.Fatalf("staged plan gained listener after policy change: %v", turing.sends)
+	}
+}
+
+func TestSharedSendPlanReportsListenerRemovedBeforeExecution(t *testing.T) {
+	obs := newTestObserver()
+	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
+		"ada": newMockAgent(), "turing": newMockAgent(),
+	}))
+	for _, alias := range []string{"ada", "turing"} {
+		invite(t, s, alias)
+		mustReceive[session.AgentStarted](t, obs.ch)
+	}
+	enableSendNotices(t, s)
+	plan := s.PlanSharedSend("ada")
+	if err := s.Execute(session.RemoveCommand{Alias: "turing"}); err != nil {
+		t.Fatalf("remove turing: %v", err)
+	}
+
+	err := s.Execute(session.SharedSendCommand{
+		Plan: plan, TextDirect: "do it", TextListeners: "notice",
+	})
+	if err == nil {
+		t.Fatal("expected removed-listener delivery error")
+	}
+	if got := session.DeliveredAliases(err); !slices.Equal(got, []string{"ada"}) {
+		t.Fatalf("delivered aliases = %v, want [ada]", got)
 	}
 }
 
@@ -858,7 +959,7 @@ func TestSharedSend_noticeMarksListenerWorkingUntilFlush(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 	enableSendNotices(t, s)
 
-	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do it", TextListeners: "notice"}); err != nil {
+	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "do it", TextListeners: "notice"}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
 	}
 	waitForSharedKinds(t, obs.ch)
@@ -920,7 +1021,7 @@ func TestSharedSend_noticeDoesNotResetWorkingSince(t *testing.T) {
 		t.Fatalf("expected turing to be working before notice, got %q", before.Status)
 	}
 
-	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do it", TextListeners: "notice"}); err != nil {
+	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "do it", TextListeners: "notice"}); err != nil {
 		t.Fatalf("SharedSendCommand: %v", err)
 	}
 
@@ -955,7 +1056,7 @@ func TestSharedSend_sendError_doesNotMarkWorking(t *testing.T) {
 	invite(t, s, "turing")
 	mustReceive[session.AgentStarted](t, obs.ch)
 
-	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
+	err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "do the thing", TextListeners: "ada is working on something"})
 	if err == nil {
 		t.Fatal("expected shared send error, got nil")
 	}
@@ -983,14 +1084,17 @@ func TestSharedSend_sendError_doesNotMarkWorking(t *testing.T) {
 func TestSharedSend_noticeErrorReportsDeliveredAlias(t *testing.T) {
 	obs := newTestObserver()
 	ada := newMockAgent()
+	ben := newMockAgent()
 	turing := newMockAgent()
 	turing.sendErr = errors.New("notice failed")
 	s := newSession(t, session.WithObserver(obs), mappedFactory(map[string]agent.Agent{
 		"ada":    ada,
+		"ben":    ben,
 		"turing": turing,
 	}))
 	t.Cleanup(func() {
 		_ = s.Execute(session.RemoveCommand{Alias: "ada"})
+		_ = s.Execute(session.RemoveCommand{Alias: "ben"})
 		_ = s.Execute(session.RemoveCommand{Alias: "turing"})
 	})
 
@@ -998,14 +1102,16 @@ func TestSharedSend_noticeErrorReportsDeliveredAlias(t *testing.T) {
 	mustReceive[session.AgentStarted](t, obs.ch)
 	invite(t, s, "turing")
 	mustReceive[session.AgentStarted](t, obs.ch)
+	invite(t, s, "ben")
+	mustReceive[session.AgentStarted](t, obs.ch)
 	enableSendNotices(t, s)
 
-	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
+	err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "do the thing", TextListeners: "ada is working on something"})
 	if err == nil {
 		t.Fatal("expected shared notice error, got nil")
 	}
-	if got := session.DeliveredAliases(err); len(got) != 1 || got[0] != "ada" {
-		t.Fatalf("expected delivered aliases [ada], got %v", got)
+	if got := session.DeliveredAliases(err); !slices.Equal(got, []string{"ada", "ben"}) {
+		t.Fatalf("expected delivered aliases [ada ben], got %v", got)
 	}
 }
 
@@ -1045,7 +1151,7 @@ func TestSharedSend_noticeErrorDoesNotReviveCrashedListener(t *testing.T) {
 		}
 	}
 
-	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do the thing", TextListeners: "ada is working on something"})
+	err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "do the thing", TextListeners: "ada is working on something"})
 	if err == nil {
 		t.Fatal("expected shared notice error, got nil")
 	}
@@ -1061,7 +1167,7 @@ func TestSharedSend_noticeErrorDoesNotReviveCrashedListener(t *testing.T) {
 
 func TestSharedSend_notFound(t *testing.T) {
 	s := newSession(t)
-	if err := s.Execute(session.SharedSendCommand{Alias: "nobody", TextDirect: "hi", TextListeners: "hi"}); err == nil {
+	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("nobody"), TextDirect: "hi", TextListeners: "hi"}); err == nil {
 		t.Fatal("expected error for unknown alias, got nil")
 	}
 }
@@ -1398,7 +1504,7 @@ func TestSharedSend_rejectsBusyDirectParticipant(t *testing.T) {
 	}
 	mustReceive[session.Broadcast](t, obs.ch)
 
-	err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "do it", TextListeners: "notice"})
+	err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "do it", TextListeners: "notice"})
 	if err == nil {
 		t.Fatal("expected shared send to reject busy direct participant")
 	}

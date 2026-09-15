@@ -126,10 +126,10 @@ re-renders content on every change, but it should not be the source of truth
 for chat semantics.
 
 User-authored routing footers are a UI concern, not a room-projected event
-concern. The UI knows the intended routing at submission time and may render
-that as a footer on the echoed user-input record without requiring room to
-project `Broadcast`, `SharedSend`, or `SharedNotice` into canonical message
-state.
+concern. For an addressed send, the UI retains the opaque routing plan created
+by session at submission time and renders its targets after dispatch. It does
+not recalculate listeners. This does not require room to project `Broadcast`,
+`SharedSend`, or `SharedNotice` into canonical message state.
 
 ---
 

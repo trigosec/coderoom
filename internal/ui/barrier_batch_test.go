@@ -148,6 +148,13 @@ func assertHistoryContainsUserInput(t *testing.T, m Model, text string) {
 	t.Fatalf("expected committed user input record after dispatch; records: %v", m.room.HistoryRecords())
 }
 
+func assertHistoryContainsSystem(t *testing.T, m Model, text string) {
+	t.Helper()
+	if !hasRecord(m, record.KindSystem, text) {
+		t.Fatalf("expected system record containing %q; records: %v", text, m.room.HistoryRecords())
+	}
+}
+
 func isIdleStatusChange(alias string) func(session.Event) bool {
 	return func(ev session.Event) bool {
 		status, ok := ev.(session.ParticipantStatusChanged)
@@ -291,6 +298,7 @@ func TestBarrierBatch_directSendIgnoresUnrelatedBusyParticipantByDefault(t *test
 func TestBarrierBatch_sendNoticesPolicyIncludesBusyListener(t *testing.T) {
 	agents := map[string]*testAgent{
 		"ada":    newTestAgent(),
+		"ben":    newTestAgent(),
 		"turing": newTestAgent(),
 	}
 	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig) agent.Agent {
@@ -306,9 +314,7 @@ func TestBarrierBatch_sendNoticesPolicyIncludesBusyListener(t *testing.T) {
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 	next, _ = m.Update(room.SubmitMsg{Text: "/policy enable send-notices"})
 	m = next.(Model)
-	if !hasRecord(m, record.KindSystem, "[policy] send-notices enabled") {
-		t.Fatalf("expected policy confirmation; records: %v", m.room.HistoryRecords())
-	}
+	assertHistoryContainsSystem(t, m, "[policy] send-notices enabled")
 	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
 		t.Fatalf("make turing busy: %v", err)
 	}
@@ -319,9 +325,15 @@ func TestBarrierBatch_sendNoticesPolicyIncludesBusyListener(t *testing.T) {
 	if !m.room.HasStagedBatch() {
 		t.Fatal("direct send should wait for a listener when send-notices is enabled")
 	}
-	_, targets, ok := m.room.StagedDispatchCandidate()
+	action, targets, ok := m.room.StagedDispatchCandidate()
 	if !ok || len(targets) != 2 || targets[0] != "ada" || targets[1] != "turing" {
 		t.Fatalf("staged targets = %v, want [ada turing]", targets)
+	}
+
+	inviteParticipant(t, s, "ben", "#f59e0b")
+	m = pumpUntilAgentsStarted(t, m, "ben")
+	if got := action.SendPlan.Targets(); len(got) != 2 || got[0] != "ada" || got[1] != "turing" {
+		t.Fatalf("plan targets after ben starts = %v, want [ada turing]", got)
 	}
 }
 
@@ -342,7 +354,7 @@ func TestBarrierBatch_autoDispatchPreservesFirstOutputRecord(t *testing.T) {
 	inviteParticipant(t, s, "turing", "#60a5fa")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
-	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "busy", TextListeners: "notice"}); err != nil {
+	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "busy", TextListeners: "notice"}); err != nil {
 		t.Fatalf("make ada busy: %v", err)
 	}
 	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
@@ -528,7 +540,7 @@ func TestBarrierBatch_handoffIgnoresStartingBystanderOutsideBarrier(t *testing.T
 	}
 	cat := agents["cat"].(*gateStartAgent)
 	ada, s, m := stageHandoffWithCompletedAdaOutput(t, agents, "cat")
-	if err := s.Execute(session.SharedSendCommand{Alias: "ada", TextDirect: "busy", TextListeners: "notice"}); err != nil {
+	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "busy", TextListeners: "notice"}); err != nil {
 		t.Fatalf("make ada busy: %v", err)
 	}
 	next, _ := m.Update(room.SubmitMsg{Text: "/handoff ada turing"})

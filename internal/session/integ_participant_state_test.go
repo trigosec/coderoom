@@ -17,7 +17,7 @@ func TestSession_sharedSendMarksWorkingUntilFlush(t *testing.T) {
 	b := newEventBuf(events)
 
 	if err := s.Execute(session.SharedSendCommand{
-		Alias:      "ada",
+		Plan:       s.PlanSharedSend("ada"),
 		TextDirect: "What is 2+2? Reply with just the number.",
 	}); err != nil {
 		t.Fatalf("shared send: %v", err)
@@ -44,7 +44,7 @@ func TestSession_cancelInterruptEndsTurnAndReturnsIdle(t *testing.T) {
 	b := newEventBuf(events)
 
 	if err := s.Execute(session.SharedSendCommand{
-		Alias:      "ada",
+		Plan:       s.PlanSharedSend("ada"),
 		TextDirect: "Write 200 numbered bullet points, one per line, with short text. Keep going until you reach 200.",
 	}); err != nil {
 		t.Fatalf("shared send: %v", err)
@@ -129,7 +129,7 @@ func TestSession_sharedSendNoticeMarksListenerWorkingUntilFlush(t *testing.T) {
 	}
 
 	if err := s.Execute(session.SharedSendCommand{
-		Alias:         "ada",
+		Plan:          s.PlanSharedSend("ada"),
 		TextDirect:    "Reply with just the word: ok",
 		TextListeners: "You are a silent listener. Reply only with {\"acknowledge\":true}.",
 	}); err != nil {

@@ -38,7 +38,7 @@ func TestSession_agentStopsCleanly(t *testing.T) {
 	drainUntilType[session.AgentStarted](t, events, 10*time.Second)
 
 	if err := s.Execute(session.SharedSendCommand{
-		Alias:      "ada",
+		Plan:       s.PlanSharedSend("ada"),
 		TextDirect: "What is 2+2? Reply with just the number.",
 	}); err != nil {
 		t.Fatalf("shared send: %v", err)

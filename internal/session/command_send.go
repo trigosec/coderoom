@@ -50,42 +50,71 @@ func (c BroadcastCommand) execute(s *Session) error {
 // both texts — the session controller does not construct or format messages.
 // One SharedSend event is emitted to observers.
 type SharedSendCommand struct {
-	Alias         string
+	Plan          SharedSendPlan
 	TextDirect    string
 	TextListeners string
 }
 
-// SharedSendRecipients returns the participants targeted by a direct shared
-// send under the room's current policy. The addressed alias is retained even
-// when it does not currently resolve so the UI can render the user's intent.
-func (s *Session) SharedSendRecipients(addressedAlias string) []string {
-	recipients := []string{addressedAlias}
+// SharedSendPlan is an immutable, session-bound routing decision. Planning
+// freezes recipients but does not reserve their availability.
+type SharedSendPlan struct {
+	session         *Session
+	addressedAlias  string
+	listenerAliases []string
+}
+
+// PlanSharedSend freezes the policy-aware targets for a direct shared send.
+func (s *Session) PlanSharedSend(addressedAlias string) SharedSendPlan {
+	plan := SharedSendPlan{session: s, addressedAlias: addressedAlias}
 	if !s.policies.Enabled(policy.SendNotices) {
-		return recipients
+		return plan
 	}
-	var listeners []string
 	for _, p := range s.RoutableParticipants() {
 		if p.Alias != addressedAlias {
-			listeners = append(listeners, p.Alias)
+			plan.listenerAliases = append(plan.listenerAliases, p.Alias)
 		}
 	}
-	slices.Sort(listeners)
-	return append(recipients, listeners...)
+	slices.Sort(plan.listenerAliases)
+	return plan
+}
+
+// Targets returns a copy of the aliases frozen into the plan, with the
+// addressed participant first.
+func (p SharedSendPlan) Targets() []string {
+	if p.session == nil || p.addressedAlias == "" {
+		return nil
+	}
+	targets := make([]string, 1, len(p.listenerAliases)+1)
+	targets[0] = p.addressedAlias
+	return append(targets, p.listenerAliases...)
+}
+
+func (p SharedSendPlan) validate(s *Session) error {
+	if p.session == nil || p.addressedAlias == "" {
+		return fmt.Errorf("shared send plan is invalid")
+	}
+	if p.session != s {
+		return fmt.Errorf("shared send plan belongs to another session")
+	}
+	return nil
 }
 
 func (c SharedSendCommand) execute(s *Session) error {
-	a, err := acquireParticipantForDirectSend(c.Alias, s)
+	if err := c.Plan.validate(s); err != nil {
+		return err
+	}
+	alias := c.Plan.addressedAlias
+	a, err := acquireParticipantForDirectSend(alias, s)
 	if err != nil {
 		return err
 	}
-	if err := sendPreparedDirect(c.Alias, a, c.TextDirect, s); err != nil {
+	if err := sendPreparedDirect(alias, a, c.TextDirect, s); err != nil {
 		return err
 	}
-	s.notify(SharedSend{Alias: c.Alias, Text: c.TextDirect})
-	if s.policies.Enabled(policy.SendNotices) {
-		if err := sendSharedNotices(c.Alias, c.TextListeners, s); err != nil {
-			return newDeliveryError([]string{c.Alias}, err)
-		}
+	s.notify(SharedSend{Alias: alias, Text: c.TextDirect})
+	delivered, err := sendSharedNotices(c.Plan.listenerAliases, c.TextListeners, s)
+	if err != nil {
+		return newDeliveryError(append([]string{alias}, delivered...), err)
 	}
 	return nil
 }
@@ -177,29 +206,28 @@ func sendPreparedDirect(alias string, a agent.Agent, text string, s *Session) er
 	return nil
 }
 
-func sendSharedNotices(addressedAlias string, text string, s *Session) error {
+func sendSharedNotices(listenerAliases []string, text string, s *Session) ([]string, error) {
 	var errs []error
-	for _, other := range s.RoutableParticipants() {
-		if other.Alias == addressedAlias {
-			continue
-		}
-		a, prepared, err := acquireParticipantForNotice(other.Alias, s)
+	var delivered []string
+	for _, alias := range listenerAliases {
+		a, prepared, err := acquireParticipantForNotice(alias, s)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("notice to %q: %w", other.Alias, err))
+			errs = append(errs, fmt.Errorf("notice to %q: %w", alias, err))
 			continue
 		}
 		anchorID, err := a.SendNotice(text)
 		if err != nil {
-			s.abortWork(other.Alias)
-			errs = append(errs, fmt.Errorf("notice to %q: %w", other.Alias, err))
+			s.abortWork(alias)
+			errs = append(errs, fmt.Errorf("notice to %q: %w", alias, err))
 			continue
 		}
 		if prepared {
-			s.beginParticipantWorking(other.Alias, anchorID)
+			s.beginParticipantWorking(alias, anchorID)
 		} else {
-			s.trackAnchorStream(other.Alias, anchorID)
+			s.trackAnchorStream(alias, anchorID)
 		}
-		s.notify(SharedNotice{Alias: other.Alias, Text: text})
+		s.notify(SharedNotice{Alias: alias, Text: text})
+		delivered = append(delivered, alias)
 	}
-	return errors.Join(errs...)
+	return delivered, errors.Join(errs...)
 }

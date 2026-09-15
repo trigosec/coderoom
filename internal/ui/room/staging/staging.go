@@ -8,6 +8,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/session"
 )
 
 // ActionKind describes the staged action type.
@@ -28,6 +29,7 @@ const (
 type Action struct {
 	Kind      ActionKind
 	Alias     string // for ActionSend
+	SendPlan  session.SharedSendPlan
 	FromAlias string // for ActionHandoff
 	ToAlias   string // for ActionHandoff
 	Text      string

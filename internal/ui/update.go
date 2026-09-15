@@ -143,7 +143,7 @@ func (m Model) routingFor(a promptlang.Statement) []string {
 	ps := m.sess.RoutableParticipants()
 	var sharedSendRecipients []string
 	if send, ok := a.(promptlang.Send); ok {
-		sharedSendRecipients = m.sess.SharedSendRecipients(send.Alias)
+		sharedSendRecipients = m.sess.PlanSharedSend(send.Alias).Targets()
 	}
 	return routingFor(a, ps, sharedSendRecipients)
 }
@@ -204,7 +204,7 @@ func (m Model) executeStagedSend(act staging.Action, targets []string) (Model, [
 		message := fmt.Sprintf("staged message discarded: %q is no longer available", act.Alias)
 		return m.discardStagedBatch(message), nil, nil
 	}
-	return m.executeSendToAgent(act.Alias, act.Text)
+	return m.executePlannedSendToAgent(act.SendPlan, act.Text)
 }
 
 func (m Model) executeStagedHandoff(act staging.Action, targets []string) (Model, []string, error) {
@@ -291,8 +291,9 @@ func (m Model) handleBarrierBatchSubmit(raw string, action promptlang.Statement)
 		m.room = m.room.SetComposeValue("")
 		return m
 	}
-	barrier := m.barrierAliases(action, ps)
-	b := staging.NewBatch(raw, toStagedAction(action), barrier)
+	stagedAction := m.toStagedAction(action)
+	barrier := barrierAliases(stagedAction, ps)
+	b := staging.NewBatch(raw, stagedAction, barrier)
 	nextRoom, shouldDispatch := m.room.StageBatchOrDispatch(b, m.stagedSnapshotStatus)
 	m.room = nextRoom
 	if shouldDispatch {
@@ -301,9 +302,9 @@ func (m Model) handleBarrierBatchSubmit(raw string, action promptlang.Statement)
 	return m
 }
 
-func (m Model) barrierAliases(action promptlang.Statement, ps []participant.Participant) []string {
-	if send, ok := action.(promptlang.Send); ok {
-		return m.sess.SharedSendRecipients(send.Alias)
+func barrierAliases(action staging.Action, ps []participant.Participant) []string {
+	if action.Kind == staging.ActionSend {
+		return action.SendPlan.Targets()
 	}
 	aliases := make([]string, len(ps))
 	for i, p := range ps {
@@ -537,8 +538,18 @@ func (m Model) handoff(fromAlias, toAlias string) Model {
 }
 
 func (m Model) executeSendToAgent(alias, text string) (Model, []string, error) {
+	return m.executePlannedSendToAgent(m.sess.PlanSharedSend(alias), text)
+}
+
+func (m Model) executePlannedSendToAgent(plan session.SharedSendPlan, text string) (Model, []string, error) {
+	targets := plan.Targets()
+	if len(targets) == 0 {
+		m.room = m.room.AppendSystem("error: invalid shared send plan")
+		return m, nil, fmt.Errorf("invalid shared send plan")
+	}
+	alias := targets[0]
 	err := m.sess.Execute(session.SharedSendCommand{
-		Alias:         alias,
+		Plan:          plan,
 		TextDirect:    text,
 		TextListeners: fmt.Sprintf("@%s: %s", alias, text),
 	})
@@ -546,7 +557,7 @@ func (m Model) executeSendToAgent(alias, text string) (Model, []string, error) {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: send to %q: %v", alias, err))
 		return m, session.DeliveredAliases(err), fmt.Errorf("send to %q: %w", alias, err)
 	}
-	return m, []string{alias}, nil
+	return m, targets, nil
 }
 
 func (m Model) sendToAgent(alias, text string) Model {
