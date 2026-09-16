@@ -8,8 +8,8 @@ It sits between:
 
 - `internal/session`, which publishes runtime events and owns agent/process
   coordination
-- `internal/ui/room`, which adapts room state into Bubble Tea presentation
-  state for the human
+- `internal/interpreter`, which owns the live room and exposes snapshots
+- `internal/ui/room`, which adapts those snapshots into Bubble Tea presentation state
 
 The room package is **not** responsible for:
 
@@ -25,8 +25,7 @@ It is responsible for:
 - defining room membership
 - projecting `session.Event` into chat-visible room state
 - maintaining streaming and completed records over time
-- buffering room-relevant runtime events off the session observer path
-- notifying the UI when room state should be redrawn
+- producing immutable snapshots for interpreter publication
 
 ---
 
@@ -91,8 +90,8 @@ canonical instead of redefining it (see "Record" below); a type alias gives
 zero-cost reuse with no parallel type to keep in sync. What they must not
 depend on is `internal/room`'s behavioral surface — `Room`, `Observer`,
 `OnEvent`, `Snapshot`, or anything else that talks to a live room instance.
-Only `internal/ui/room` holds a `*room.Room` and drives it; `history` and
-`record` only ever see plain `Record`/`Kind` values handed to them.
+Only `internal/interpreter` holds a `*room.Room` and drives it. UI packages see
+snapshots and plain `Record`/`Kind` values handed to them.
 
 Participant membership in a room may be:
 
@@ -118,16 +117,11 @@ mechanism yet. That's out of scope for V1 and needs its own design once
 private rooms are introduced; this doc should not be read as already having
 solved it.
 
-Room does not project participant or approval state. Both already have a
-direct, working path from session to UI today (`session.Roster()` for
-participant display, `ApprovalRequested`/`ApprovalCleared` consumed
-directly by the UI for approval prompts), and neither needs Room's
-involvement. Routing this through Room as well would mean inventing new
-`session.Event` fields purely to make event-only reconstruction possible
-(participant identity such as role/initiative/color is never otherwise
-carried on an event) and would duplicate state that's already available
-more simply. See "UI integration" for how participant/approval display stays
-on its existing path.
+Room does not project participant or approval state. The interpreter reads
+participant snapshots from session and translates approval events into its
+application-facing state. Neither needs Room's involvement. Routing them
+through Room would duplicate state and require runtime fields unrelated to
+chat projection. See "UI integration" for how the UI receives them.
 
 ### Record
 
@@ -167,26 +161,25 @@ The room package consumes `session.Event`.
 `session.Event` remains the canonical runtime event model. Room does not define
 its own peer event stream for the same facts.
 
-In practice, the room package should expose a session-facing projection type
-that can consume those events directly. V1 should make `room.Room` a
-`session.Observer` for chat/record projection. The UI continues to register
-as its own separate `session.Observer` for participant and approval state,
-exactly as it does today — see "Session integration".
+In practice, the room package exposes a projection type that consumes session
+events. The interpreter owns that projection and controls the order in which
+events update room state, advance workflows, and reach front ends. The UI does
+not register as a session observer.
 
 V1 should prefer the simpler shape:
 
 ```go
-r := room.New(...)
-s := session.New(..., session.WithObserver(r))
+i := interpreter.New(ctx, sess, cwd)
 ```
 
 That keeps the dependency one-way:
 
-- UI calls `session` for effectful actions
+- UI submits intent to `interpreter`
+- interpreter calls `session` for effectful actions
 - `session` publishes `session.Event`
-- `room.Room` observes those events and updates chat-visible state
-- `room.Room` emits redraw notifications
-- UI listens to room updates and renders snapshots from `room.Room`
+- interpreter applies those events to its `room.Room`
+- interpreter emits state changes
+- UI renders the supplied room snapshots
 
 The important boundary is:
 
@@ -204,8 +197,8 @@ The UI should render room state, not derive chat semantics from `session.Event`
 directly.
 
 The intended UI integration point is the room Bubble Tea component:
-`internal/ui/room`. Top-level `internal/ui` should coordinate components and
-session commands, but it should not own room-state projection logic itself.
+`internal/ui/room`. It consumes snapshots supplied by the interpreter and does
+not hold the live `room.Room`.
 
 The UI also needs a direct path to append user-authored records that do not
 originate from agent runtime events.
@@ -334,63 +327,16 @@ Session publishes runtime events.
 
 Room subscribes to those events and updates its model.
 
-Room is a session observer for chat/record projection:
+The interpreter is the session observer exposed to the application layer. Its
+observer callback quickly enqueues each event. On the interpreter execution
+loop, it applies that event synchronously to `room.Room`, advances any workflow
+that depends on the event, and only then publishes a new snapshot.
 
-- `room.Room` implements `session.Observer`
-- `room.Room` buffers/releases session events off the observer path
-- `room.Listener` notifies consumers that room state changed and should be
-  redrawn
-- UI reads chat/record state from room rather than receiving raw
-  `session.Event` for that purpose
-
-Room is not the only observer. The UI keeps its own, separate
-`session.Observer` registration for participant and approval state —
-`session.Roster()` and direct `ApprovalRequested`/`ApprovalCleared`
-handling are unchanged by introducing room. `pkg-session.md` already
-documents multiple observers as supported; this is that pattern in use, not
-an exception to it.
-
-These two paths are independently paced. Room buffers/coalesces before
-notifying its `Listener` (see "Concurrency"); the UI's direct registration
-does not. That means a participant or approval change can render before, or
-after, the chat record that prompted it, by however long Room's coalescing
-window is. This is accepted, not accidental: approval prompts and
-participant status render in their own UI regions, not inline with chat
-text, so strict ordering between the two paths isn't required for
-legibility today. If a future feature needs strict ordering across the two
-paths, that's a new requirement to solve explicitly then, not something
-this split already guarantees.
-
-There is a second, separate ordering asymmetry inside Room itself, distinct
-from the one above: `OnEvent` (agent messages, lifecycle events) only
-queues, with `run()` applying it to `r.records` later, on Room's own
-goroutine; `AppendRecord` (and `AppendSystemRecord`/`AppendUserInputRecord`/
-`AppendLogRecord`, used for local, non-session records) takes `r.mu` and
-applies immediately, synchronously, on the caller's goroutine. If another
-agent's event is already queued but not yet applied at the moment a local
-record is appended, the local record can land in `r.records` ahead of it,
-even though the agent's event was queued first. `AppendRecord` is
-synchronous on purpose — so a user's own submitted message renders without
-waiting on a queue round-trip — and that's also exactly what makes this
-race possible.
-
-For replies specifically, staged dispatch substantially narrows this: a
-reply can't be submitted until the targeted agent reports idle, so by the
-time a human perceives that and reacts, Room's queue has almost always
-already drained whatever trivial backlog was left. But that idle
-determination comes from the UI's own separate `session.Observer`
-registration, not from Room's queue being empty, so it's a practical
-mitigant, not a structural guarantee. It also doesn't apply to
-`AppendSystemRecord`/`AppendLogRecord` at all — compose errors, validation
-errors, and log lines can be appended at any time regardless of agent
-state, so the race applies there at full strength.
-
-This is accepted: the impact is display order only inside the record
-list, never data loss, and closing it structurally would mean routing
-local appends through the same queue as `OnEvent`, which would delay the
-user's own message by a scheduling hop and change `AppendRecord` from a
-synchronous call to a queue-and-confirm one — a worse tradeoff than the
-rare, cosmetic reordering it would prevent.
+Room therefore does not own a second asynchronous event path between session
+and interpreter. Session events and local application records are applied on
+the same serialized loop, preserving their accepted order. Room may retain an
+`OnEvent(session.Event)` projection method, but the interpreter calls it; Room
+is not independently registered with session.
 
 Session remains the source of truth for runtime coordination state. Room keeps a
 projected in-memory model for one room:
@@ -398,10 +344,10 @@ projected in-memory model for one room:
 - room membership
 - record state
 
-This gives the system two distinct observer boundaries:
+This gives the system two distinct observation boundaries:
 
-- runtime observer: session -> room
-- redraw observer: room -> UI
+- runtime observer: session -> interpreter
+- application observer: interpreter -> UI
 
 Session should not need to know how many records a particular event becomes, or
 how the UI chooses to render them.
@@ -410,36 +356,11 @@ This keeps the session focused on orchestration.
 
 ### Concurrency
 
-`session.Observer.OnEvent` may be called from agent-reader goroutines, so room
-must not push Bubble Tea work or other slow listener logic directly on that
-path.
-
-The contract should therefore be:
-
-- `room.Room.OnEvent(session.Event)` returns quickly
-- room owns any buffering/coalescing needed to free the session observer path
-- room emits a lightweight redraw/invalidation notification to listeners
-- UI reacts to that notification by reading room state snapshots
-
-V1 should use invalidation-only room updates rather than payload-carrying
-record deltas. A room update means "this room changed; re-read its snapshot",
-not "here is the changed record." A minimal shape is:
-
-```go
-type Update struct {
-    RoomID  room.ID
-    Version uint64 // optional monotonic revision for stale-update detection
-}
-```
-
-The UI should treat `Update` as a redraw hint and then call snapshot APIs such
-as `Records()` to obtain the actual data.
-
-`internal/queue.Queue[T]` already solves exactly this decoupling problem
-(unbounded buffer between a fast producer goroutine and a slower consumer
-pull loop) — it's the same generic primitive the UI's own direct
-`session.Observer` path uses. Room's buffering uses it directly rather than
-duplicating the pattern.
+Room mutation occurs on the interpreter execution loop. Snapshot reads return
+copied values and may be served safely to observers. The interpreter owns the
+queue that releases session emitters quickly and the observer delivery that
+keeps front-end work off its execution loop; Room does not push Bubble Tea work
+or maintain its own scheduling policy.
 
 ---
 
@@ -451,10 +372,10 @@ raw `session.Event`.
 That means:
 
 - UI no longer owns record assembly
-- `internal/ui/room` renders `room.Room` / `room.Record` for chat/record state
-- UI continues to render participant and approval state from its own
-  direct `session.Observer` registration and `session.Roster()`, unchanged
-  from today
+- `internal/ui/room` renders interpreter-supplied `room.Snapshot` and
+  `room.Record` values
+- UI renders participant and approval state from interpreter events and
+  snapshots
 - UI may maintain view-local state for a room record, such as collapsed/expanded
 - UI-specific concerns remain in UI:
   - viewport
@@ -505,8 +426,7 @@ Room owns:
 - records
 - projection of runtime events into chat-visible state
 - room-local insertion of user-authored records
-- buffering/release off the session observer path
-- notification of room-state redraws to consumers
+- immutable snapshots consumed by the interpreter
 
 UI owns:
 
@@ -514,8 +434,7 @@ UI owns:
 - interaction
 - viewport/focus/selection
 - per-record view state such as collapsed/expanded
-- its own direct `session.Observer` registration for participant and
-  approval state, in parallel with room's observer registration for chat
+- rendering participant and approval state supplied by the interpreter
 
 ---
 
@@ -525,25 +444,21 @@ The first implementation should make the three concepts explicit:
 
 - `Room`: canonical in-memory room model
 - `Record`: canonical chat-visible unit
-- `Listener`: outbound redraw/update notification to UI
+- `Snapshot`: copied room state published by the interpreter
 
 A plausible V1 shape:
 
 - `type Room struct { ... }`
 - `type Record struct { ... }`
-- `type Update struct { RoomID ID; Version uint64 }`
 - `func (r *Room) OnEvent(e session.Event)`
 - `func (r *Room) AppendRecord(rec Record)`
-- `func (r *Room) Records() []Record`
-- `type Listener interface { OnRoomUpdate(Update) }`
+- `func (r *Room) Snapshot() Snapshot`
 
 The exact names may change, but the architectural constraint should hold:
 
 - room owns projection and canonical in-memory room state for chat/records
-- room is a session observer for chat/record projection, not the only one —
-  UI keeps its own separate observer registration for participant/approval
-  state
-- UI owns display state built on top of room-owned records
+- interpreter owns Room and applies session events to it in serialized order
+- UI owns display state built on interpreter-supplied room snapshots
 
 ---
 

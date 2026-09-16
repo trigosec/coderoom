@@ -6,15 +6,17 @@ The Session Controller is the central orchestrator of a coderoom session. It rec
 
 It is the layer that owns goroutines. The agent package is synchronous; the session controller spawns one reader goroutine per agent to stream output without blocking.
 
-It is **not** responsible for parsing raw user input or rendering output. The
-prompt-language package owns parsing; rendering belongs to the TUI layer.
+It is **not** responsible for parsing raw user input, coordinating language
+workflows, selecting room-visible handoff sources, or rendering output. Those
+belong to the interpreter, prompt-language, room, and TUI layers respectively.
 
 State ownership model:
 
 - `agent` is a synchronous transport adapter to the external CLI
 - `participant` is the stateful runtime entity
 - `session` is the sole mutator/coordinator of participant state
-- `ui` projects session/participant state and should not interact with agents directly
+- `interpreter` is the application facade that dispatches session commands
+- `ui` consumes interpreter state and does not interact with session directly
 
 Participant invariants and state-machine rules live in
 [`pkg-participant.md`](pkg-participant.md). The session does not duplicate those
@@ -38,8 +40,8 @@ type Command interface {
 }
 ```
 
-The prompt-language package parses raw user input. The TUI translates the
-resulting statement into one of the concrete session command types before
+The prompt-language package parses raw user input. The interpreter translates
+the resulting statement into one of the concrete session command types before
 calling `Execute`:
 
 ```go
@@ -91,6 +93,16 @@ type EnablePolicyCommand struct {
     Name policy.Name
 }
 
+// HandoffCommand delivers a source already selected from canonical room state.
+// Session validates participants and delivery barriers but does not query room
+// or call back into the application layer to select content.
+type HandoffCommand struct {
+    FromAlias   string
+    ToAlias     string
+    IdleAliases []string
+    Source      HandoffSource
+}
+
 // PrivateSendCommand sends a message directly to one agent's private channel.
 // Nothing is emitted to the shared room and no other agents are notified.
 // Used for approval flows and reasoning that should not pollute the shared room.
@@ -111,8 +123,8 @@ Session owns the invite-backend decision and passes either `default` or `echo`
 to one backend-aware agent factory. When `echo-invites` was enabled before the
 first invitation, Session requests `echo`; otherwise it requests `default`.
 The application composition root maps that choice to a concrete adapter. The
-TUI still issues the same `InviteCommand`, and both adapters follow the ordinary
-participant lifecycle.
+interpreter still issues the same `InviteCommand`, and both adapters follow the
+ordinary participant lifecycle.
 
 ---
 
@@ -128,14 +140,17 @@ type Observer interface {
 
 Implementations must be fast; avoid operations that can block for non-trivial time. A blocking observer will stall all agent reader goroutines. If an observer needs to process events on its own goroutine, it puts the event on an internal queue inside its `OnEvent` implementation — the session controller is not responsible for that decoupling.
 
-Multiple observers are supported (e.g. TUI + room + event logger). Per [`pkg-room.md`](pkg-room.md), `room.Room` registers as an observer for chat/record projection only. The TUI continues to register directly as its own `session.Observer` for participant and approval state, exactly as it does today — room does not replace that registration, it adds a second one alongside it.
+Multiple observers remain supported for infrastructure concerns such as event
+logging. At the application boundary, the interpreter is the observer: it
+updates its canonical room projection, advances workflows, and publishes
+snapshots and events to the UI. The TUI does not register directly.
 
 `session.Event` is the canonical runtime event model for coderoom.
 
 - session publishes `session.Event`
-- room consumes `session.Event` and projects rooms + records
-- UI renders room state rather than assembling chat semantics directly from
-  `session.Event`
+- interpreter applies `session.Event` to its room projection
+- interpreter exposes room and participant snapshots to the UI
+- UI renders those snapshots rather than consuming `session.Event`
 - future persistence / replay should derive from `session.Event`
 
 We do **not** want a second peer event model owned by another package. If a
@@ -224,7 +239,7 @@ observers handle diagnostic lines without inspecting message content.
 transition the session drives, including the idle transition after a turn
 ends. `From`, `To`, and `Since` are sufficient for an observer that only needs
 to track status; full participant identity (role, initiative, color) is read
-from `session.Roster()`, not reconstructed from events.
+from `session.Roster()` by the interpreter, not reconstructed by the UI.
 
 `ApprovalRequested` carries the queue-managed approval `ID`, the participant
 `Alias`, and the `agent.ApprovalRequest` payload. `ApprovalCleared` carries the
@@ -235,8 +250,11 @@ without re-reading session state.
 
 ## Agent lifecycle
 
-`InviteCommand` calls `registry.Add` then `agent.Start`. On success, it emits
-`AgentStarted` and launches a reader goroutine for that agent.
+`InviteCommand` constructs the participant without presentation input and calls
+`registry.Add`, which assigns the participant's deterministic color. It then
+starts the agent. On success, it emits `AgentStarted` and launches a reader
+goroutine for that agent. A participant removed later does not release its
+color for reuse during the session.
 
 Agent process lifecycle is rooted in the session lifecycle context. The
 session derives one child context per invited agent and passes that child into
@@ -301,7 +319,7 @@ session, and execution reports all successful recipients on partial failure.
 ## Concurrency model
 
 - One goroutine per agent (the reader loop) — spawned on `InviteCommand`, exits on agent death or `RemoveCommand`.
-- `Execute` runs on the caller's goroutine (the TUI's input loop).
+- `Execute` runs on the caller's goroutine (the interpreter's serialized execution loop).
 - Reader goroutines call `observer.OnEvent` directly; the observer must not block.
 - The registry and session state are accessed from both `Execute` and reader goroutines. A mutex protects shared access.
 - Keepalive candidate selection happens under the session lock, but adapter
@@ -328,11 +346,13 @@ The room package owns:
 The prompt-language package owns:
 - Parsing raw user input into UI-independent statements
 
-The TUI owns:
-- Rendering room state
-- Reading participant/session snapshots
-- Translating statements and forwarding commands to session / room as
-  appropriate
+The interpreter owns:
+- Translating statements and forwarding commands to session
+- Coordinating shell commands, definitions, and loops
+- Owning the live room projection and selecting handoff sources
+- Publishing application snapshots and events
 
-The TUI does not talk to agents directly and should not assemble chat semantics
-from raw session events.
+The TUI owns rendering and presentation-only interaction state.
+
+The TUI does not talk to agents or session directly and does not assemble chat
+semantics from raw session events.

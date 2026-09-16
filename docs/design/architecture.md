@@ -18,6 +18,12 @@ The Session Controller is the central orchestrator. All commands, messages, and 
                |
                v
 +-----------------------------+
+|      Prompt Interpreter      |
+| language, workflows, events  |
++--------------+--------------+
+               |
+               v
++-----------------------------+
 |       Session Controller     |
 | commands, routing, policy    |
 +--------------+--------------+
@@ -53,15 +59,36 @@ The Session Controller is the central orchestrator. All commands, messages, and 
 - Session roster with status indicators
 - Command input
 
-The UI is intentionally lean. It projects session and participant state; it does
-not talk to agent processes directly. All workflow invariants are enforced below
-the UI layer. Raw user input is parsed by `internal/promptlang` into
-UI-independent statements; the UI translates those statements into session,
-room, or presentation operations as appropriate.
+The UI is intentionally lean. It submits raw user input to
+`internal/interpreter` and renders interpreter snapshots and events. It does
+not call or observe the session directly. The interpreter parses input through
+`internal/promptlang`, owns application workflows and the canonical room
+projection, and serializes commands sent to the session controller.
+
+Architecture tests enforce this boundary: the interpreter's transitive
+dependencies exclude UI and terminal-framework packages, while UI packages may
+reach session and agent behavior only transitively through the interpreter.
 
 ---
 
-### 2. Session Controller
+### 2. Prompt Interpreter
+
+UI-independent application layer. Responsible for:
+
+- Parsing and executing prompt-language statements
+- Owning room-scoped command definitions
+- Executing shell-backed commands
+- Coordinating bounded loops
+- Coordinating pending barrier batches and interrupt-and-dispatch
+- Owning the canonical room projection used for handoffs
+- Exposing observable events and snapshots to front ends
+- Preserving serialized session dispatch
+
+See [`pkg-interpreter.md`](pkg-interpreter.md).
+
+---
+
+### 3. Session Controller
 
 Central orchestrator. Responsible for:
 
@@ -77,13 +104,18 @@ transitions (for example, sends while a turn is already in flight).
 
 ---
 
-### 3. Participant Registry
+### 4. Participant Registry
 
 Tracks all participants in the session:
 
 ```
-alias, backend, role, capabilities, initiative, status
+alias, backend, role, capabilities, initiative, status, color
 ```
+
+The registry assigns each accepted participant a deterministic color. Colors
+are monotonic and are not reused after removal during the session; participants
+retain the assigned value as part of their identity for snapshots and history.
+Neither the interpreter nor the UI selects participant colors.
 
 Status values and their meaning:
 
@@ -113,7 +145,7 @@ its own shared-room transcript record.
 
 ---
 
-### 4. Agent Runtime
+### 5. Agent Runtime
 
 Manages CLI processes:
 
@@ -128,7 +160,7 @@ protocol handling.
 
 ---
 
-### 5. Backend Adapters
+### 6. Backend Adapters
 
 Thin wrappers for each supported CLI tool. Interface:
 
@@ -147,7 +179,7 @@ participant and session controller.
 
 ---
 
-### 6. Sandbox Controller
+### 7. Sandbox Controller
 
 Each agent runs inside a sandbox that constrains what it can access at the OS level. coderoom does not attempt to intercept decisions made inside the CLI tool itself. Instead, it defines the boundary within which the CLI operates.
 
@@ -168,7 +200,7 @@ The human reviews and responds in the private tab. Other agents are not exposed 
 
 ---
 
-### 7. Message Router
+### 8. Message Router
 
 Routes messages across channels:
 
@@ -184,7 +216,7 @@ Rules:
 
 ---
 
-### 8. Policy Engine
+### 9. Policy Engine
 
 Controls what each agent is permitted to do at the session level:
 

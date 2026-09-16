@@ -1,25 +1,42 @@
-# Generated participant palette
+# Package design: participant colors
 
 ## Status
 
-Implemented. This design supersedes the fixed palette and assignment rules
-previously documented in `docs/design/pkg-ui-records.md`.
+The generation algorithm is implemented. Its current implementation lives in
+`internal/ui/palette`; the interpreter-boundary work moves participant
+generation and allocation to `internal/participant` as described in
+[`pkg-participant.md`](pkg-participant.md).
+
+This design supersedes the fixed palette and assignment rules previously
+documented in `docs/design/pkg-ui-records.md`. The ownership move is target
+architecture and is not yet reflected in the current code.
 
 ## Goal
 
-`ui/palette` should assign every participant a stable, readable colour without
-depending on a short, predefined list. The candidate space is the full 24-bit
-sRGB range expressible as CSS/HTML hex colours (`#RRGGBB`); this does not mean
-maintaining a list of every value or using CSS named colours.
+`participant.Registry` should assign every participant a stable, readable
+colour without depending on a short, predefined list. The candidate space is
+the full 24-bit sRGB range expressible as CSS/HTML hex colours (`#RRGGBB`); this
+does not mean maintaining a list of every value or using CSS named colours.
+
+The participant package owns the generation algorithm, monotonic allocation
+state, and assignment. An individual `Participant` retains its assigned colour
+but does not choose it. The UI consumes that value from interpreter snapshots.
+
+`internal/ui/palette` remains the home for UI-only semantic tokens such as the
+departed-record fallback and file-change colours. It does not retain participant
+allocation state after the ownership move.
 
 ## Expected behaviour
 
-- `ColorPalette.Next` returns a valid `#RRGGBB` colour for every practical
+- The registry's allocator returns a valid `#RRGGBB` colour for every practical
   participant count instead of falling back to the default terminal colour.
 - Generation is deterministic: the same initial palette and assignment order
   produce the same colours.
 - A generated colour is not reused during a session, including after its
   participant departs.
+- An addition rejected during registry validation does not consume a colour.
+- Once a participant is accepted by the registry, its colour remains consumed
+  even if asynchronous agent startup later fails.
 - Existing participants keep their assigned colour. Generating a new colour
   must not change earlier assignments.
 - Colours remain bright enough to read on dark terminal backgrounds and are
@@ -56,14 +73,35 @@ can look alike on those terminals. Palette generation does not change stored
 colours based on the active terminal profile. Profile-specific assignment can
 be considered separately if reduced-colour terminals prove important.
 
+## Package ownership
+
+After the ownership move:
+
+```text
+internal/participant
+  participant colour generation
+  monotonic allocator state
+  registry assignment
+  determinism, uniqueness, and contrast tests
+
+internal/ui/palette
+  departed-record fallback colour
+  file-change and other semantic rendering colours
+```
+
+`session.InviteCommand` does not accept a colour, and neither the interpreter
+nor the UI selects one.
+
 ## Verification
 
 Tests should establish that:
 
 - a substantial sequence contains only valid, unique `#RRGGBB` values;
-- separate palettes produce the same sequence;
+- separate registries/allocators produce the same sequence;
 - colours are not exhausted after the current eight assignments;
-- advancing a palette does not mutate or alter earlier results; and
+- advancing the allocator does not mutate or alter earlier results;
+- rejected registry additions do not advance the allocator;
+- participant removal does not make its colour reusable; and
 - generated colours maintain at least 4.5:1 contrast against `#111827` over a
   substantial sequence.
 

@@ -5,12 +5,13 @@
 The TUI is the user-facing layer for Phase 1: a single-agent terminal interface that resembles the Codex / Claude Code experience. It owns:
 
 - Rendering room state to a scrollable output area
-- Accepting user input and parsing it into session commands
-- Bridging the session observer (called from agent goroutines) into the Bubble Tea update loop
+- Accepting user input and submitting it to the interpreter
+- Bridging interpreter events into the Bubble Tea update loop
 
-It is **not** responsible for session logic, message routing, or agent lifecycle — those remain in `internal/session`.
-It is also not the owner of canonical room/chat state — that belongs to
-`internal/room`.
+It is **not** responsible for prompt-language execution, session logic, message
+routing, or agent lifecycle. It does not interact with `internal/session`
+directly. It is also not the owner of canonical room/chat state; the
+interpreter owns the live `internal/room` projection and supplies snapshots.
 
 ---
 
@@ -48,13 +49,11 @@ component, not the toolbox.
 ```go
 // Top-level application model.
 type Model struct {
-    sess     *session.Session
+    interp   *interpreter.Interpreter
     queue    *eventQueue
     room     room.Model     // history viewport + compose/approval input
     toolbox  toolbox.Model  // participant cells row
-    palette  colorPalette
     debug    bool
-    cwd      string
     lastSize tea.WindowSizeMsg
 }
 
@@ -67,28 +66,30 @@ type Model struct {
 
 The room component owns all content rendering and the two separator lines that
 frame the compose area. The toolbox is a sibling, not a child, of the room.
-The room component is also the UI adapter boundary for `internal/room`. The
-top-level `internal/ui` package should not depend on `internal/room` directly.
+The room component is the presentation adapter for interpreter-supplied room
+snapshots. It does not hold or mutate a live `internal/room.Room`.
 
 ---
 
-## Observer → Bubble Tea bridge
+## Interpreter → Bubble Tea bridge
 
-The session observer runs on agent reader goroutines. Bubble Tea's `Update` runs on its own goroutine. The bridge is an `eventQueue` — a named type that owns all concurrency for this boundary — and a long-running `tea.Cmd`:
+The interpreter publishes events independently of Bubble Tea's `Update` loop.
+The bridge is an event queue and a long-running `tea.Cmd`. The UI does not
+register as a session observer:
 
 ```go
-// sessionEventMsg wraps a session.Event as a Bubble Tea message.
-type sessionEventMsg struct{ event session.Event }
+// interpreterEventMsg wraps an interpreter.Event as a Bubble Tea message.
+type interpreterEventMsg struct{ event interpreter.Event }
 
 // awaitEvent returns a Cmd that blocks until the next event is available.
 // It receives queue.out — the output channel of eventQueue.
-func awaitEvent(ch <-chan session.Event) tea.Cmd {
+func awaitEvent(ch <-chan interpreter.Event) tea.Cmd {
     return func() tea.Msg {
         e, ok := <-ch
         if !ok {
             return nil
         }
-        return sessionEventMsg{event: e}
+        return interpreterEventMsg{event: e}
     }
 }
 
@@ -99,12 +100,14 @@ func awaitEvent(ch <-chan session.Event) tea.Cmd {
 `eventQueue` owns an unbuffered input channel, an unbounded internal buffer (a plain slice), an output channel, and a pump goroutine that bridges them. `Push` on the input side completes quickly because the pump is always ready to receive. The consumer reads from the output side without ever blocking the producer.
 
 ```
-session.Observer.OnEvent → eventQueue.Push → [pump goroutine / []Event] → out → awaitEvent → Bubble Tea
+interpreter.Observer.OnEvent → eventQueue.Push → [pump / []Event] → awaitEvent → Bubble Tea
 ```
 
 No fixed-size buffers. No dropped events. If the UI falls behind, the internal slice grows; backpressure propagates naturally through the pump rather than through silent data loss.
 
-`channelObserver` is a thin wrapper that implements `session.Observer` by delegating to `eventQueue.Push`. `Init` returns `awaitEvent(queue.out)` to start the loop. Each time `Update` handles a `sessionEventMsg` it returns `awaitEvent(queue.out)` again to re-arm.
+`channelObserver` implements `interpreter.Observer` by delegating to the queue.
+Each handled event re-arms `awaitEvent`. Room and participant state arrive as
+snapshots; the UI does not re-read session state.
 
 ---
 
@@ -125,17 +128,29 @@ UI-local viewport state. `history.Model` wraps a `bubbles/viewport` and
 re-renders content on every change, but it should not be the source of truth
 for chat semantics.
 
-User-authored routing footers are a UI concern, not a room-projected event
-concern. For an addressed send, the UI retains the opaque routing plan created
-by session at submission time and renders its targets after dispatch. It does
-not recalculate listeners. This does not require room to project `Broadcast`,
-`SharedSend`, or `SharedNotice` into canonical message state.
+User-authored routing footers are presentation, but their data comes from the
+interpreter. For an addressed send, the interpreter retains the opaque routing
+plan created at submission time and publishes its frozen targets. The UI
+renders those targets and never recalculates listeners. This does not require
+room to project `Broadcast`, `SharedSend`, or `SharedNotice` into canonical
+message state.
 
 ---
 
-## Command parsing
+## Command submission
 
-Input is parsed on submit (Enter):
+Input is submitted to the interpreter on Enter. The interpreter parses and
+executes it; the UI echoes accepted input and renders structured results from
+interpreter events.
+
+All prompt-language forms use `Submit`, including `/cancel <alias>`. Dedicated
+interpreter methods are used only for structured UI interactions without a
+prompt-language form, such as approval decisions and interrupting a staged
+barrier batch.
+
+Synchronous stage operations such as `TakeStageForEdit` run inside a `tea.Cmd`.
+Their result returns to `Update` as a Bubble Tea message, so waiting for the
+interpreter's serialized loop never blocks terminal rendering.
 
 | Input | Command | Notes |
 |---|---|---|
@@ -144,13 +159,15 @@ Input is parsed on submit (Enter):
 | `/policy enable echo-invites` | `EnablePolicyCommand` | Uses deterministic echo agents; must precede every invitation |
 | `/cancel <alias>` | `CancelCommand` | Soft stop: cancels in-flight work for the agent but keeps it in the room |
 | `/remove <alias>` | `RemoveCommand` | Hard stop: removes the agent from the room and stops its process |
-| `/who` | — | Renders current roster inline; no session command needed |
+| `/who` | interpreter query | Renders the current interpreter snapshot inline |
 | `/help` | — | Renders available commands inline |
 | `@<alias> <text>` | `SharedSendCommand` | Only the addressed participant is targeted unless `send-notices` is enabled |
 | `<text>` | `BroadcastCommand` | Equivalent to direct send for single-agent sessions |
-| `/quit` | `session.Shutdown()` + `tea.Quit` | Best-effort stop all agents before exit |
+| `/quit` | interpreter shutdown request | Best-effort stop all agents before UI exit |
 
-`/who` and `/help` are handled entirely in the TUI — they append a formatted block to `lines` without touching the session. Validation errors (empty alias, unknown command) are also appended to `lines` as inline messages rather than using a separate error state.
+The exact `/help` presentation remains in the TUI. `/who`, validation errors,
+and all effectful statements are resolved by the interpreter so non-UI callers
+observe the same behavior.
 
 ### Command semantics (room model)
 
@@ -176,7 +193,9 @@ charm.land/lipgloss/v2                     # styling
 github.com/rivo/uniseg                     # display-width-aware line metrics
 ```
 
-The session and agent packages are unchanged.
+The UI depends on the interpreter facade, not on session or agent packages.
+It renders each participant's assigned color from interpreter snapshots and
+does not allocate participant colors.
 
 ---
 
@@ -184,24 +203,18 @@ The session and agent packages are unchanged.
 
 The TUI owns:
 - Bubble Tea model, update, and view
-- Observer channel and `awaitEvent` wiring
-- A child of the application context plus shutdown tracking for local process
-  lifetime
-- The room-scoped registry of prompt-language command definitions
-- Active bounded-loop state and transitions driven by shell results and
-  participant lifecycle events
+- Interpreter-observer channel and `awaitEvent` wiring
 - Rendering room state as styled text
-- Translating parsed prompt-language statements into session and room commands
+- Presentation of interpreter-owned staged batches, plus compose editing,
+  focus, scrolling, and shortcuts
 
-The `internal/promptlang` package owns raw user-input parsing, its
-UI-independent statement model, and command-definition registration and
-resolution rules. The TUI holds one registry for the lifetime of the room.
-
-The session controller owns everything else. The TUI never reads session internals directly — it only calls `Execute` and receives events through the observer channel.
+The interpreter owns parsing coordination, one command registry for the room,
+shell lifetime, bounded-loop and barrier-batch state, session dispatch, and the
+live canonical room projection. The TUI never reads session internals directly.
 
 More specifically:
 
-- `internal/ui` coordinates top-level components and session commands
-- `internal/ui/room` adapts canonical room state into presentation state
+- `internal/ui` coordinates presentation components and interpreter operations
+- `internal/ui/room` adapts interpreter-supplied room snapshots into presentation state
 - `internal/ui/room/history` is presentation-only and should not depend on
   `internal/room`

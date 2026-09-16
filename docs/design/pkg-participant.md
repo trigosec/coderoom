@@ -3,8 +3,8 @@
 ## Scope
 
 `internal/participant` defines the states associated with an agentic session: a named
-collaborator with identity (`alias`, `role`, `initiative`) plus turn-lifecycle
-state (`status`, tracked streams, turn anchor).
+collaborator with identity (`alias`, `role`, `initiative`, assigned color) plus
+turn-lifecycle state (`status`, tracked streams, turn anchor).
 
 It is not:
 
@@ -16,6 +16,42 @@ Those responsibilities belong to `agent`, `session`, and `ui` respectively.
 
 The package exists to centralize participant invariants so they are enforced in
 one place instead of being reimplemented ad hoc by the session controller.
+
+## Identity and color allocation
+
+`Participant.Color` is part of participant identity for the lifetime of a
+session. An individual participant stores its assigned color but does not choose
+one independently. Distinct deterministic assignment requires collection-level
+state, so `participant.Registry` owns the participant color allocator.
+
+```go
+type Registry struct {
+    participants map[string]*Participant
+    colors       ColorAllocator
+}
+```
+
+When a participant is added, the registry validates the addition and assigns
+the next color before publishing the participant. `session.InviteCommand`
+therefore carries only the alias and other non-visual invitation semantics; it
+does not accept a UI- or interpreter-selected color.
+
+Allocation is monotonic for one registry/session. Removing a participant does
+not release its color because historical records retain participant identity;
+reusing the same color for a later collaborator could visually conflate them.
+The sequence is deterministic so equivalent invitation order produces
+equivalent colors in the TUI, tests, and non-interactive clients.
+
+An addition rejected during validation does not consume a color. Once the
+registry accepts and publishes the participant, the color remains consumed even
+if asynchronous agent startup later fails, matching the participant's presence
+in lifecycle events and historical room records.
+
+The allocator implementation and its perceptual color-generation tests move
+from `internal/ui/palette` into `internal/participant`. UI-only color tokens,
+such as departed-record and diff colors, remain in the UI palette package.
+See [`pkg-participant-colors.md`](pkg-participant-colors.md) for the generation
+algorithm, readability requirements, terminal behavior, and verification.
 
 ---
 
@@ -148,6 +184,8 @@ become idle while its anchor remains open.
 
 `internal/participant` owns:
 
+- deterministic, session-scoped participant color allocation
+- retaining assigned color as participant identity
 - participant statuses
 - legal state transitions
 - tracked-open-stream bookkeeping
