@@ -482,16 +482,11 @@ func (m Model) invokeCommand(invocation promptlang.CommandInvocation) (Model, te
 }
 
 func (m Model) inviteAgent(alias string) Model {
-	color, nextPalette := m.palette.Next()
-	err := m.sess.Execute(session.InviteCommand{
-		Alias: alias,
-		Color: color,
-	})
+	err := m.sess.Execute(session.InviteCommand{Alias: alias})
 	if err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: invite %q: %v", alias, err))
 		return m
 	}
-	m.palette = nextPalette
 	return m
 }
 

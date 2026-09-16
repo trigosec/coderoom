@@ -102,9 +102,9 @@ func pumpUntil(t *testing.T, m Model, pred func(session.Event) bool) Model {
 	return m
 }
 
-func inviteParticipant(t *testing.T, s *session.Session, alias, color string) {
+func inviteParticipant(t *testing.T, s *session.Session, alias string) {
 	t.Helper()
-	if err := s.Execute(session.InviteCommand{Alias: alias, Color: color}); err != nil {
+	if err := s.Execute(session.InviteCommand{Alias: alias}); err != nil {
 		t.Fatalf("invite %s: %v", alias, err)
 	}
 }
@@ -197,13 +197,13 @@ func stageHandoffWithCompletedAdaOutput(t *testing.T, agents map[string]agent.Ag
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
-	inviteParticipant(t, s, "turing", "#60a5fa")
+	inviteParticipant(t, s, "ada")
+	inviteParticipant(t, s, "turing")
 	for _, alias := range started {
 		if alias == "ada" || alias == "turing" {
 			continue
 		}
-		inviteParticipant(t, s, alias, "#f59e0b")
+		inviteParticipant(t, s, alias)
 	}
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
@@ -230,8 +230,8 @@ func TestBarrierBatch_stagesThenDispatchesWhenIdle(t *testing.T) {
 	m = next.(Model)
 
 	// Invite two participants and pump until both are started.
-	inviteParticipant(t, s, "ada", "#4ade80")
-	inviteParticipant(t, s, "turing", "#60a5fa")
+	inviteParticipant(t, s, "ada")
+	inviteParticipant(t, s, "turing")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
 	// Mark ada working, leaving turing idle.
@@ -276,8 +276,8 @@ func TestBarrierBatch_directSendIgnoresUnrelatedBusyParticipantByDefault(t *test
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
-	inviteParticipant(t, s, "turing", "#60a5fa")
+	inviteParticipant(t, s, "ada")
+	inviteParticipant(t, s, "turing")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
 		t.Fatalf("make turing busy: %v", err)
@@ -309,8 +309,8 @@ func TestBarrierBatch_sendNoticesPolicyIncludesBusyListener(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
-	inviteParticipant(t, s, "turing", "#60a5fa")
+	inviteParticipant(t, s, "ada")
+	inviteParticipant(t, s, "turing")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 	next, _ = m.Update(room.SubmitMsg{Text: "/policy enable send-notices"})
 	m = next.(Model)
@@ -330,7 +330,7 @@ func TestBarrierBatch_sendNoticesPolicyIncludesBusyListener(t *testing.T) {
 		t.Fatalf("staged targets = %v, want [ada turing]", targets)
 	}
 
-	inviteParticipant(t, s, "ben", "#f59e0b")
+	inviteParticipant(t, s, "ben")
 	m = pumpUntilAgentsStarted(t, m, "ben")
 	if got := action.SendPlan.Targets(); len(got) != 2 || got[0] != "ada" || got[1] != "turing" {
 		t.Fatalf("plan targets after ben starts = %v, want [ada turing]", got)
@@ -350,8 +350,8 @@ func TestBarrierBatch_autoDispatchPreservesFirstOutputRecord(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
-	inviteParticipant(t, s, "turing", "#60a5fa")
+	inviteParticipant(t, s, "ada")
+	inviteParticipant(t, s, "turing")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
 	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "busy", TextListeners: "notice"}); err != nil {
@@ -398,7 +398,7 @@ func TestBarrierBatch_failedDispatchDoesNotCommitUserInput(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
+	inviteParticipant(t, s, "ada")
 	m = pumpUntilAgentsStarted(t, m, "ada")
 
 	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
@@ -430,7 +430,7 @@ func TestBarrierBatch_failedDispatchDoesNotRetryOnRollbackIdle(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
+	inviteParticipant(t, s, "ada")
 	m = pumpUntilAgentsStarted(t, m, "ada")
 
 	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
@@ -468,8 +468,8 @@ func TestBarrierBatch_partialDispatchCommitsUserInput(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
-	inviteParticipant(t, s, "turing", "#60a5fa")
+	inviteParticipant(t, s, "ada")
+	inviteParticipant(t, s, "turing")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
 	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
@@ -500,7 +500,7 @@ func TestBarrierBatch_discardedTargetRestoresDraft(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
+	inviteParticipant(t, s, "ada")
 	m = pumpUntilAgentsStarted(t, m, "ada")
 
 	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "busy"}); err != nil {
@@ -599,8 +599,8 @@ func newTwoAgentBarrierBatchModel(t *testing.T) (map[string]*testAgent, *session
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
-	inviteParticipant(t, s, "turing", "#60a5fa")
+	inviteParticipant(t, s, "ada")
+	inviteParticipant(t, s, "turing")
 	return agents, s, pumpUntilAgentsStarted(t, m, "ada", "turing")
 }
 
@@ -675,8 +675,8 @@ func stageDiscardedTargetHandoff(t *testing.T) (*testAgent, *session.Session, Mo
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 
-	inviteParticipant(t, s, "ada", "#4ade80")
-	inviteParticipant(t, s, "turing", "#60a5fa")
+	inviteParticipant(t, s, "ada")
+	inviteParticipant(t, s, "turing")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
 	m = pushEvent(m, session.AgentMessage{Alias: "ada", Msg: agent.Message{
@@ -741,7 +741,7 @@ func TestBarrierBatch_handoffIgnoresBusyParticipantWhoJoinedAfterStaging(t *test
 		t.Fatal("expected staged handoff before ada becomes idle")
 	}
 
-	inviteParticipant(t, s, "cat", "#f59e0b")
+	inviteParticipant(t, s, "cat")
 	m = pumpUntilAgentsStarted(t, m, "cat")
 	if err := s.Execute(session.PrivateSendCommand{Alias: "cat", Text: "busy"}); err != nil {
 		t.Fatalf("make cat busy: %v", err)

@@ -6,6 +6,7 @@ import "fmt"
 // It is not safe for concurrent use; the caller is responsible for synchronisation.
 type Registry struct {
 	participants map[string]*Participant
+	colors       colorAllocator
 }
 
 // NewRegistry returns an empty Registry.
@@ -25,6 +26,7 @@ func (r *Registry) Add(p *Participant) error {
 	if _, exists := r.participants[p.Alias]; exists {
 		return fmt.Errorf("participant %q already registered", p.Alias)
 	}
+	p.Color = r.colors.next()
 	r.participants[p.Alias] = p
 	return nil
 }

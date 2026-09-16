@@ -201,7 +201,7 @@ func newLoopTestModel(t *testing.T) (Model, *testAgent) {
 	}))
 	t.Cleanup(sess.Shutdown)
 	m := newTestModelWithSession(t, sess)
-	inviteParticipant(t, sess, "ada", "#4ade80")
+	inviteParticipant(t, sess, "ada")
 	m = pumpUntilAgentsStarted(t, m, "ada")
 	defineLoopCondition(t, m.commands)
 	return m, participantAgent

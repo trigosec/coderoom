@@ -65,7 +65,6 @@ type Model struct {
 	room       room.Model
 	toolbox    toolbox.Model
 	debug      bool
-	palette    palette.ColorPalette
 	cwd        string
 	runShell   shellRunner
 	activeLoop *loopExecution

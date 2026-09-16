@@ -69,6 +69,84 @@ func TestRegistry_Add_duplicateAlias(t *testing.T) {
 	}
 }
 
+func TestRegistry_Add_assignsDeterministicUniqueColors(t *testing.T) {
+	first := participant.NewRegistry()
+	second := participant.NewRegistry()
+
+	for _, alias := range []string{"ada", "turing", "hopper"} {
+		firstParticipant := newParticipant(alias)
+		secondParticipant := newParticipant(alias)
+		if err := first.Add(firstParticipant); err != nil {
+			t.Fatalf("first Add(%q): %v", alias, err)
+		}
+		if err := second.Add(secondParticipant); err != nil {
+			t.Fatalf("second Add(%q): %v", alias, err)
+		}
+		if firstParticipant.Color != secondParticipant.Color {
+			t.Fatalf("color for %q = %q and %q", alias, firstParticipant.Color, secondParticipant.Color)
+		}
+	}
+
+	participants := first.List()
+	seen := make(map[string]bool, len(participants))
+	for _, p := range participants {
+		if p.Color == "" {
+			t.Fatalf("participant %q has no color", p.Alias)
+		}
+		if seen[p.Color] {
+			t.Fatalf("color %q assigned more than once", p.Color)
+		}
+		seen[p.Color] = true
+	}
+}
+
+func TestRegistry_Add_rejectedParticipantDoesNotConsumeColor(t *testing.T) {
+	withRejection := participant.NewRegistry()
+	baseline := participant.NewRegistry()
+
+	first := newParticipant("ada")
+	if err := withRejection.Add(first); err != nil {
+		t.Fatalf("Add first: %v", err)
+	}
+	if err := withRejection.Add(newParticipant("ada")); err == nil {
+		t.Fatal("expected duplicate Add to fail")
+	}
+	next := newParticipant("turing")
+	if err := withRejection.Add(next); err != nil {
+		t.Fatalf("Add after rejection: %v", err)
+	}
+
+	if err := baseline.Add(newParticipant("ada")); err != nil {
+		t.Fatalf("baseline first Add: %v", err)
+	}
+	baselineNext := newParticipant("turing")
+	if err := baseline.Add(baselineNext); err != nil {
+		t.Fatalf("baseline second Add: %v", err)
+	}
+	if next.Color != baselineNext.Color {
+		t.Fatalf("color after rejection = %q, want %q", next.Color, baselineNext.Color)
+	}
+}
+
+func TestRegistry_Remove_doesNotReleaseColor(t *testing.T) {
+	registry := participant.NewRegistry()
+	removed := newParticipant("ada")
+	if err := registry.Add(removed); err != nil {
+		t.Fatalf("Add removed participant: %v", err)
+	}
+	if err := registry.Remove("ada"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	replacement := newParticipant("turing")
+	if err := registry.Add(replacement); err != nil {
+		t.Fatalf("Add replacement: %v", err)
+	}
+	if replacement.Color == removed.Color {
+		t.Fatalf("replacement reused removed color %q", removed.Color)
+	}
+}
+
 func TestRegistry_Get_missing(t *testing.T) {
 	r := participant.NewRegistry()
 	_, ok := r.Get("nobody")

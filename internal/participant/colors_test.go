@@ -1,4 +1,4 @@
-package palette
+package participant
 
 import (
 	"fmt"
@@ -13,13 +13,13 @@ const (
 	readabilitySamples = 1_000
 )
 
-func TestColorPalette_generatesUniqueHTMLColors(t *testing.T) {
-	palette := ColorPalette{}
+func TestColorAllocator_generatesUniqueHTMLColors(t *testing.T) {
+	allocator := colorAllocator{}
 	seen := make(map[string]bool)
 	valid := regexp.MustCompile(`^#[0-9A-F]{6}$`)
 
 	for range 1_000 {
-		color, next := palette.Next()
+		color := allocator.next()
 		if !valid.MatchString(color) {
 			t.Fatalf("expected HTML color, got %q", color)
 		}
@@ -27,41 +27,28 @@ func TestColorPalette_generatesUniqueHTMLColors(t *testing.T) {
 			t.Fatalf("expected unique color, got %q twice", color)
 		}
 		seen[color] = true
-		palette = next
 	}
 }
 
-func TestColorPalette_isDeterministic(t *testing.T) {
-	first := ColorPalette{}
-	second := ColorPalette{}
+func TestColorAllocator_isDeterministic(t *testing.T) {
+	first := colorAllocator{}
+	second := colorAllocator{}
 	for range 100 {
-		firstColor, nextFirst := first.Next()
-		secondColor, nextSecond := second.Next()
+		firstColor := first.next()
+		secondColor := second.next()
 		if firstColor != secondColor {
 			t.Fatalf("expected equal colors, got %q and %q", firstColor, secondColor)
 		}
-		first = nextFirst
-		second = nextSecond
 	}
 }
 
-func TestColorPalette_nextDoesNotMutateReceiver(t *testing.T) {
-	palette := ColorPalette{}
-	first, _ := palette.Next()
-	again, _ := palette.Next()
-	if first != again {
-		t.Fatalf("expected repeat call on same palette to return %q, got %q", first, again)
-	}
-}
-
-func TestColorPalette_isReadableOnDarkBackground(t *testing.T) {
-	palette := ColorPalette{}
+func TestColorAllocator_isReadableOnDarkBackground(t *testing.T) {
+	allocator := colorAllocator{}
 	for range readabilitySamples {
-		color, next := palette.Next()
+		color := allocator.next()
 		if contrastRatio(color, darkBackground) < minimumContrast {
 			t.Fatalf("expected %s to have at least %.1f:1 contrast against %s", color, minimumContrast, darkBackground)
 		}
-		palette = next
 	}
 }
 

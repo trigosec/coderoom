@@ -14,7 +14,6 @@ import (
 // The session uses its AgentFactory to construct the agent for the given alias.
 type InviteCommand struct {
 	Alias string
-	Color string
 }
 
 func (c InviteCommand) execute(s *Session) error {
@@ -37,7 +36,7 @@ func (c InviteCommand) execute(s *Session) error {
 	s.CreateAgentRuntime(c.Alias)
 	a := s.agentFactory(s, cfg, backend)
 	s.notify(ParticipantStatusChanged{Alias: c.Alias, From: "", To: p.Status, Since: p.Since})
-	s.notify(AgentStarting{Alias: c.Alias})
+	s.notify(AgentStarting(c))
 	startInvitedAgent(c.Alias, a, s)
 	return nil
 }
@@ -58,7 +57,6 @@ func (c InviteCommand) buildParticipant(s *Session, cfg roomconfig.ParticipantCo
 		Alias:      cfg.Alias,
 		Role:       cfg.Role,
 		Initiative: participant.InitiativeManual,
-		Color:      c.Color,
 	}
 	p.BeginStartup(s.now())
 	return p

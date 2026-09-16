@@ -549,16 +549,13 @@ func TestInvite_resolvesRoleFromConfig(t *testing.T) {
 	}
 }
 
-func TestInvite_colorStoredOnParticipant(t *testing.T) {
+func TestInvite_assignsColorToParticipant(t *testing.T) {
 	obs := newTestObserver()
 	a := newMockAgent()
 	s := newSession(t, session.WithObserver(obs), fixedFactory(a))
 	t.Cleanup(func() { _ = s.Execute(session.RemoveCommand{Alias: "ada"}) })
 
-	err := s.Execute(session.InviteCommand{
-		Alias: "ada",
-		Color: "#4ade80",
-	})
+	err := s.Execute(session.InviteCommand{Alias: "ada"})
 	if err != nil {
 		t.Fatalf("InviteCommand: %v", err)
 	}
@@ -568,8 +565,8 @@ func TestInvite_colorStoredOnParticipant(t *testing.T) {
 	if !ok {
 		t.Fatal("participant not found after invite")
 	}
-	if p.Color != "#4ade80" {
-		t.Errorf("expected color %q on participant, got %q", "#4ade80", p.Color)
+	if p.Color == "" {
+		t.Error("expected participant color")
 	}
 }
 
