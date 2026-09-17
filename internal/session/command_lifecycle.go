@@ -53,11 +53,7 @@ func (s *Session) resolveParticipantConfig(alias string) (roomconfig.Participant
 }
 
 func (c InviteCommand) buildParticipant(s *Session, cfg roomconfig.ParticipantConfig) *participant.Participant {
-	p := &participant.Participant{
-		Alias:      cfg.Alias,
-		Role:       cfg.Role,
-		Initiative: participant.InitiativeManual,
-	}
+	p := participant.New(cfg.Alias, cfg.Role, participant.InitiativeManual)
 	p.BeginStartup(s.now())
 	return p
 }

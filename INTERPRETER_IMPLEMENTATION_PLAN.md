@@ -46,16 +46,16 @@ go test ./...
 
 ## 4. Add the interpreter foundation
 
-- [ ] Create `internal/interpreter` without importing UI or terminal packages.
-- [ ] Define the narrow `SessionController` dependency.
-- [ ] Add the serialized operation/event loop.
-- [ ] Make the session observer enqueue and return without waiting.
-- [ ] Add interpreter observers, structured events, and immutable snapshots.
-- [ ] Add interpreter-owned approval DTOs and translation.
-- [ ] Add lifecycle and shutdown handling.
-- [ ] Add recording session and shell fakes.
-- [ ] Test synchronous session callbacks and serialized `Execute` calls.
-- [ ] Leave the TUI on its existing execution path for now.
+- [x] Create `internal/interpreter` without importing UI or terminal packages.
+- [x] Define the narrow `SessionController` dependency.
+- [x] Add the serialized operation/event loop.
+- [x] Make the session observer enqueue and return without waiting.
+- [x] Add interpreter observers, structured events, and immutable snapshots.
+- [x] Add interpreter-owned approval DTOs and translation.
+- [x] Add lifecycle and shutdown handling.
+- [x] Add a recording session fake.
+- [x] Test synchronous session callbacks and serialized `Execute` calls.
+- [x] Leave the TUI on its existing execution path for now.
 
 Verification:
 
@@ -72,6 +72,7 @@ go test ./...
 - [ ] Move `/who` semantics.
 - [ ] Move the room-scoped command registry.
 - [ ] Move shell execution, definitions, invocation, and cancellation.
+- [ ] Add a fake shell runner for interpreter tests.
 - [ ] Preserve existing syntax, routing, output, and error behavior.
 - [ ] Keep the TUI on the old execution path until final cutover.
 

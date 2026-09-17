@@ -21,12 +21,9 @@ func (fakeAgent) Interrupt() error                          { return nil }
 func (fakeAgent) Stop() error                               { return nil }
 
 func newParticipant(alias string) *participant.Participant {
-	return &participant.Participant{
-		Alias:      alias,
-		Role:       "builder",
-		Initiative: participant.InitiativeManual,
-		Status:     participant.StatusIdle,
-	}
+	p := participant.New(alias, "builder", participant.InitiativeManual)
+	p.Status = participant.StatusIdle
+	return p
 }
 
 func TestRegistry_AddAndGet(t *testing.T) {

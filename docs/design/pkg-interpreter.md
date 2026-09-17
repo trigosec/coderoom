@@ -11,6 +11,7 @@ The dependency direction is:
 ```text
 internal/ui -> internal/interpreter -> internal/session
                                   \-> internal/room
+                                  \-> internal/participant
                                   \-> internal/promptlang
                                   \-> internal/shell
 ```
@@ -74,7 +75,10 @@ receive the underlying `*session.Session`.
 
 `Snapshot` contains the application state needed for presentation, including
 the canonical room snapshot and participant roster. It contains values, not
-live session or room objects.
+live session or room objects. The roster uses `participant.View`, the safe
+observable portion embedded in the live `participant.Participant`. This keeps
+participant fields and domain types canonical while preventing front ends from
+receiving agent capabilities or runtime bookkeeping.
 
 ### Session dependency
 
@@ -86,7 +90,7 @@ type SessionController interface {
     Execute(session.Command) error
     AddObserver(session.Observer)
     PlanSharedSend(alias string) session.SharedSendPlan
-    Roster() []participant.Participant
+    Roster() []participant.View
     Participant(alias string) (participant.Participant, bool)
     RoutableParticipants() []participant.Participant
     BarrierParticipants() []participant.Participant
@@ -103,8 +107,9 @@ Production supplies `*session.Session`; tests use a recording fake that can
 emit synchronous observer events and detect concurrent `Execute` calls.
 
 The interface is internal plumbing, not part of the front-end facade. Session
-commands, observers, routing plans, and participant values do not escape
-through interpreter events or snapshots.
+commands, observers, and routing plans do not escape through interpreter events
+or snapshots. Participant views may appear in snapshots; front ends may depend
+on `internal/participant`, but not on `internal/session` or `internal/agent`.
 
 ### Language submissions and structured operations
 

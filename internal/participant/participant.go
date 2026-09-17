@@ -61,15 +61,22 @@ const (
 	StatusCrashed   Status = "crashed"
 )
 
-// Participant is a named collaborator in a session.
-type Participant struct {
+// View is the observable state of a participant. It contains no live runtime
+// capabilities and is safe to expose in application snapshots.
+type View struct {
 	Alias      string
 	Role       string
 	Initiative Initiative
 	Status     Status
 	Color      string // hex colour code, e.g. "#4ade80"; empty means default terminal colour
-	Agent      agent.Agent
 	Since      time.Time
+}
+
+// Participant is a named collaborator in a session.
+type Participant struct {
+	View
+
+	Agent agent.Agent
 	// OpenStreams tracks the participant's active turn streams. Session is the
 	// sole mutator; snapshots copy the map so observers/UI can inspect it safely.
 	OpenStreams map[agent.StreamID]struct{}
@@ -82,7 +89,17 @@ type Participant struct {
 	sessionReady bool
 }
 
-// Snapshot returns a value copy safe for observers/UI to inspect.
+// New creates a participant with the supplied identity and initiative. The
+// caller advances it into its initial lifecycle state before registration.
+func New(alias, role string, initiative Initiative) *Participant {
+	return &Participant{View: View{
+		Alias:      alias,
+		Role:       role,
+		Initiative: initiative,
+	}}
+}
+
+// Snapshot returns a detached runtime copy for session operations.
 func (p *Participant) Snapshot() Participant {
 	cp := *p
 	cp.OpenStreams = cloneOpenStreams(p.OpenStreams)

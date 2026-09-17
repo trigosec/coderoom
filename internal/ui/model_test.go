@@ -284,7 +284,10 @@ func TestHandleEvent_agentStoppedClearsStreaming(t *testing.T) {
 }
 
 func TestRoutingFor(t *testing.T) {
-	ps := []participant.Participant{{Alias: "ada"}, {Alias: "bob"}}
+	ps := []participant.Participant{
+		{View: participant.View{Alias: "ada"}},
+		{View: participant.View{Alias: "bob"}},
+	}
 	if got := routingFor(promptlang.Broadcast{Text: "hi"}, ps, nil); !slices.Equal(got, []string{"ada", "bob"}) {
 		t.Errorf("broadcast routing: got %v, want [ada bob]", got)
 	}

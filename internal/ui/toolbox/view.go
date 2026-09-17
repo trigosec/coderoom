@@ -113,14 +113,14 @@ func cellWidth() int {
 	return glyphW + 1 + aliasMax + 1 + len("(59m59s)")
 }
 
-func renderParticipantCells(innerWidth int, now time.Time, ps []participant.Participant) string {
+func renderParticipantCells(innerWidth int, now time.Time, ps []participant.View) string {
 	w := cellWidth()
 	if innerWidth <= 0 {
 		return ""
 	}
 	n := max(innerWidth/w, 1)
 
-	entries := make([]participant.Participant, 0, len(ps))
+	entries := make([]participant.View, 0, len(ps))
 	for _, p := range ps {
 		if p.Alias == "" {
 			continue
@@ -158,7 +158,7 @@ func renderParticipantCells(innerWidth int, now time.Time, ps []participant.Part
 	return strings.TrimRight(strings.Join(cells, ""), " ")
 }
 
-func renderCell(p participant.Participant, now time.Time, width int) string {
+func renderCell(p participant.View, now time.Time, width int) string {
 	glyph, showElapsed := participantGlyph(p.Status, now)
 	elapsed := participantElapsedSuffix(p, now, showElapsed)
 	// Reserve columns for glyph + separator + elapsed so truncation never
@@ -198,7 +198,7 @@ func participantGlyph(status participant.Status, now time.Time) (string, bool) {
 	}
 }
 
-func participantElapsedSuffix(p participant.Participant, now time.Time, showElapsed bool) string {
+func participantElapsedSuffix(p participant.View, now time.Time, showElapsed bool) string {
 	if !showElapsed {
 		return ""
 	}

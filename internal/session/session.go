@@ -160,13 +160,13 @@ func (s *Session) CreateAgentContext(alias string) context.Context {
 }
 
 // Roster returns a snapshot of participants for UI display.
-func (s *Session) Roster() []participant.Participant {
+func (s *Session) Roster() []participant.View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ps := s.registry.List()
-	out := make([]participant.Participant, len(ps))
+	out := make([]participant.View, len(ps))
 	for i, p := range ps {
-		out[i] = p.Snapshot()
+		out[i] = p.View
 	}
 	return out
 }

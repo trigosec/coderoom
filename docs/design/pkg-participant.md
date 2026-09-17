@@ -17,6 +17,27 @@ Those responsibilities belong to `agent`, `session`, and `ui` respectively.
 The package exists to centralize participant invariants so they are enforced in
 one place instead of being reimplemented ad hoc by the session controller.
 
+## Observable view and runtime entity
+
+`View` contains the participant fields safe to expose to front ends: identity,
+initiative, lifecycle status, color, and status timestamp. `Participant`
+embeds that view and adds live agent capabilities and runtime bookkeeping.
+Embedding keeps one canonical copy of every observable field while allowing
+session rosters and interpreter snapshots to return `View` values without
+exposing an `agent.Agent` or mutable stream tracking.
+
+```go
+type Participant struct {
+    View
+    Agent       agent.Agent
+    OpenStreams map[agent.StreamID]struct{}
+    // private runtime state
+}
+```
+
+`Participant.Snapshot` remains a detached runtime copy for session-internal
+operations. Public application snapshots use `View` instead.
+
 ## Identity and color allocation
 
 `Participant.Color` is part of participant identity for the lifetime of a
@@ -110,13 +131,14 @@ of state transitions; the session owns when to attempt them.
 
 The intended lifecycle is:
 
-1. `BeginStartup`
-2. `AttachAgent`
-3. `CommitIdle`
-4. `PrepareForWork`
-5. `BeginWorking`
-6. `TrackStream` / `CloseStream`
-7. `BecomeIdle`
+1. `New`
+2. `BeginStartup`
+3. `AttachAgent`
+4. `CommitIdle`
+5. `PrepareForWork`
+6. `BeginWorking`
+7. `TrackStream` / `CloseStream`
+8. `BecomeIdle`
 
 Exceptional paths:
 

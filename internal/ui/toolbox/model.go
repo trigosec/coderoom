@@ -11,7 +11,7 @@ import (
 // Model is the state for the participant status bar.
 type Model struct {
 	width        int
-	participants []participant.Participant
+	participants []participant.View
 	now          func() time.Time
 	tickActive   bool
 }
@@ -29,7 +29,7 @@ func (m Model) SetWidth(w int) Model {
 
 // SetParticipants updates the participant snapshot and ensures the animation
 // tick is running if any participant is in an active state.
-func (m Model) SetParticipants(ps []participant.Participant) (Model, tea.Cmd) {
+func (m Model) SetParticipants(ps []participant.View) (Model, tea.Cmd) {
 	m.participants = ps
 	return m.ensureTick()
 }

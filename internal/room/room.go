@@ -33,6 +33,16 @@ func (r *Room) OnEvent(e session.Event) {
 	r.queue.Push(e)
 }
 
+// ApplyEvent synchronously projects e onto the room. Application coordinators
+// use this when event ordering and the resulting snapshot share one serialized
+// execution loop. Callers must not also register this Room as an observer for
+// the same event stream.
+func (r *Room) ApplyEvent(e session.Event) {
+	if update, ok := r.applyEvent(e); ok {
+		r.notify(update)
+	}
+}
+
 // AppendRecord appends a local, non-session record and notifies the
 // observer. Use this for content that did not originate from a
 // session.Event, such as user input or local system/log notices.
