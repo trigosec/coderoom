@@ -11,10 +11,10 @@ import (
 // HandoffCommand transfers the latest completed room-visible output from one
 // alias to another through a context path and emits a shared-room audit event.
 type HandoffCommand struct {
-	FromAlias     string
-	ToAlias       string
-	IdleAliases   []string
-	ResolveSource func(alias string) (HandoffSource, bool)
+	FromAlias   string
+	ToAlias     string
+	IdleAliases []string
+	Source      HandoffSource
 }
 
 func (c HandoffCommand) execute(s *Session) error {
@@ -22,7 +22,7 @@ func (c HandoffCommand) execute(s *Session) error {
 	if err := c.validate(attempt, s); err != nil {
 		return err
 	}
-	if err := c.resolveSource(attempt, s); err != nil {
+	if err := c.validateSource(attempt, s); err != nil {
 		return err
 	}
 	return c.deliver(attempt, s)
@@ -39,13 +39,17 @@ type handoffAttempt struct {
 
 func newHandoffAttempt(c HandoffCommand, s *Session) *handoffAttempt {
 	barrier, idle, busy := handoffBarrierState(c.IdleAliases, s)
+	source := c.Source
+	if source.Text == "" {
+		source.RecordIndex = -1
+	}
 	return &handoffAttempt{
 		fromAlias: c.FromAlias,
 		toAlias:   c.ToAlias,
 		barrier:   barrier,
 		idle:      idle,
 		busy:      busy,
-		source:    HandoffSource{RecordIndex: -1},
+		source:    source,
 	}
 }
 
@@ -64,16 +68,11 @@ func (c HandoffCommand) validate(attempt *handoffAttempt, s *Session) error {
 			fmt.Errorf("handoff requires all participants to be idle: %s", strings.Join(attempt.busy, ", ")),
 		)
 	}
-	if c.ResolveSource == nil {
-		return rejectHandoffAttempt(attempt, s, "source resolver missing", fmt.Errorf("handoff source resolver is required"))
-	}
 	return nil
 }
 
-func (c HandoffCommand) resolveSource(attempt *handoffAttempt, s *Session) error {
-	source, ok := c.ResolveSource(c.FromAlias)
-	if ok {
-		attempt.source = source
+func (c HandoffCommand) validateSource(attempt *handoffAttempt, s *Session) error {
+	if c.Source.Text != "" {
 		return nil
 	}
 	return rejectHandoffAttempt(

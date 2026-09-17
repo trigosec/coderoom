@@ -507,11 +507,12 @@ func (m Model) cancelAgent(alias string) Model {
 }
 
 func (m Model) executeHandoff(fromAlias, toAlias string, idleAliases []string) (Model, []string, error) {
+	source, _ := m.room.LatestHandoffSource(fromAlias)
 	err := m.sess.Execute(session.HandoffCommand{
-		FromAlias:     fromAlias,
-		ToAlias:       toAlias,
-		IdleAliases:   append([]string(nil), idleAliases...),
-		ResolveSource: m.room.LatestHandoffSource,
+		FromAlias:   fromAlias,
+		ToAlias:     toAlias,
+		IdleAliases: append([]string(nil), idleAliases...),
+		Source:      source,
 	})
 	if err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: handoff %q -> %q: %v", fromAlias, toAlias, err))

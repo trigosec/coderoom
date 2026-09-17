@@ -31,11 +31,11 @@ go test ./...
 
 ## 3. Make handoff input value-based
 
-- [ ] Replace `HandoffCommand.ResolveSource` with a resolved
+- [x] Replace `HandoffCommand.ResolveSource` with a resolved
       `session.HandoffSource` value.
-- [ ] Keep source selection in the current canonical room owner temporarily.
-- [ ] Preserve source record index and handoff audit metadata.
-- [ ] Update session, room, and UI tests.
+- [x] Keep source selection in the current canonical room owner temporarily.
+- [x] Preserve source record index and handoff audit metadata.
+- [x] Update session, room, and UI tests.
 
 Verification:
 
