@@ -66,7 +66,7 @@ go test ./...
 
 ## 5. Move basic statement execution
 
-- [ ] Add temporary `SubmitWithFallback(raw, session.Command)` migration API.
+- [x] Add temporary `SubmitWithFallback(raw, session.Command)` migration API.
 - [ ] Embed the interpreter in the TUI and deliver its observer events through
       a blocking `tea.Cmd` queue listener.
 - [ ] Route eligible legacy session commands through `SubmitWithFallback` so
@@ -75,19 +75,22 @@ go test ./...
       and fallback causal events drain before the next submission.
 - [ ] Do not use precomputed fallbacks for workflows that depend on mutable
       session or room state; migrate those workflows as units.
-- [ ] Add the documented `Submit` contract tests before migrating handlers.
-- [ ] Prove `Submit` only enqueues from the caller and all execution occurs on
+- [x] Add the submission contract suite in dedicated
+      `submit_contract_test.go` before migrating handlers.
+- [x] Prove `Submit` only enqueues from the caller and all execution occurs on
       the interpreter-loop goroutine.
-- [ ] Prove sequential ordering and concurrent `session.Execute`
+- [x] Prove sequential ordering and concurrent `session.Execute`
       serialization with multiple valid commands that all reach the fake.
-- [ ] Drain synchronous session events caused by one operation before planning
+- [x] Drain synchronous session events caused by one operation before planning
       or executing the next external submission.
-- [ ] Cover invalid arguments, undefined commands, execution failure,
+- [x] Coalesce session-event wakeups so event bursts enqueue at most one drain
+      marker.
+- [x] Cover invalid arguments, undefined commands, execution failure,
       synchronous callbacks, and submission after shutdown.
-- [ ] Reject `Submit` and `SubmitWithFallback` with `ErrStagePending` while a
+- [x] Reject `Submit` and `SubmitWithFallback` with `ErrStagePending` while a
       stage exists, without parsing, room mutation, fallback, or session
       execution.
-- [ ] Move prompt parsing and statement dispatch into the interpreter.
+- [x] Move prompt parsing and fallback/unknown dispatch into the interpreter.
 - [ ] Move invite, remove, cancel, policy, send, broadcast, and handoff
       translation.
 - [ ] Move `/who` semantics.

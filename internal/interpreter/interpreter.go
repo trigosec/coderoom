@@ -3,9 +3,11 @@ package interpreter
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/session"
@@ -16,7 +18,11 @@ type Option func(*Interpreter)
 
 type operation interface{ apply(*Interpreter) }
 
-type sessionEventOperation struct{ event session.Event }
+type drainSessionEventsOperation struct{}
+type submitOperation struct {
+	raw      string
+	fallback session.Command
+}
 type snapshotOperation struct{ result chan Snapshot }
 type resolveApprovalOperation struct {
 	id     int64
@@ -38,10 +44,15 @@ type Interpreter struct {
 	enqueueMu    sync.Mutex
 	closed       bool
 
-	observerMu sync.RWMutex
-	observers  []Observer
-	stateMu    sync.RWMutex
-	approval   *Approval
+	observerMu   sync.RWMutex
+	observers    []Observer
+	stateMu      sync.RWMutex
+	approval     *Approval
+	stagePending bool
+
+	sessionEventMu      sync.Mutex
+	sessionEvents       []session.Event
+	sessionDrainPending bool
 }
 
 // New starts an Interpreter backed by sess.
@@ -73,6 +84,17 @@ func New(ctx context.Context, sess SessionController, _ string, opts ...Option) 
 		}
 	}()
 	return i
+}
+
+// Submit queues user-authored prompt-language input for execution.
+func (i *Interpreter) Submit(raw string) {
+	i.enqueue(submitOperation{raw: raw})
+}
+
+// SubmitWithFallback queues input with a temporary legacy session command.
+// Native handlers take precedence once they are introduced.
+func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) {
+	i.enqueue(submitOperation{raw: raw, fallback: fallback})
 }
 
 // ResolveApproval queues a structured response to the active approval.
@@ -138,16 +160,54 @@ func (i *Interpreter) run() {
 		if !ok {
 			return
 		}
+		i.drainSessionEvents(false)
 		op.apply(i)
 		if _, stopping := op.(shutdownOperation); stopping {
 			return
 		}
+		i.drainSessionEvents(false)
 	}
 }
 
-func (op sessionEventOperation) apply(i *Interpreter) {
-	i.room.ApplyEvent(op.event)
-	switch event := op.event.(type) {
+func (drainSessionEventsOperation) apply(i *Interpreter) {
+	i.drainSessionEvents(true)
+}
+
+func (i *Interpreter) recordSessionEvent(event session.Event) {
+	i.sessionEventMu.Lock()
+	i.sessionEvents = append(i.sessionEvents, event)
+	shouldWake := !i.sessionDrainPending
+	if shouldWake {
+		i.sessionDrainPending = true
+	}
+	i.sessionEventMu.Unlock()
+	if shouldWake {
+		i.enqueue(drainSessionEventsOperation{})
+	}
+}
+
+func (i *Interpreter) drainSessionEvents(clearPending bool) {
+	for {
+		i.sessionEventMu.Lock()
+		if len(i.sessionEvents) == 0 {
+			if clearPending {
+				i.sessionDrainPending = false
+			}
+			i.sessionEventMu.Unlock()
+			return
+		}
+		events := i.sessionEvents
+		i.sessionEvents = nil
+		i.sessionEventMu.Unlock()
+		for _, event := range events {
+			i.applySessionEvent(event)
+		}
+	}
+}
+
+func (i *Interpreter) applySessionEvent(event session.Event) {
+	i.room.ApplyEvent(event)
+	switch event := event.(type) {
 	case session.ApprovalRequested:
 		approval := approvalFromAgent(event.ID, event.Alias, event.Req)
 		i.stateMu.Lock()
@@ -159,6 +219,37 @@ func (op sessionEventOperation) apply(i *Interpreter) {
 		}
 	}
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
+}
+
+func (op submitOperation) apply(i *Interpreter) {
+	if i.stagePending {
+		i.publish(InputRejected{Raw: op.raw, Err: ErrStagePending})
+		return
+	}
+	statement, err := promptlang.Parse(op.raw)
+	if err != nil {
+		i.publish(InputRejected{Raw: op.raw, Err: err})
+		return
+	}
+	if op.fallback == nil {
+		i.publish(UnknownCommand{Raw: op.raw, Name: commandName(statement)})
+		return
+	}
+
+	i.room.AppendUserInputRecord(op.raw, nil)
+	i.publish(InputAccepted{Raw: op.raw})
+	if err := i.session.Execute(op.fallback); err != nil {
+		i.publish(OperationFailed{Operation: "migration fallback", Err: fmt.Errorf("execute migration fallback: %w", err)})
+	}
+	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
+}
+
+func commandName(statement promptlang.Statement) string {
+	invocation, ok := statement.(promptlang.CommandInvocation)
+	if !ok {
+		return ""
+	}
+	return invocation.Name
 }
 
 func (op snapshotOperation) apply(i *Interpreter) {

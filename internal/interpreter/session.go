@@ -23,5 +23,5 @@ var _ SessionController = (*session.Session)(nil)
 type sessionObserver struct{ interpreter *Interpreter }
 
 func (o sessionObserver) OnEvent(event session.Event) {
-	o.interpreter.enqueue(sessionEventOperation{event: event})
+	o.interpreter.recordSessionEvent(event)
 }

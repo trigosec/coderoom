@@ -1,10 +1,15 @@
 package interpreter
 
 import (
+	"errors"
+
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
 	roomstate "github.com/trigosec/coderoom/internal/room"
 )
+
+// ErrStagePending rejects new input while a staged batch awaits a stage action.
+var ErrStagePending = errors.New("submission blocked by pending stage")
 
 // ApprovalKind identifies an approval request without exposing agent protocol
 // types to front ends.
@@ -54,8 +59,29 @@ type OperationFailed struct {
 	Err       error
 }
 
+// InputAccepted reports prompt-language input accepted for execution.
+type InputAccepted struct {
+	Raw     string
+	Routing []string
+}
+
+// InputRejected reports input rejected before acceptance.
+type InputRejected struct {
+	Raw string
+	Err error
+}
+
+// UnknownCommand reports valid input with no interpreter handler or fallback.
+type UnknownCommand struct {
+	Raw  string
+	Name string
+}
+
 func (StateChanged) interpreterEvent()    {}
 func (OperationFailed) interpreterEvent() {}
+func (InputAccepted) interpreterEvent()   {}
+func (InputRejected) interpreterEvent()   {}
+func (UnknownCommand) interpreterEvent()  {}
 
 // Observer consumes application events. Implementations should return quickly.
 type Observer interface{ OnEvent(Event) }
