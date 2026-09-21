@@ -66,6 +66,27 @@ go test ./...
 
 ## 5. Move basic statement execution
 
+- [ ] Add temporary `SubmitWithFallback(raw, session.Command)` migration API.
+- [ ] Embed the interpreter in the TUI and deliver its observer events through
+      a blocking `tea.Cmd` queue listener.
+- [ ] Route eligible legacy session commands through `SubmitWithFallback` so
+      only the interpreter loop calls `session.Execute`.
+- [ ] Prove native handlers take precedence, fallbacks execute exactly once,
+      and fallback causal events drain before the next submission.
+- [ ] Do not use precomputed fallbacks for workflows that depend on mutable
+      session or room state; migrate those workflows as units.
+- [ ] Add the documented `Submit` contract tests before migrating handlers.
+- [ ] Prove `Submit` only enqueues from the caller and all execution occurs on
+      the interpreter-loop goroutine.
+- [ ] Prove sequential ordering and concurrent `session.Execute`
+      serialization with multiple valid commands that all reach the fake.
+- [ ] Drain synchronous session events caused by one operation before planning
+      or executing the next external submission.
+- [ ] Cover invalid arguments, undefined commands, execution failure,
+      synchronous callbacks, and submission after shutdown.
+- [ ] Reject `Submit` and `SubmitWithFallback` with `ErrStagePending` while a
+      stage exists, without parsing, room mutation, fallback, or session
+      execution.
 - [ ] Move prompt parsing and statement dispatch into the interpreter.
 - [ ] Move invite, remove, cancel, policy, send, broadcast, and handoff
       translation.
@@ -74,7 +95,7 @@ go test ./...
 - [ ] Move shell execution, definitions, invocation, and cancellation.
 - [ ] Add a fake shell runner for interpreter tests.
 - [ ] Preserve existing syntax, routing, output, and error behavior.
-- [ ] Keep the TUI on the old execution path until final cutover.
+- [ ] Remove each TUI translator as its native interpreter handler lands.
 
 Verification:
 
@@ -125,10 +146,9 @@ go test ./...
 
 ## 8. Cut the TUI over
 
-- [ ] Construct and observe the interpreter from the application composition
-      root.
-- [ ] Submit all prompt-language input through `Interpreter.Submit`.
-- [ ] Render interpreter events and snapshots.
+- [ ] Replace remaining `SubmitWithFallback` calls with `Submit`.
+- [ ] Remove `SubmitWithFallback` after the final legacy translator is gone.
+- [ ] Complete rendering of interpreter events and snapshots.
 - [ ] Run synchronous stage operations inside `tea.Cmd`.
 - [ ] Remove UI-owned registry, shell execution, loop state, and barrier
       coordination.
