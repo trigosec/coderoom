@@ -54,6 +54,7 @@ type Interpreter struct {
 func New(ctx context.Context, sess SessionController, cwd string, opts ...Option) *Interpreter
 func (i *Interpreter) Submit(raw string) error
 func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) error
+func (i *Interpreter) ExecuteLegacy(command session.Command) error
 func (i *Interpreter) ResolveApproval(id int64, choice ApprovalChoice)
 func (i *Interpreter) TakeStageForEdit() (string, bool)
 func (i *Interpreter) DiscardStage() bool
@@ -84,12 +85,32 @@ executing it.
 The method is removed with the last legacy command translator and is not part
 of the intended final facade.
 
+`ExecuteLegacy` is a second temporary migration API. It replaces direct TUI
+calls to `session.Execute` before the surrounding parsing, planning, or
+workflow has moved into the interpreter. It queues the supplied data-only
+command on the interpreter loop, waits for that operation to finish, and
+returns the session execution error to the existing TUI caller. It does not
+parse prompt input, append a room record, or render an error. This synchronous
+contract intentionally matches the current TUI call sites and centralizes
+execution ownership without requiring their workflows to migrate at once.
+
+`ExecuteLegacy` uses a buffered one-shot response and returns `ErrClosed` when
+shutdown prevents acceptance. An accepted call must receive its result or
+observe interpreter completion; shutdown must not strand it. The interpreter's
+own projection of synchronous causal events completes before the result is
+sent; TUI observers still consume their separately queued events through
+Bubble Tea. `ExecuteLegacy` must never be called from the interpreter loop or a
+synchronous session observer callback. The method is removed after every
+caller has moved to `Submit`,
+`SubmitWithFallback`, or a dedicated interpreter operation.
+
 Fallback construction must not query mutable session or room state outside the
 interpreter loop. Workflows that require such planning, including barrier
-staging and handoff source selection, migrate as a unit rather than encoding a
-stale precomputed fallback. The temporary UI dependency on `internal/session`
-is limited to constructing fallback command values; it never calls
-`session.Execute`.
+staging and handoff source selection, continue planning in their existing TUI
+workflow and use synchronous `ExecuteLegacy` until they migrate as a unit.
+Session validation remains authoritative. The temporary UI dependency on
+`internal/session` is limited to constructing command values; it never calls
+`session.Execute` directly.
 
 Dedicated methods are reserved for structured interactions that are not prompt
 language: resolving an approval; editing, discarding, or interrupting and
@@ -319,6 +340,34 @@ sequenceDiagram
     end
     IL->>IL: process the next submission
 ```
+
+### Temporary legacy execution gateway
+
+Before command ownership moves, all existing TUI `session.Execute` call sites
+are redirected through `ExecuteLegacy`. Planning and user-visible success or
+failure handling remain at the call site, but the actual session call has one
+owner and one goroutine.
+
+```mermaid
+sequenceDiagram
+    participant TUI as Bubble Tea goroutine
+    participant IL as Interpreter loop goroutine
+    participant S as Session
+
+    TUI->>TUI: parse/plan legacy workflow
+    TUI-->>IL: enqueue ExecuteLegacy(command, result)
+    TUI->>TUI: wait for one-shot result
+    IL->>S: Execute(command)
+    S-->>IL: synchronous session events
+    IL->>IL: record and drain causal events
+    IL-->>TUI: return execution error or nil
+    TUI->>TUI: preserve existing success/error behavior
+```
+
+This gateway is not a second long-term command API. It exists so execution can
+be centralized before parsing and mutable workflow state move. Because it is
+synchronous, it preserves the current ordering at legacy call sites and does
+not introduce an extra asynchronous planning window.
 
 ## Submission
 
@@ -620,7 +669,12 @@ blocking, synchronous observer callbacks, and active-call counters.
 | Sequential submissions | A later submission cannot execute before an earlier submission and its synchronously emitted session events are fully applied. |
 | Concurrent submissions | Every resulting `session.Execute` call has at most one active invocation; order is the interpreter queue's acceptance order. |
 | Submission during an active stage | `InputRejected.Err` wraps or equals `ErrStagePending`; the input is not parsed or recorded, the existing stage is unchanged, no other submission event is published, and neither a native handler, fallback, nor `session.Execute` runs. |
-| Submission after shutdown | The submission is ignored, does not execute, and does not strand a caller or publish through the closed dispatcher. |
+| Submission after shutdown | The submission returns `ErrClosed`, does not execute, and does not publish through the closed dispatcher. |
+
+`ExecuteLegacy` has separate contract coverage: calls are serialized with
+submissions and with one another; execution errors are returned unchanged;
+synchronous causal events are drained before the caller resumes; calls after
+shutdown return `ErrClosed`; and shutdown cannot strand an accepted caller.
 
 The serialization test must cause multiple valid operations to reach
 `session.Execute`; submitting the same consumable approval repeatedly is not

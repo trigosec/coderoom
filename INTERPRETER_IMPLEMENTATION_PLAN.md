@@ -66,15 +66,63 @@ go test ./...
 
 ## 5. Move basic statement execution
 
+### 5a. Centralize legacy session execution
+
 - [x] Add temporary `SubmitWithFallback(raw, session.Command)` migration API.
 - [x] Embed the interpreter in the TUI and deliver its observer events through
       a blocking `tea.Cmd` queue listener.
-- [ ] Route eligible legacy session commands through `SubmitWithFallback` so
-      only the interpreter loop calls `session.Execute`.
+- [ ] Add temporary synchronous
+      `ExecuteLegacy(command session.Command) error`.
+- [ ] Enqueue `ExecuteLegacy` on the interpreter loop with a buffered one-shot
+      result channel; return the original execution error to the caller.
+- [ ] Complete the interpreter's projection of synchronous causal session
+      events before resolving the result. TUI observers continue consuming
+      their independently queued events through Bubble Tea.
+- [ ] Return `ErrClosed` when shutdown has begun, and guarantee that shutdown
+      resolves or rejects every accepted synchronous request.
+- [ ] Prohibit calling `ExecuteLegacy` from the interpreter loop or a
+      synchronous session observer callback.
+- [ ] Add contract tests for serialization with submissions, unchanged error
+      propagation, causal-event ordering, shutdown, and concurrent callers.
+- [ ] Replace every direct TUI `session.Execute` call—including approval,
+      loops, immediate sends, and staged dispatch—with `ExecuteLegacy` while
+      leaving parsing, planning, and rendering behavior unchanged.
+- [ ] Add a boundary test proving `internal/ui` contains no direct
+      `session.Execute` call before command-by-command migration starts.
+- [ ] Keep mutable planning in its current TUI workflow during this checkpoint;
+      `ExecuteLegacy` centralizes execution but is not a permanent ownership
+      boundary.
+
+### 5b. Establish temporary submission routing
+
+- [ ] Replace the current submit-everything/`UnknownCommand` fallback with
+      explicit temporary branching in the existing TUI submission function:
+      - legacy prompt commands continue through the current TUI parser and
+        invoke `ExecuteLegacy` when they produce a session command;
+      - legacy control/query and other non-session commands continue through
+        the existing TUI handler;
+      - native interpreter commands use `Submit` (initially none).
+- [ ] Keep `SubmitWithFallback` limited to data-only `session.Command` values;
+      do not pass callbacks, UI state, or presentation behavior into the
+      interpreter.
+- [ ] Introduce `SubmitWithFallback` at the submission boundary only after all
+      direct session execution has been centralized through `ExecuteLegacy`.
+- [ ] Add an explicit terminal submission event emitted after execution and
+      its synchronous causal session events have been drained.
+- [ ] While a submission is unresolved, prevent the sequential TUI from
+      starting another interpreter or legacy command. Release the gate only on
+      the terminal event, including execution failure.
+- [ ] Test `/invite ada` followed immediately by `/who`: after the invite
+      command returns and its synchronous events drain, `/who` observes `ada`
+      in `Starting` state. Submission completion does not wait for the
+      asynchronous `AgentStarted` event.
+- [ ] Test failure and shutdown paths release or reject the temporary gate
+      without losing the composer's current draft.
 - [ ] Prove native handlers take precedence, fallbacks execute exactly once,
       and fallback causal events drain before the next submission.
 - [ ] Do not use precomputed fallbacks for workflows that depend on mutable
-      session or room state; migrate those workflows as units.
+      session or room state; keep them on synchronous `ExecuteLegacy` and
+      migrate those workflows as units.
 - [x] Add the submission contract suite in dedicated
       `submit_contract_test.go` before migrating handlers.
 - [x] Prove `Submit` only enqueues from the caller and all execution occurs on
@@ -91,9 +139,35 @@ go test ./...
       stage exists, without parsing, room mutation, fallback, or session
       execution.
 - [x] Move prompt parsing and fallback/unknown dispatch into the interpreter.
-- [ ] Move invite, remove, cancel, policy, send, broadcast, and handoff
-      translation.
-- [ ] Move `/who` semantics.
+
+### 5c. Migrate control and query commands
+
+- [ ] Move `/who` semantics into the interpreter and route it through
+      `Submit`.
+- [ ] Move `/help` command metadata into the interpreter while leaving visual
+      formatting in the TUI, then route it through `Submit`.
+- [ ] Make the interpreter recognize `/quit` and emit an exit-request event;
+      the TUI remains responsible for returning `tea.Quit`.
+- [ ] Route approval decisions through `Interpreter.ResolveApproval`, remove
+      the TUI's `ResolveApprovalCommand` construction, and delete that
+      `ExecuteLegacy` call.
+- [ ] Decide explicitly whether debug display commands remain UI-only or
+      become interpreter commands; they must not expose UI behavior through a
+      fallback callback.
+- [ ] Remove each migrated control/query command from the legacy TUI handler.
+
+### 5d. Migrate session commands
+
+- [ ] Route eligible legacy data-only session commands (`/invite`, `/remove`,
+      `/cancel`, and policy) through `SubmitWithFallback` so the interpreter
+      loop remains the sole caller of `session.Execute`.
+- [ ] After the temporary routing model and control/query commands are stable,
+      migrate `/invite` from `SubmitWithFallback` to native `Submit` handling.
+- [ ] Then migrate `/remove`, `/cancel`, and policy commands one at a time,
+      deleting each fallback translation as its native handler lands.
+- [ ] Move send, broadcast, and handoff translation only with their mutable
+      planning/staging workflows; until then they use `ExecuteLegacy` rather
+      than precomputed asynchronous fallbacks.
 - [ ] Move the room-scoped command registry.
 - [ ] Move shell execution, definitions, invocation, and cancellation.
 - [ ] Add a fake shell runner for interpreter tests.
@@ -151,6 +225,8 @@ go test ./...
 
 - [ ] Replace remaining `SubmitWithFallback` calls with `Submit`.
 - [ ] Remove `SubmitWithFallback` after the final legacy translator is gone.
+- [ ] Remove `ExecuteLegacy` after the final TUI workflow moves into the
+      interpreter.
 - [ ] Complete rendering of interpreter events and snapshots.
 - [ ] Run synchronous stage operations inside `tea.Cmd`.
 - [ ] Remove UI-owned registry, shell execution, loop state, and barrier
