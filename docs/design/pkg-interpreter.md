@@ -381,7 +381,8 @@ on the interpreter loop. If a stage exists, the submission is rejected with
 single-stage policy:
 
 - the raw input is not parsed or appended to room history
-- `InputAccepted` and `UnknownCommand` are not published
+- `InputAccepted` and `UnknownCommand` are not published; `InputRejected` is
+  the terminal outcome
 - the existing stage is neither replaced nor modified
 - native handlers and migration fallbacks are not executed
 - `session.Execute` is not called
@@ -401,6 +402,32 @@ A syntactically valid command invocation that is absent from the
 interpreter-owned command registry produces `UnknownCommand`. Neither outcome
 appends a room record, publishes `InputAccepted`, calls `session.Execute`, or
 changes workflow state.
+
+Every successfully enqueued `Submit` or `SubmitWithFallback` produces exactly
+one terminal outcome. Rejection and unknown routing are already complete
+outcomes; they do not need a second confirmation event. Recognized input first
+publishes `InputAccepted`, then finishes with either `SubmissionSucceeded` or
+`SubmissionFailed` after synchronous causal session events have been
+projected.
+
+| Situation | Ordered submission events |
+|---|---|
+| Enqueue refused after shutdown begins | No events; the method returns `ErrClosed` |
+| Stage pending or syntax/argument rejection | `InputRejected` |
+| Valid statement with no native handler or supplied fallback | `UnknownCommand` |
+| Recognized command executes or schedules successfully | `InputAccepted` → zero or more domain/`StateChanged` events → `SubmissionSucceeded` |
+| Recognized command execution fails | `InputAccepted` → zero or more causal domain/`StateChanged` events → `SubmissionFailed` |
+
+These combinations are mutually exclusive: `UnknownCommand` never follows
+`InputAccepted`, and neither rejection nor unknown routing is followed by a
+generic completion event. Submission success means execution or scheduling
+succeeded; it does not mean asynchronous work started by the command has
+finished. For example, `/invite` may publish `SubmissionSucceeded` while its
+participant is still `Starting`, before `AgentStarted`.
+
+Shutdown flushes every terminal outcome from successfully enqueued submissions
+through the observer dispatcher before closing it, so the TUI cannot retain a
+submission gate whose outcome was discarded during `Close`.
 
 For a valid statement, the interpreter:
 
@@ -434,6 +461,16 @@ type InputRejected struct {
 type UnknownCommand struct {
     Raw  string
     Name string
+}
+
+type SubmissionSucceeded struct {
+    Raw string
+}
+
+type SubmissionFailed struct {
+    Raw       string
+    Operation string
+    Err       error
 }
 
 type ShellCompleted struct {
@@ -664,12 +701,17 @@ blocking, synchronous observer callbacks, and active-call counters.
 | Missing native handler with fallback supplied | The fallback reaches `session.Execute` on the interpreter-loop goroutine and `UnknownCommand` is not published. |
 | Missing native handler without fallback | `UnknownCommand` is published and no session execution or state mutation occurs. |
 | Fallback followed by another submission | The fallback execution and its causal session events complete before the later submission plans or executes. |
-| Session execution failure | `OperationFailed` is published and the failure remains structurally inspectable with `errors.Is`; no success-only state is committed. |
+| Session execution failure | `SubmissionFailed` is the terminal outcome and its error remains structurally inspectable with `errors.Is`; neither `SubmissionSucceeded` nor success-only state is committed. |
 | Synchronous session callback | `Submit` completes without deadlock; the callback is projected only after it is dequeued by the interpreter loop. |
 | Sequential submissions | A later submission cannot execute before an earlier submission and its synchronously emitted session events are fully applied. |
 | Concurrent submissions | Every resulting `session.Execute` call has at most one active invocation; order is the interpreter queue's acceptance order. |
-| Submission during an active stage | `InputRejected.Err` wraps or equals `ErrStagePending`; the input is not parsed or recorded, the existing stage is unchanged, no other submission event is published, and neither a native handler, fallback, nor `session.Execute` runs. |
+| Submission during an active stage | `InputRejected.Err` wraps or equals `ErrStagePending`; that rejection is terminal; the input is not parsed or recorded, the existing stage is unchanged, and neither a native handler, fallback, nor `session.Execute` runs. |
 | Submission after shutdown | The submission returns `ErrClosed`, does not execute, and does not publish through the closed dispatcher. |
+
+Every successfully enqueued scenario above publishes exactly one of
+`InputRejected`, `UnknownCommand`, `SubmissionSucceeded`, or
+`SubmissionFailed` as its terminal outcome. A submission refused synchronously
+with `ErrClosed` was not enqueued and therefore publishes no event.
 
 `ExecuteLegacy` has separate contract coverage: calls are serialized with
 submissions and with one another; execution errors are returned unchanged;

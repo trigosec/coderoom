@@ -107,11 +107,13 @@ go test ./...
       interpreter.
 - [ ] Introduce `SubmitWithFallback` at the submission boundary only after all
       direct session execution has been centralized through `ExecuteLegacy`.
-- [ ] Add an explicit terminal submission event emitted after execution and
-      its synchronous causal session events have been drained.
+- [ ] Implement the documented mutually exclusive terminal outcomes:
+      `InputRejected`, `UnknownCommand`, `SubmissionSucceeded`, or
+      `SubmissionFailed`. Do not add a second completion event after rejection
+      or unknown routing.
 - [ ] While a submission is unresolved, prevent the sequential TUI from
-      starting another interpreter or legacy command. Release the gate only on
-      the terminal event, including execution failure.
+      starting another interpreter or legacy command. Release the gate on its
+      single terminal outcome.
 - [ ] Test `/invite ada` followed immediately by `/who`: after the invite
       command returns and its synchronous events drain, `/who` observes `ada`
       in `Starting` state. Submission completion does not wait for the

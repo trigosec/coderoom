@@ -33,6 +33,9 @@ type resolveApprovalOperation struct {
 	choice ApprovalChoice
 }
 type shutdownOperation struct{}
+type eventDispatchBarrier struct{ reached chan struct{} }
+
+func (eventDispatchBarrier) interpreterEvent() {}
 
 // Interpreter serializes application operations and session dispatch.
 type Interpreter struct {
@@ -273,6 +276,7 @@ func (op submitOperation) apply(i *Interpreter) {
 	if err := i.session.Execute(op.fallback); err != nil {
 		i.publish(OperationFailed{Operation: "migration fallback", Err: fmt.Errorf("execute migration fallback: %w", err)})
 	}
+	i.drainSessionEvents(false)
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
 }
 
@@ -314,8 +318,18 @@ func (shutdownOperation) apply(i *Interpreter) {
 	i.cancel()
 	i.operations.Close()
 	i.room.Close()
+	i.flushEvents()
 	i.events.Close()
 	close(i.done)
+}
+
+func (i *Interpreter) flushEvents() {
+	reached := make(chan struct{})
+	i.events.Push(eventDispatchBarrier{reached: reached})
+	select {
+	case <-reached:
+	case <-i.dispatchDone:
+	}
 }
 
 func (i *Interpreter) captureSnapshot() Snapshot {
@@ -343,6 +357,10 @@ func (i *Interpreter) dispatchEvents() {
 		event, ok := i.events.Pull()
 		if !ok {
 			return
+		}
+		if barrier, ok := event.(eventDispatchBarrier); ok {
+			close(barrier.reached)
+			continue
 		}
 		i.observerMu.RLock()
 		observers := append([]Observer(nil), i.observers...)
