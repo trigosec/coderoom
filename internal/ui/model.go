@@ -104,11 +104,12 @@ type Model struct {
 // The session must have an AgentFactory configured before any invite commands
 // are executed.
 func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option) Model {
-	q := queue.New[session.Event]()
-	sess.AddObserver(channelObserver{queue: q})
 	interpreterQueue := queue.New[interpreter.Event]()
 	interp := interpreter.New(ctx, sess, cwd)
 	interp.AddObserver(interpreterObserver{queue: interpreterQueue})
+
+	q := queue.New[session.Event]()
+	sess.AddObserver(channelObserver{queue: q})
 
 	colorByAlias := func(alias string) string {
 		if p, ok := sess.Participant(alias); ok {

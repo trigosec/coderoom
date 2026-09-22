@@ -84,12 +84,12 @@ go test ./...
       synchronous session observer callback.
 - [x] Add contract tests for serialization with submissions, unchanged error
       propagation, causal-event ordering, shutdown, and concurrent callers.
-- [ ] Replace every direct TUI `session.Execute` call—including approval,
+- [x] Replace every direct TUI `session.Execute` call—including approval,
       loops, immediate sends, and staged dispatch—with `ExecuteLegacy` while
       leaving parsing, planning, and rendering behavior unchanged.
-- [ ] Add a boundary test proving `internal/ui` contains no direct
+- [x] Add a boundary test proving `internal/ui` contains no direct
       `session.Execute` call before command-by-command migration starts.
-- [ ] Keep mutable planning in its current TUI workflow during this checkpoint;
+- [x] Keep mutable planning in its current TUI workflow during this checkpoint;
       `ExecuteLegacy` centralizes execution but is not a permanent ownership
       boundary.
 

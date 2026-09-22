@@ -100,7 +100,7 @@ func formatInputRejection(err error) string {
 
 func (m Model) handleApprovalDecision(msg room.ApprovalDecisionMsg) (tea.Model, tea.Cmd) {
 	cmd := session.ResolveApprovalCommand{ApprovalID: m.activeApprovalID, Choice: msg.Choice}
-	if err := m.sess.Execute(cmd); err != nil {
+	if err := m.interpreter.ExecuteLegacy(cmd); err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: resolve approval: %v", err))
 		return m, nil
 	}
@@ -361,7 +361,7 @@ func (m Model) handleStagedInterrupt() Model {
 	nextRoom, blocked, shouldDispatch := m.room.RequestStagedInterrupt(m.stagedSnapshotStatus)
 	m.room = nextRoom
 	for _, alias := range blocked {
-		if err := m.sess.Execute(session.CancelCommand{Alias: alias}); err != nil {
+		if err := m.interpreter.ExecuteLegacy(session.CancelCommand{Alias: alias}); err != nil {
 			m.room = m.room.AppendSystem(fmt.Sprintf("error: cancel %q: %v", alias, err))
 			continue
 		}
@@ -453,7 +453,7 @@ func (m Model) executeAgentAction(a promptlang.Statement) (Model, bool) {
 }
 
 func (m Model) enablePolicy(act promptlang.PolicyEnable) Model {
-	if err := m.sess.Execute(session.EnablePolicyCommand{Name: act.Name}); err != nil {
+	if err := m.interpreter.ExecuteLegacy(session.EnablePolicyCommand{Name: act.Name}); err != nil {
 		m.room = m.room.AppendSystem("error: policy: " + err.Error())
 		return m
 	}
@@ -523,7 +523,7 @@ func (m Model) invokeCommand(invocation promptlang.CommandInvocation) (Model, te
 }
 
 func (m Model) inviteAgent(alias string) Model {
-	err := m.sess.Execute(session.InviteCommand{Alias: alias})
+	err := m.interpreter.ExecuteLegacy(session.InviteCommand{Alias: alias})
 	if err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: invite %q: %v", alias, err))
 		return m
@@ -532,14 +532,14 @@ func (m Model) inviteAgent(alias string) Model {
 }
 
 func (m Model) removeAgent(alias string) Model {
-	if err := m.sess.Execute(session.RemoveCommand{Alias: alias}); err != nil {
+	if err := m.interpreter.ExecuteLegacy(session.RemoveCommand{Alias: alias}); err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: remove %q: %v", alias, err))
 	}
 	return m
 }
 
 func (m Model) cancelAgent(alias string) Model {
-	if err := m.sess.Execute(session.CancelCommand{Alias: alias}); err != nil {
+	if err := m.interpreter.ExecuteLegacy(session.CancelCommand{Alias: alias}); err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: cancel %q: %v", alias, err))
 		return m
 	}
@@ -549,7 +549,7 @@ func (m Model) cancelAgent(alias string) Model {
 
 func (m Model) executeHandoff(fromAlias, toAlias string, idleAliases []string) (Model, []string, error) {
 	source, _ := m.room.LatestHandoffSource(fromAlias)
-	err := m.sess.Execute(session.HandoffCommand{
+	err := m.interpreter.ExecuteLegacy(session.HandoffCommand{
 		FromAlias:   fromAlias,
 		ToAlias:     toAlias,
 		IdleAliases: append([]string(nil), idleAliases...),
@@ -585,7 +585,7 @@ func (m Model) executePlannedSendToAgent(plan session.SharedSendPlan, text strin
 		return m, nil, fmt.Errorf("invalid shared send plan")
 	}
 	alias := targets[0]
-	err := m.sess.Execute(session.SharedSendCommand{
+	err := m.interpreter.ExecuteLegacy(session.SharedSendCommand{
 		Plan:          plan,
 		TextDirect:    text,
 		TextListeners: fmt.Sprintf("@%s: %s", alias, text),
@@ -607,7 +607,7 @@ func (m Model) executeBroadcastAll(text string) (Model, []string, error) {
 		m.room = m.room.AppendSystem("[no agents — use /invite <alias> to start one]")
 		return m, nil, fmt.Errorf("no routable agents")
 	}
-	if err := m.sess.Execute(session.BroadcastCommand{Text: text}); err != nil {
+	if err := m.interpreter.ExecuteLegacy(session.BroadcastCommand{Text: text}); err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: broadcast: %v", err))
 		return m, session.DeliveredAliases(err), fmt.Errorf("broadcast: %w", err)
 	}
