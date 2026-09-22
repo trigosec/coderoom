@@ -273,11 +273,18 @@ func (op submitOperation) apply(i *Interpreter) {
 
 	i.room.AppendUserInputRecord(op.raw, nil)
 	i.publish(InputAccepted{Raw: op.raw})
-	if err := i.session.Execute(op.fallback); err != nil {
-		i.publish(OperationFailed{Operation: "migration fallback", Err: fmt.Errorf("execute migration fallback: %w", err)})
-	}
+	err = i.session.Execute(op.fallback)
 	i.drainSessionEvents(false)
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
+	if err != nil {
+		i.publish(SubmissionFailed{
+			Raw:       op.raw,
+			Operation: "migration fallback",
+			Err:       fmt.Errorf("execute migration fallback: %w", err),
+		})
+		return
+	}
+	i.publish(SubmissionSucceeded{Raw: op.raw})
 }
 
 func (op executeLegacyOperation) apply(i *Interpreter) {

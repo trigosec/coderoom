@@ -81,11 +81,24 @@ type UnknownCommand struct {
 	Name string
 }
 
-func (StateChanged) interpreterEvent()    {}
-func (OperationFailed) interpreterEvent() {}
-func (InputAccepted) interpreterEvent()   {}
-func (InputRejected) interpreterEvent()   {}
-func (UnknownCommand) interpreterEvent()  {}
+// SubmissionSucceeded reports that recognized input executed or scheduled
+// successfully. Asynchronous work started by the command may still be active.
+type SubmissionSucceeded struct{ Raw string }
+
+// SubmissionFailed reports the terminal failure of recognized input.
+type SubmissionFailed struct {
+	Raw       string
+	Operation string
+	Err       error
+}
+
+func (StateChanged) interpreterEvent()        {}
+func (OperationFailed) interpreterEvent()     {}
+func (InputAccepted) interpreterEvent()       {}
+func (InputRejected) interpreterEvent()       {}
+func (UnknownCommand) interpreterEvent()      {}
+func (SubmissionSucceeded) interpreterEvent() {}
+func (SubmissionFailed) interpreterEvent()    {}
 
 // Observer consumes application events. Implementations should return quickly.
 type Observer interface{ OnEvent(Event) }

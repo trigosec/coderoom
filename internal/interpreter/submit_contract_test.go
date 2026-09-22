@@ -99,6 +99,7 @@ func TestSubmitContract_rejectsInvalidArgumentsWithoutMutation(t *testing.T) {
 		t.Fatalf("records = %#v, want none", records)
 	}
 	assertNoSubmitExecution(t, sess.executed)
+	assertNoSubmitEvent(t, events)
 }
 
 func TestSubmitContract_reportsUndefinedCommandWithoutMutation(t *testing.T) {
@@ -113,6 +114,7 @@ func TestSubmitContract_reportsUndefinedCommandWithoutMutation(t *testing.T) {
 		t.Fatalf("records = %#v, want none", records)
 	}
 	assertNoSubmitExecution(t, sess.executed)
+	assertNoSubmitEvent(t, events)
 }
 
 func TestSubmitContract_executesFallbackAndAcceptsInputOnce(t *testing.T) {
@@ -131,6 +133,11 @@ func TestSubmitContract_executesFallbackAndAcceptsInputOnce(t *testing.T) {
 	if len(changed.Snapshot.Room.Records) != 1 || changed.Snapshot.Room.Records[0].Text != "/cancel ada" {
 		t.Fatalf("records = %#v", changed.Snapshot.Room.Records)
 	}
+	succeeded := receiveSubmitEvent[SubmissionSucceeded](t, events)
+	if succeeded.Raw != "/cancel ada" {
+		t.Fatalf("success = %#v", succeeded)
+	}
+	assertNoSubmitEvent(t, events)
 }
 
 func TestSubmitContract_discardsFallbackForInvalidInput(t *testing.T) {
@@ -139,6 +146,7 @@ func TestSubmitContract_discardsFallbackForInvalidInput(t *testing.T) {
 	mustSubmit(t, interp.SubmitWithFallback("/invite", session.InviteCommand{Alias: "ada"}))
 	receiveSubmitEvent[InputRejected](t, events)
 	assertNoSubmitExecution(t, sess.executed)
+	assertNoSubmitEvent(t, events)
 }
 
 func TestSubmitContract_reportsFallbackExecutionFailure(t *testing.T) {
@@ -149,10 +157,32 @@ func TestSubmitContract_reportsFallbackExecutionFailure(t *testing.T) {
 	mustSubmit(t, interp.SubmitWithFallback("/cancel ada", session.CancelCommand{Alias: "ada"}))
 	receiveSubmitEvent[InputAccepted](t, events)
 	receiveSubmitCommand(t, sess.executed)
-	failed := receiveSubmitEvent[OperationFailed](t, events)
+	receiveSubmitEvent[StateChanged](t, events)
+	failed := receiveSubmitEvent[SubmissionFailed](t, events)
 	if !errors.Is(failed.Err, wantErr) {
 		t.Fatalf("failure = %v, want wrapped execution error", failed.Err)
 	}
+	if failed.Raw != "/cancel ada" || failed.Operation != "migration fallback" {
+		t.Fatalf("failure = %#v", failed)
+	}
+	assertNoSubmitEvent(t, events)
+}
+
+func TestSubmitContract_terminalOutcomeFollowsCausalEvents(t *testing.T) {
+	interp, sess, events := newSubmitContractInterpreter(t)
+	sess.execute = func(_ session.Command, observer session.Observer) {
+		observer.OnEvent(session.AgentStarted{Alias: "ada"})
+	}
+
+	mustSubmit(t, interp.SubmitWithFallback("/cancel ada", session.CancelCommand{Alias: "ada"}))
+	receiveSubmitEvent[InputAccepted](t, events)
+	causal := receiveSubmitEvent[StateChanged](t, events)
+	if len(causal.Snapshot.Room.Members) != 1 || causal.Snapshot.Room.Members[0] != "ada" {
+		t.Fatalf("causal members = %v, want [ada]", causal.Snapshot.Room.Members)
+	}
+	receiveSubmitEvent[StateChanged](t, events)
+	receiveSubmitEvent[SubmissionSucceeded](t, events)
+	assertNoSubmitEvent(t, events)
 }
 
 func TestSubmitContract_serializesFallbackExecutions(t *testing.T) {
@@ -294,6 +324,7 @@ func TestSubmitContract_rejectsSubmissionWhileStagePending(t *testing.T) {
 		t.Fatalf("records = %#v, want none", records)
 	}
 	assertNoSubmitExecution(t, sess.executed)
+	assertNoSubmitEvent(t, events)
 }
 
 func TestSubmitContract_ignoresSubmissionAfterShutdown(t *testing.T) {

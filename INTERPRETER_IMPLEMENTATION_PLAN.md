@@ -107,7 +107,7 @@ go test ./...
       interpreter.
 - [ ] Introduce `SubmitWithFallback` at the submission boundary only after all
       direct session execution has been centralized through `ExecuteLegacy`.
-- [ ] Implement the documented mutually exclusive terminal outcomes:
+- [x] Implement the documented mutually exclusive terminal outcomes:
       `InputRejected`, `UnknownCommand`, `SubmissionSucceeded`, or
       `SubmissionFailed`. Do not add a second completion event after rejection
       or unknown routing.
