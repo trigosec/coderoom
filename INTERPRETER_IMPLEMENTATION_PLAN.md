@@ -71,18 +71,18 @@ go test ./...
 - [x] Add temporary `SubmitWithFallback(raw, session.Command)` migration API.
 - [x] Embed the interpreter in the TUI and deliver its observer events through
       a blocking `tea.Cmd` queue listener.
-- [ ] Add temporary synchronous
+- [x] Add temporary synchronous
       `ExecuteLegacy(command session.Command) error`.
-- [ ] Enqueue `ExecuteLegacy` on the interpreter loop with a buffered one-shot
+- [x] Enqueue `ExecuteLegacy` on the interpreter loop with a buffered one-shot
       result channel; return the original execution error to the caller.
-- [ ] Complete the interpreter's projection of synchronous causal session
+- [x] Complete the interpreter's projection of synchronous causal session
       events before resolving the result. TUI observers continue consuming
       their independently queued events through Bubble Tea.
-- [ ] Return `ErrClosed` when shutdown has begun, and guarantee that shutdown
+- [x] Return `ErrClosed` when shutdown has begun, and guarantee that shutdown
       resolves or rejects every accepted synchronous request.
-- [ ] Prohibit calling `ExecuteLegacy` from the interpreter loop or a
+- [x] Prohibit calling `ExecuteLegacy` from the interpreter loop or a
       synchronous session observer callback.
-- [ ] Add contract tests for serialization with submissions, unchanged error
+- [x] Add contract tests for serialization with submissions, unchanged error
       propagation, causal-event ordering, shutdown, and concurrent callers.
 - [ ] Replace every direct TUI `session.Execute` call—including approval,
       loops, immediate sends, and staged dispatch—with `ExecuteLegacy` while

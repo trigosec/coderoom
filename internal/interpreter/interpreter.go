@@ -23,6 +23,10 @@ type submitOperation struct {
 	raw      string
 	fallback session.Command
 }
+type executeLegacyOperation struct {
+	command session.Command
+	result  chan error
+}
 type snapshotOperation struct{ result chan Snapshot }
 type resolveApprovalOperation struct {
 	id     int64
@@ -103,6 +107,26 @@ func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) e
 		return ErrClosed
 	}
 	return nil
+}
+
+// ExecuteLegacy synchronously executes a transitional session command on the
+// interpreter loop. It returns ErrClosed if shutdown prevents acceptance.
+func (i *Interpreter) ExecuteLegacy(command session.Command) error {
+	result := make(chan error, 1)
+	if !i.enqueue(executeLegacyOperation{command: command, result: result}) {
+		return ErrClosed
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-i.done:
+		select {
+		case err := <-result:
+			return err
+		default:
+			return ErrClosed
+		}
+	}
 }
 
 // ResolveApproval queues a structured response to the active approval.
@@ -250,6 +274,12 @@ func (op submitOperation) apply(i *Interpreter) {
 		i.publish(OperationFailed{Operation: "migration fallback", Err: fmt.Errorf("execute migration fallback: %w", err)})
 	}
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
+}
+
+func (op executeLegacyOperation) apply(i *Interpreter) {
+	err := i.session.Execute(op.command)
+	i.drainSessionEvents(false)
+	op.result <- err
 }
 
 func commandName(statement promptlang.Statement) string {
