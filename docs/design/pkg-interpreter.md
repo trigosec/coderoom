@@ -52,8 +52,8 @@ type Interpreter struct {
 }
 
 func New(ctx context.Context, sess SessionController, cwd string, opts ...Option) *Interpreter
-func (i *Interpreter) Submit(raw string)
-func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command)
+func (i *Interpreter) Submit(raw string) error
+func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) error
 func (i *Interpreter) ResolveApproval(id int64, choice ApprovalChoice)
 func (i *Interpreter) TakeStageForEdit() (string, bool)
 func (i *Interpreter) DiscardStage() bool
@@ -67,6 +67,10 @@ func (i *Interpreter) Close()
 `/invite`, `/remove`, sends, and every other language statement all use this
 path. The facade must not add methods such as `Cancel(alias)` that duplicate a
 statement and create a second execution path.
+
+The submission methods return nil when the operation is enqueued. A front end
+transfers ownership of the submitted input—and may clear its composer—only on
+success. They return `ErrClosed` after interpreter shutdown begins.
 
 `SubmitWithFallback` is a temporary migration API. The TUI may provide a
 data-only `session.Command` produced by its legacy translation path. The

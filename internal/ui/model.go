@@ -6,6 +6,7 @@ import (
 	"context"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/session"
@@ -52,23 +53,45 @@ type channelObserver struct {
 	queue *queue.Queue[session.Event]
 }
 
+type interpreterEventMsg struct{ event interpreter.Event }
+
+type interpreterObserver struct {
+	queue *queue.Queue[interpreter.Event]
+}
+
+func (o interpreterObserver) OnEvent(event interpreter.Event) {
+	o.queue.Push(event)
+}
+
+func awaitInterpreterEvent(q *queue.Queue[interpreter.Event]) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := q.Pull()
+		if !ok {
+			return nil
+		}
+		return interpreterEventMsg{event: event}
+	}
+}
+
 func (o channelObserver) OnEvent(e session.Event) {
 	o.queue.Push(e)
 }
 
 // Model is the Bubble Tea application state for the coderoom TUI.
 type Model struct {
-	sess       *session.Session
-	executions *executionLifetime
-	commands   *promptlang.Registry
-	queue      *queue.Queue[session.Event]
-	room       room.Model
-	toolbox    toolbox.Model
-	debug      bool
-	cwd        string
-	runShell   shellRunner
-	activeLoop *loopExecution
-	lastSize   tea.WindowSizeMsg
+	sess             *session.Session
+	interpreter      *interpreter.Interpreter
+	executions       *executionLifetime
+	commands         *promptlang.Registry
+	queue            *queue.Queue[session.Event]
+	interpreterQueue *queue.Queue[interpreter.Event]
+	room             room.Model
+	toolbox          toolbox.Model
+	debug            bool
+	cwd              string
+	runShell         shellRunner
+	activeLoop       *loopExecution
+	lastSize         tea.WindowSizeMsg
 
 	activeApprovalID int64
 
@@ -83,6 +106,9 @@ type Model struct {
 func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option) Model {
 	q := queue.New[session.Event]()
 	sess.AddObserver(channelObserver{queue: q})
+	interpreterQueue := queue.New[interpreter.Event]()
+	interp := interpreter.New(ctx, sess, cwd)
+	interp.AddObserver(interpreterObserver{queue: interpreterQueue})
 
 	colorByAlias := func(alias string) string {
 		if p, ok := sess.Participant(alias); ok {
@@ -95,14 +121,16 @@ func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option)
 	sess.AddObserver(roomModel.SessionObserver())
 
 	m := Model{
-		sess:       sess,
-		executions: newExecutionLifetime(ctx),
-		commands:   promptlang.NewRegistry(),
-		queue:      q,
-		room:       roomModel,
-		toolbox:    toolbox.New(),
-		cwd:        cwd,
-		runShell:   shell.Run,
+		sess:             sess,
+		interpreter:      interp,
+		executions:       newExecutionLifetime(ctx),
+		commands:         promptlang.NewRegistry(),
+		queue:            q,
+		interpreterQueue: interpreterQueue,
+		room:             roomModel,
+		toolbox:          toolbox.New(),
+		cwd:              cwd,
+		runShell:         shell.Run,
 	}
 	for _, o := range opts {
 		o(&m)
@@ -114,7 +142,13 @@ func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option)
 func (m Model) Close() {
 	m.executions.close()
 	m.room.Close()
+	if m.interpreter != nil {
+		m.interpreter.Close()
+	}
 	if m.queue != nil {
 		m.queue.Close()
+	}
+	if m.interpreterQueue != nil {
+		m.interpreterQueue.Close()
 	}
 }

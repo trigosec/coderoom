@@ -59,10 +59,11 @@ type Session struct {
 }
 
 type sessionLifecycle struct {
-	ctx         context.Context
-	cancelFn    context.CancelFunc
-	keepaliveWG sync.WaitGroup
-	stopOnce    sync.Once
+	ctx          context.Context
+	cancelFn     context.CancelFunc
+	keepaliveWG  sync.WaitGroup
+	stopOnce     sync.Once
+	shutdownOnce sync.Once
 }
 
 var errParticipantNotFound = errors.New("participant not found")
@@ -190,17 +191,20 @@ func (s *Session) snapshotAgentsToStop() []agent.Agent {
 	return out
 }
 
-// Shutdown stops all agents in the session. Errors from individual agents are
-// silently discarded; the goal is best-effort cleanup on process exit.
+// Shutdown stops all agents in the session. Repeated calls are safe. Errors
+// from individual agents are silently discarded; the goal is best-effort
+// cleanup on process exit.
 func (s *Session) Shutdown() {
-	s.stopBackgroundLoops()
-	s.cancelAllAgentContexts()
-	// Note: participants in StatusStarting do not have Agent set yet (it is
-	// bound by AttachAgent when they transition to StatusAttached). Those
-	// in-flight processes are not stoppable via Session.Shutdown.
-	for _, a := range s.snapshotAgentsToStop() {
-		_ = a.Stop()
-	}
+	s.lifecycle.shutdownOnce.Do(func() {
+		s.stopBackgroundLoops()
+		s.cancelAllAgentContexts()
+		// Note: participants in StatusStarting do not have Agent set yet (it is
+		// bound by AttachAgent when they transition to StatusAttached). Those
+		// in-flight processes are not stoppable via Session.Shutdown.
+		for _, a := range s.snapshotAgentsToStop() {
+			_ = a.Stop()
+		}
+	})
 }
 
 func (s *Session) stopBackgroundLoops() {

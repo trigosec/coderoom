@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/session"
@@ -25,7 +26,7 @@ const (
 
 // Init starts the session event listener; called once by Bubble Tea on startup.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(awaitEvent(m.queue), m.room.Init())
+	return tea.Batch(awaitEvent(m.queue), awaitInterpreterEvent(m.interpreterQueue), m.room.Init())
 }
 
 // Update handles incoming messages and returns the next model state.
@@ -38,6 +39,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionEventMsg:
 		next, cmd := m.handleEvent(msg.event)
 		return next, tea.Batch(cmd, awaitEvent(m.queue))
+	case interpreterEventMsg:
+		next, cmd := m.handleInterpreterEvent(msg.event)
+		return next, tea.Batch(cmd, awaitInterpreterEvent(m.interpreterQueue))
 	default:
 		return m.handleNonSessionMessage(msg)
 	}
@@ -46,7 +50,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case room.SubmitMsg:
-		return m.handleSubmit(msg.Text)
+		return m.submitToInterpreter(msg.Text), nil
 	case room.ApprovalDecisionMsg:
 		return m.handleApprovalDecision(msg)
 	case room.StagedEditMsg, room.StagedClearMsg:
@@ -62,6 +66,36 @@ func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		return m.forwardMessage(msg)
 	}
+}
+
+func (m Model) submitToInterpreter(raw string) Model {
+	if strings.TrimSpace(raw) == "" {
+		return m
+	}
+	if err := m.interpreter.Submit(raw); err == nil {
+		m.room = m.room.SetComposeValue("")
+	}
+	return m
+}
+
+func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) {
+	switch event := event.(type) {
+	case interpreter.UnknownCommand:
+		return m.handleSubmit(event.Raw)
+	case interpreter.InputRejected:
+		m.room = m.room.AppendSystem(formatInputRejection(event.Err))
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func formatInputRejection(err error) string {
+	var unknown promptlang.UnknownCommandError
+	if errors.As(err, &unknown) {
+		return "error: " + err.Error() + " (type /help)"
+	}
+	return "error: " + err.Error()
 }
 
 func (m Model) handleApprovalDecision(msg room.ApprovalDecisionMsg) (tea.Model, tea.Cmd) {
@@ -116,11 +150,11 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 		var unknown promptlang.UnknownCommandError
 		if errors.As(err, &unknown) {
 			m.room = m.room.AppendSystem("error: " + err.Error() + " (type /help)")
-			m.room = m.room.SetComposeValue("")
+			m.room = m.clearSubmittedComposer(raw)
 			return m, nil
 		}
 		m.room = m.room.AppendSystem("error: " + err.Error())
-		m.room = m.room.SetComposeValue("")
+		m.room = m.clearSubmittedComposer(raw)
 		return m, nil
 	}
 
@@ -133,8 +167,15 @@ func (m Model) handleSubmit(raw string) (Model, tea.Cmd) {
 
 	routing := m.routingFor(action)
 	m.room = m.room.AppendUserInput(raw, routing)
-	m.room = m.room.SetComposeValue("")
+	m.room = m.clearSubmittedComposer(raw)
 	return m.executeAction(action)
+}
+
+func (m Model) clearSubmittedComposer(raw string) room.Model {
+	if m.room.ComposeValue() != raw {
+		return m.room
+	}
+	return m.room.SetComposeValue("")
 }
 
 // routingFor returns the aliases that will receive the action, used to

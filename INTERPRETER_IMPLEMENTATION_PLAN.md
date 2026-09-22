@@ -67,7 +67,7 @@ go test ./...
 ## 5. Move basic statement execution
 
 - [x] Add temporary `SubmitWithFallback(raw, session.Command)` migration API.
-- [ ] Embed the interpreter in the TUI and deliver its observer events through
+- [x] Embed the interpreter in the TUI and deliver its observer events through
       a blocking `tea.Cmd` queue listener.
 - [ ] Route eligible legacy session commands through `SubmitWithFallback` so
       only the interpreter loop calls `session.Execute`.

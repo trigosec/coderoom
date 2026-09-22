@@ -8,8 +8,12 @@ import (
 	roomstate "github.com/trigosec/coderoom/internal/room"
 )
 
-// ErrStagePending rejects new input while a staged batch awaits a stage action.
-var ErrStagePending = errors.New("submission blocked by pending stage")
+var (
+	// ErrClosed reports that the interpreter can no longer accept operations.
+	ErrClosed = errors.New("interpreter closed")
+	// ErrStagePending rejects new input while a staged batch awaits a stage action.
+	ErrStagePending = errors.New("submission blocked by pending stage")
+)
 
 // ApprovalKind identifies an approval request without exposing agent protocol
 // types to front ends.

@@ -10,7 +10,6 @@ import (
 	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/session"
-	"github.com/trigosec/coderoom/internal/ui/room"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
@@ -244,7 +243,7 @@ func TestBarrierBatch_stagesThenDispatchesWhenIdle(t *testing.T) {
 	}
 
 	// Submit a broadcast; should stage, not dispatch.
-	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
+	next = submitThroughInterpreter(t, m, "next turn")
 	m = next.(Model)
 	if !m.room.HasStagedBatch() || !m.room.IsComposerStaged() {
 		t.Fatalf("expected staged batch and staged composer")
@@ -283,7 +282,7 @@ func TestBarrierBatch_directSendIgnoresUnrelatedBusyParticipantByDefault(t *test
 		t.Fatalf("make turing busy: %v", err)
 	}
 
-	next, _ = m.Update(room.SubmitMsg{Text: "@ada do it"})
+	next = submitThroughInterpreter(t, m, "@ada do it")
 	m = next.(Model)
 
 	if m.room.HasStagedBatch() {
@@ -312,14 +311,14 @@ func TestBarrierBatch_sendNoticesPolicyIncludesBusyListener(t *testing.T) {
 	inviteParticipant(t, s, "ada")
 	inviteParticipant(t, s, "turing")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
-	next, _ = m.Update(room.SubmitMsg{Text: "/policy enable send-notices"})
+	next = submitThroughInterpreter(t, m, "/policy enable send-notices")
 	m = next.(Model)
 	assertHistoryContainsSystem(t, m, "[policy] send-notices enabled")
 	if err := s.Execute(session.PrivateSendCommand{Alias: "turing", Text: "busy"}); err != nil {
 		t.Fatalf("make turing busy: %v", err)
 	}
 
-	next, _ = m.Update(room.SubmitMsg{Text: "@ada do it"})
+	next = submitThroughInterpreter(t, m, "@ada do it")
 	m = next.(Model)
 
 	if !m.room.HasStagedBatch() {
@@ -357,7 +356,7 @@ func TestBarrierBatch_autoDispatchPreservesFirstOutputRecord(t *testing.T) {
 	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "busy", TextListeners: "notice"}); err != nil {
 		t.Fatalf("make ada busy: %v", err)
 	}
-	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
+	next = submitThroughInterpreter(t, m, "next turn")
 	m = next.(Model)
 	if !m.room.HasStagedBatch() {
 		t.Fatal("expected staged batch before ada becomes idle")
@@ -401,7 +400,7 @@ func TestBarrierBatch_failedDispatchDoesNotCommitUserInput(t *testing.T) {
 	inviteParticipant(t, s, "ada")
 	m = pumpUntilAgentsStarted(t, m, "ada")
 
-	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
+	next = submitThroughInterpreter(t, m, "next turn")
 	m = next.(Model)
 
 	assertHistoryDoesNotContainUserInput(t, m, "next turn")
@@ -433,7 +432,7 @@ func TestBarrierBatch_failedDispatchDoesNotRetryOnRollbackIdle(t *testing.T) {
 	inviteParticipant(t, s, "ada")
 	m = pumpUntilAgentsStarted(t, m, "ada")
 
-	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
+	next = submitThroughInterpreter(t, m, "next turn")
 	m = next.(Model)
 	if agents["ada"].sendCalls != 1 {
 		t.Fatalf("expected initial dispatch attempt count 1, got %d", agents["ada"].sendCalls)
@@ -472,7 +471,7 @@ func TestBarrierBatch_partialDispatchCommitsUserInput(t *testing.T) {
 	inviteParticipant(t, s, "turing")
 	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
 
-	next, _ = m.Update(room.SubmitMsg{Text: "next turn"})
+	next = submitThroughInterpreter(t, m, "next turn")
 	m = next.(Model)
 
 	assertHistoryContainsUserInput(t, m, "next turn")
@@ -506,7 +505,7 @@ func TestBarrierBatch_discardedTargetRestoresDraft(t *testing.T) {
 	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "busy"}); err != nil {
 		t.Fatalf("make ada busy: %v", err)
 	}
-	next, _ = m.Update(room.SubmitMsg{Text: "@ada hi"})
+	next = submitThroughInterpreter(t, m, "@ada hi")
 	m = next.(Model)
 	if !m.room.HasStagedBatch() {
 		t.Fatal("expected staged batch before target disappears")
@@ -543,8 +542,7 @@ func TestBarrierBatch_handoffIgnoresStartingBystanderOutsideBarrier(t *testing.T
 	if err := s.Execute(session.SharedSendCommand{Plan: s.PlanSharedSend("ada"), TextDirect: "busy", TextListeners: "notice"}); err != nil {
 		t.Fatalf("make ada busy: %v", err)
 	}
-	next, _ := m.Update(room.SubmitMsg{Text: "/handoff ada turing"})
-	m = next.(Model)
+	m = submitThroughInterpreter(t, m, "/handoff ada turing")
 	if !m.room.HasStagedBatch() {
 		t.Fatal("expected staged handoff before ada becomes idle")
 	}
@@ -610,8 +608,7 @@ func stageBusyHandoff(t *testing.T, s *session.Session, m Model) Model {
 	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "busy"}); err != nil {
 		t.Fatalf("make ada busy: %v", err)
 	}
-	next, _ := m.Update(room.SubmitMsg{Text: "/handoff ada turing"})
-	m = next.(Model)
+	m = submitThroughInterpreter(t, m, "/handoff ada turing")
 	if !m.room.HasStagedBatch() {
 		t.Fatal("expected staged handoff before ada becomes idle")
 	}
@@ -688,7 +685,7 @@ func stageDiscardedTargetHandoff(t *testing.T) (*testAgent, *session.Session, Mo
 	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "busy"}); err != nil {
 		t.Fatalf("make ada busy: %v", err)
 	}
-	next, _ = m.Update(room.SubmitMsg{Text: "/handoff ada turing"})
+	next = submitThroughInterpreter(t, m, "/handoff ada turing")
 	m = next.(Model)
 	if !m.room.HasStagedBatch() {
 		t.Fatal("expected staged handoff before target disappears")
@@ -735,8 +732,7 @@ func TestBarrierBatch_handoffIgnoresBusyParticipantWhoJoinedAfterStaging(t *test
 	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "busy"}); err != nil {
 		t.Fatalf("make ada busy: %v", err)
 	}
-	next, _ := m.Update(room.SubmitMsg{Text: "/handoff ada turing"})
-	m = next.(Model)
+	m = submitThroughInterpreter(t, m, "/handoff ada turing")
 	if !m.room.HasStagedBatch() {
 		t.Fatal("expected staged handoff before ada becomes idle")
 	}

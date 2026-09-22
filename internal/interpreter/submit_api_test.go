@@ -2,6 +2,7 @@ package interpreter_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/trigosec/coderoom/internal/interpreter"
@@ -12,7 +13,9 @@ func TestSubmitAPI_reportsUnknownCommandWithoutFallback(t *testing.T) {
 	interp, _, events := newSubmitExample()
 	defer interp.Close()
 
-	interp.Submit("/not-defined")
+	if err := interp.Submit("/not-defined"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	unknown := receiveEvent[interpreter.UnknownCommand](t, events)
 	if unknown.Raw != "/not-defined" || unknown.Name != "not-defined" {
@@ -24,7 +27,9 @@ func TestSubmitAPI_rejectsInvalidArguments(t *testing.T) {
 	interp, _, events := newSubmitExample()
 	defer interp.Close()
 
-	interp.Submit("/invite")
+	if err := interp.Submit("/invite"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	rejected := receiveEvent[interpreter.InputRejected](t, events)
 	if rejected.Raw != "/invite" || rejected.Err == nil {
@@ -36,10 +41,12 @@ func TestSubmitAPI_executesMigrationFallback(t *testing.T) {
 	interp, sess, events := newSubmitExample()
 	defer interp.Close()
 
-	interp.SubmitWithFallback(
+	if err := interp.SubmitWithFallback(
 		"/cancel ada",
 		session.CancelCommand{Alias: "ada"},
-	)
+	); err != nil {
+		t.Fatalf("SubmitWithFallback: %v", err)
+	}
 
 	accepted := receiveEvent[interpreter.InputAccepted](t, events)
 	if accepted.Raw != "/cancel ada" {
@@ -49,6 +56,15 @@ func TestSubmitAPI_executesMigrationFallback(t *testing.T) {
 	want := session.CancelCommand{Alias: "ada"}
 	if command != want {
 		t.Fatalf("fallback command = %#v, want %#v", command, want)
+	}
+}
+
+func TestSubmitAPI_rejectsOwnershipAfterClose(t *testing.T) {
+	interp, _, _ := newSubmitExample()
+	interp.Close()
+
+	if err := interp.Submit("/who"); !errors.Is(err, interpreter.ErrClosed) {
+		t.Fatalf("Submit error = %v, want ErrClosed", err)
 	}
 }
 

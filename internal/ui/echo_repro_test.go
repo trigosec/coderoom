@@ -26,6 +26,7 @@ func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 		if cmd != nil {
 			next, _ = m.Update(cmd())
 			m = next.(Model)
+			m = processInterpreterSubmission(t, m)
 		}
 	}
 
@@ -73,6 +74,7 @@ func TestWhoEcho_twiceVisibleInSmallTerminal(t *testing.T) {
 		if cmd != nil {
 			next, _ = m.Update(cmd())
 			m = next.(Model)
+			m = processInterpreterSubmission(t, m)
 		}
 	}
 

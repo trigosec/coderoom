@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -42,6 +43,28 @@ func newTestModelWithSession(t *testing.T, sess *session.Session) Model {
 	m := New(context.Background(), sess, ".")
 	t.Cleanup(m.Close)
 	return m
+}
+
+func submitThroughInterpreter(t *testing.T, m Model, raw string) Model {
+	t.Helper()
+	return processInterpreterSubmission(t, m.submitToInterpreter(raw))
+}
+
+func processInterpreterSubmission(t *testing.T, m Model) Model {
+	t.Helper()
+	next := m
+	for {
+		event, ok := next.interpreterQueue.PullTimeout(2 * time.Second)
+		if !ok {
+			t.Fatal("timed out waiting for interpreter submission event")
+		}
+		updated, _ := next.Update(interpreterEventMsg{event: event})
+		next = updated.(Model)
+		switch event.(type) {
+		case interpreter.UnknownCommand, interpreter.InputRejected:
+			return next
+		}
+	}
 }
 
 // pushEvent sends a session event into the model via Update and returns the result.

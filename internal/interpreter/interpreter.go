@@ -86,15 +86,23 @@ func New(ctx context.Context, sess SessionController, _ string, opts ...Option) 
 	return i
 }
 
-// Submit queues user-authored prompt-language input for execution.
-func (i *Interpreter) Submit(raw string) {
-	i.enqueue(submitOperation{raw: raw})
+// Submit queues prompt-language input. It returns ErrClosed if ownership cannot
+// be accepted because shutdown has begun.
+func (i *Interpreter) Submit(raw string) error {
+	if !i.enqueue(submitOperation{raw: raw}) {
+		return ErrClosed
+	}
+	return nil
 }
 
-// SubmitWithFallback queues input with a temporary legacy session command.
-// Native handlers take precedence once they are introduced.
-func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) {
-	i.enqueue(submitOperation{raw: raw, fallback: fallback})
+// SubmitWithFallback queues input with a temporary legacy session command and
+// returns ErrClosed if ownership cannot be accepted. Native handlers take
+// precedence once they are introduced.
+func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) error {
+	if !i.enqueue(submitOperation{raw: raw, fallback: fallback}) {
+		return ErrClosed
+	}
+	return nil
 }
 
 // ResolveApproval queues a structured response to the active approval.
