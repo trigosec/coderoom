@@ -15,12 +15,33 @@ type ID string
 // SharedRoomID is the single shared room's identity for V1.
 const SharedRoomID ID = "shared"
 
+// UpdateTriggerKind identifies the applied room input that triggered an update.
+type UpdateTriggerKind uint8
+
+const (
+	// UpdateTriggerNone identifies updates without workflow-relevant metadata.
+	UpdateTriggerNone UpdateTriggerKind = iota
+	// UpdateTriggerAgentTurnCompleted identifies the applied stream flush that
+	// completed an agent turn.
+	UpdateTriggerAgentTurnCompleted
+)
+
+// UpdateTrigger carries the narrow causal metadata needed by coordinators that
+// must act only after a specific room input has been applied.
+type UpdateTrigger struct {
+	Kind     UpdateTriggerKind
+	Alias    string
+	StreamID agent.StreamID
+	TurnID   uint64
+}
+
 // Update is a lightweight redraw/invalidation signal: it tells a Listener
-// that room state changed and should be re-read via Snapshot, without
-// carrying the changed data itself.
+// that room state changed and should be re-read via Snapshot, without carrying
+// the changed data itself.
 type Update struct {
 	RoomID  ID
 	Version uint64
+	Trigger UpdateTrigger
 }
 
 // Observer is notified when room state changes and should be redrawn.

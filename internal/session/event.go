@@ -36,6 +36,11 @@ type AgentLog struct {
 type AgentMessage struct {
 	Alias string
 	Msg   agent.Message
+	// TurnCompleted is true only when this message caused the participant to
+	// transition from working to idle.
+	TurnCompleted bool
+	// TurnID identifies the completed session turn when TurnCompleted is true.
+	TurnID uint64
 }
 
 // ParticipantStatusChanged reports a session-driven participant status transition.

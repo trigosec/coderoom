@@ -191,7 +191,11 @@ That separation is intentional:
 ## Anchor ownership
 
 The participant stores a single `anchor` field plus the broader
-`OpenStreams` set.
+`OpenStreams` set. It also retains the session-global turn ID assigned when
+`BeginWorking` succeeds. The ID remains available after the participant
+returns to idle. Coordinators use it to reject delayed completion signals from
+an older turn or removed participant incarnation; it is lifecycle identity,
+not presentation state.
 
 - `anchor` means "this stream authoritatively defines turn lifetime"
 - `OpenStreams` means "these turn-scoped streams are currently open"

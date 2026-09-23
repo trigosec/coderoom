@@ -96,9 +96,22 @@ func TestOnEvent_outputFlushClosesStreamAndPreservesAccumulatedRecord(t *testing
 	room, updates := newTestRoom(t)
 
 	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeStream, Content: agent.Output{Text: "hello"}}})
-	waitUpdate(t, updates)
-	room.OnEvent(session.AgentMessage{Alias: "ada", Msg: agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}}})
-	waitUpdate(t, updates)
+	streamUpdate := waitUpdate(t, updates)
+	if streamUpdate.Trigger.Kind != UpdateTriggerNone {
+		t.Fatalf("stream update trigger = %#v, want none", streamUpdate.Trigger)
+	}
+	room.OnEvent(session.AgentMessage{
+		Alias:         "ada",
+		Msg:           agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}},
+		TurnCompleted: true,
+		TurnID:        7,
+	})
+	flushUpdate := waitUpdate(t, updates)
+	if flushUpdate.Trigger.Kind != UpdateTriggerAgentTurnCompleted ||
+		flushUpdate.Trigger.Alias != "ada" || flushUpdate.Trigger.StreamID != "out1" ||
+		flushUpdate.Trigger.TurnID != 7 {
+		t.Fatalf("flush update trigger = %#v", flushUpdate.Trigger)
+	}
 
 	snapshot := room.Snapshot()
 	if len(snapshot.OpenStreams) != 0 {

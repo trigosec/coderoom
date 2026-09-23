@@ -6,7 +6,11 @@ import (
 	roomstate "github.com/trigosec/coderoom/internal/room"
 )
 
-type roomUpdateMsg roomstate.Update
+// UpdateMsg reports that a canonical room update is ready to apply.
+type UpdateMsg struct{ update roomstate.Update }
+
+// Trigger returns the applied room input that triggered the update.
+func (m UpdateMsg) Trigger() roomstate.UpdateTrigger { return m.update.Trigger }
 
 type roomUpdateObserver struct {
 	queue *queue.Queue[roomstate.Update]
@@ -22,7 +26,7 @@ func awaitRoomUpdate(q *queue.Queue[roomstate.Update]) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return roomUpdateMsg(update)
+		return UpdateMsg{update: update}
 	}
 }
 

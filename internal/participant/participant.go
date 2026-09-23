@@ -35,6 +35,8 @@ var (
 	ErrNotActive = errors.New("participant is not active")
 	// ErrNotKeepalive is returned when an operation requires the participant to be in keepalive state.
 	ErrNotKeepalive = errors.New("participant is not in keepalive state")
+	// ErrInvalidTurnID is returned when a working turn has no session identity.
+	ErrInvalidTurnID = errors.New("participant turn ID must be non-zero")
 )
 
 // Initiative controls how autonomously a participant acts.
@@ -83,6 +85,10 @@ type Participant struct {
 	// anchor is the stream whose close signals turn completion. Set by
 	// BeginWorking; cleared on BecomeIdle or AbortWork.
 	anchor agent.StreamID
+	// turnID is assigned by the session whenever a new working turn begins. It
+	// remains stable after the turn ends so delayed completion events can be
+	// identified across participant removal and alias reuse.
+	turnID uint64
 	// sessionReady is set by SessionReady near the end of startup, immediately
 	// before AgentStarted is dispatched. IsRemovable gates on it so /remove
 	// cannot race with the startup notification window.
@@ -105,6 +111,9 @@ func (p *Participant) Snapshot() Participant {
 	cp.OpenStreams = cloneOpenStreams(p.OpenStreams)
 	return cp
 }
+
+// TurnID identifies the latest session turn begun by this participant.
+func (p Participant) TurnID() uint64 { return p.turnID }
 
 // IsSendable reports whether the participant is ready to receive messages.
 // True when an agent is bound and the startup notification window has closed
@@ -274,9 +283,12 @@ func (p *Participant) FinishKeepalive(now time.Time) error {
 // so it is tracked from the moment Working begins — before the adapter can
 // emit any messages — closing the race between Send returning and the first
 // agent message arriving.
-func (p *Participant) BeginWorking(now time.Time, anchor agent.StreamID) error {
+func (p *Participant) BeginWorking(now time.Time, anchor agent.StreamID, turnID uint64) error {
 	if p.Status != StatusPreparing {
 		return ErrNotPreparing
+	}
+	if turnID == 0 {
+		return ErrInvalidTurnID
 	}
 	p.anchor = anchor
 	if anchor != "" {
@@ -285,6 +297,7 @@ func (p *Participant) BeginWorking(now time.Time, anchor agent.StreamID) error {
 		}
 		p.OpenStreams[anchor] = struct{}{}
 	}
+	p.turnID = turnID
 	p.Status = StatusWorking
 	p.Since = now
 	return nil

@@ -1874,27 +1874,30 @@ func TestReaderLoop_marksIdleOnlyAfterAllObservedStreamsFlush(t *testing.T) {
 	mustReceive[session.AgentMessage](t, obs.ch)
 	mustReceive[session.AgentMessage](t, obs.ch)
 
-	a.ch <- agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}}
-	mustReceive[session.AgentMessage](t, obs.ch)
-	p, _ := s.Participant("ada")
-	if p.Status != participant.StatusWorking {
-		t.Fatalf("expected ada to remain working after out1 flush (reason1 and anchor still open), got %q", p.Status)
-	}
-
-	a.ch <- agent.Message{StreamID: "reason1", Mode: agent.ModeFlush, Content: agent.Reasoning{}}
-	mustReceive[session.AgentMessage](t, obs.ch)
-	p, _ = s.Participant("ada")
-	if p.Status != participant.StatusWorking {
-		t.Fatalf("expected ada to remain working after reason1 flush (anchor still open), got %q", p.Status)
-	}
+	assertFlushDoesNotCompleteTurn(t, a, obs, s, agent.Message{StreamID: "out1", Mode: agent.ModeFlush, Content: agent.Output{}})
+	assertFlushDoesNotCompleteTurn(t, a, obs, s, agent.Message{StreamID: "reason1", Mode: agent.ModeFlush, Content: agent.Reasoning{}})
 
 	// Anchor flush — the authoritative turn-end signal.
 	a.ch <- agent.Message{StreamID: mockTurnAnchor, Mode: agent.ModeFlush, Content: agent.Output{}}
 	mustReceive[session.ParticipantStatusChanged](t, obs.ch)
-	mustReceive[session.AgentMessage](t, obs.ch)
-	p, _ = s.Participant("ada")
+	if event := mustReceive[session.AgentMessage](t, obs.ch); !event.TurnCompleted || event.TurnID == 0 {
+		t.Fatalf("anchor flush completion = %v, turn ID = %d", event.TurnCompleted, event.TurnID)
+	}
+	p, _ := s.Participant("ada")
 	if p.Status != participant.StatusIdle {
 		t.Fatalf("expected ada to become idle after anchor flush, got %q", p.Status)
+	}
+}
+
+func assertFlushDoesNotCompleteTurn(t *testing.T, a *mockAgent, obs *testObserver, s *session.Session, msg agent.Message) {
+	t.Helper()
+	a.ch <- msg
+	if event := mustReceive[session.AgentMessage](t, obs.ch); event.TurnCompleted || event.TurnID != 0 {
+		t.Fatalf("flush completion = %v, turn ID = %d", event.TurnCompleted, event.TurnID)
+	}
+	p, _ := s.Participant("ada")
+	if p.Status != participant.StatusWorking {
+		t.Fatalf("expected ada to remain working after %q flush, got %q", msg.StreamID, p.Status)
 	}
 }
 

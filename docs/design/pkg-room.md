@@ -191,7 +191,16 @@ The important boundary is:
 ### Output
 
 The room package exposes room state and record updates to consumers such as the
-UI.
+UI. An update may carry a narrow trigger identifying an applied room input, so
+an application coordinator can advance dependent workflows only after the
+required room state is observable. For example, an agent-turn-completed trigger
+lets handoff coordination wait until the authoritative turn-ending flush has
+been applied and the source output has been sealed. The trigger includes the
+session-global turn ID, preventing a delayed completion from satisfying a
+workflow waiting on a newer turn or a re-invited alias. Coordinators retain the
+latest projected turn independently of temporary runtime status, so keepalive
+and failed send preparation do not erase valid projection progress. Most
+updates, including locally appended records, carry no trigger.
 
 The UI should render room state, not derive chat semantics from `session.Event`
 directly.

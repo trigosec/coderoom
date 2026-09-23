@@ -231,7 +231,7 @@ func pullUntilIdle(t *testing.T, m *Model, alias string) session.ParticipantStat
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		event := mustPullEvent(t, m, 2*time.Second)
+		event := mustPullEvent(t, m)
 		status, ok := event.(session.ParticipantStatusChanged)
 		if ok && status.Alias == alias && status.To == participant.StatusIdle {
 			return status

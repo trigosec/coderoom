@@ -306,13 +306,86 @@ func TestParticipantSnapshot_copiesOpenStreams(t *testing.T) {
 	}
 }
 
+func TestParticipantTurnID_recordsAssignedSessionIdentity(t *testing.T) {
+	p := newParticipant("ada")
+	for _, want := range []uint64{41, 97} {
+		if err := p.PrepareForWork(testNow()); err != nil {
+			t.Fatalf("PrepareForWork: %v", err)
+		}
+		if err := p.BeginWorking(testNow(), agent.StreamID("anchor"), want); err != nil {
+			t.Fatalf("BeginWorking: %v", err)
+		}
+		if got := p.TurnID(); got != want {
+			t.Fatalf("turn ID = %d, want %d", got, want)
+		}
+		if _, err := p.CloseStream(agent.StreamID("anchor")); err != nil {
+			t.Fatalf("CloseStream: %v", err)
+		}
+		if err := p.BecomeIdle(testNow()); err != nil {
+			t.Fatalf("BecomeIdle: %v", err)
+		}
+	}
+}
+
+func TestParticipantTurnID_survivesNonTurnRoundTrips(t *testing.T) {
+	p := idleParticipantAfterTurn(t, 41)
+	want := p.TurnID()
+
+	assertTurnIDSurvivesKeepalive(t, p, want)
+	assertTurnIDSurvivesPrepareAbort(t, p, want)
+}
+
+func idleParticipantAfterTurn(t *testing.T, turnID uint64) *participant.Participant {
+	t.Helper()
+	p := newParticipant("ada")
+	if err := p.PrepareForWork(testNow()); err != nil {
+		t.Fatalf("PrepareForWork: %v", err)
+	}
+	if err := p.BeginWorking(testNow(), agent.StreamID("anchor"), turnID); err != nil {
+		t.Fatalf("BeginWorking: %v", err)
+	}
+	if _, err := p.CloseStream(agent.StreamID("anchor")); err != nil {
+		t.Fatalf("CloseStream: %v", err)
+	}
+	if err := p.BecomeIdle(testNow()); err != nil {
+		t.Fatalf("BecomeIdle: %v", err)
+	}
+	return p
+}
+
+func assertTurnIDSurvivesKeepalive(t *testing.T, p *participant.Participant, want uint64) {
+	t.Helper()
+	if err := p.BeginKeepalive(testNow()); err != nil {
+		t.Fatalf("BeginKeepalive: %v", err)
+	}
+	if err := p.FinishKeepalive(testNow()); err != nil {
+		t.Fatalf("FinishKeepalive: %v", err)
+	}
+	if got := p.TurnID(); got != want {
+		t.Fatalf("turn ID after keepalive = %d, want %d", got, want)
+	}
+}
+
+func assertTurnIDSurvivesPrepareAbort(t *testing.T, p *participant.Participant, want uint64) {
+	t.Helper()
+	if err := p.PrepareForWork(testNow()); err != nil {
+		t.Fatalf("PrepareForWork: %v", err)
+	}
+	if err := p.AbortWork(testNow()); err != nil {
+		t.Fatalf("AbortWork: %v", err)
+	}
+	if got := p.TurnID(); got != want {
+		t.Fatalf("turn ID after prepare abort = %d, want %d", got, want)
+	}
+}
+
 func TestParticipantMarkIdle_rejectsOpenStreams(t *testing.T) {
 	p := newParticipant("ada")
 	const anchor = agent.StreamID("anchor1")
 	if err := p.PrepareForWork(testNow()); err != nil {
 		t.Fatalf("PrepareForWork: %v", err)
 	}
-	if err := p.BeginWorking(testNow(), anchor); err != nil {
+	if err := p.BeginWorking(testNow(), anchor, 1); err != nil {
 		t.Fatalf("BeginWorking: %v", err)
 	}
 	// Anchor is still open in OpenStreams — BecomeIdle must reject.
@@ -326,7 +399,7 @@ func TestParticipantCloseStream_onlyAnchorTriggersIdle(t *testing.T) {
 	if err := p.PrepareForWork(testNow()); err != nil {
 		t.Fatalf("PrepareForWork: %v", err)
 	}
-	if err := p.BeginWorking(testNow(), agent.StreamID("anchor")); err != nil {
+	if err := p.BeginWorking(testNow(), agent.StreamID("anchor"), 1); err != nil {
 		t.Fatalf("BeginWorking: %v", err)
 	}
 	if err := p.TrackStream(agent.StreamID("out1")); err != nil {

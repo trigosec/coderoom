@@ -9,6 +9,7 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/participant"
+	roomstate "github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -67,7 +68,7 @@ func (a *gateStartAgent) Start() error {
 	return a.testAgent.Start()
 }
 
-func mustPullEvent(t *testing.T, m *Model, timeout time.Duration) session.Event {
+func mustPullEvent(t *testing.T, m *Model) session.Event {
 	t.Helper()
 	ch := make(chan session.Event, 1)
 	go func() {
@@ -80,7 +81,7 @@ func mustPullEvent(t *testing.T, m *Model, timeout time.Duration) session.Event 
 	select {
 	case ev := <-ch:
 		return ev
-	case <-time.After(timeout):
+	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for session event")
 		return nil
 	}
@@ -90,7 +91,7 @@ func pumpUntil(t *testing.T, m Model, pred func(session.Event) bool) Model {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		ev := mustPullEvent(t, &m, 2*time.Second)
+		ev := mustPullEvent(t, &m)
 		next, _ := m.Update(sessionEventMsg{event: ev})
 		m = next.(Model)
 		if pred(ev) {
@@ -439,7 +440,7 @@ func TestBarrierBatch_failedDispatchDoesNotRetryOnRollbackIdle(t *testing.T) {
 	}
 
 	for range 3 {
-		ev := mustPullEvent(t, &m, 2*time.Second)
+		ev := mustPullEvent(t, &m)
 		next, _ = m.Update(sessionEventMsg{event: ev})
 		m = next.(Model)
 	}
@@ -582,6 +583,218 @@ func TestBarrierBatch_handoffDispatchRacesSourceFlush(t *testing.T) {
 	assertHandoffRaceResolved(t, m)
 }
 
+func TestBarrierBatch_nonCompletingFlushDoesNotSatisfyHandoffSourceReadiness(t *testing.T) {
+	agents, s, m := newTwoAgentBarrierBatchModel(t)
+	m = stageBusyHandoff(t, s, m)
+	agents["ada"].push(agent.Message{
+		StreamID: "reasoning",
+		Mode:     agent.ModeStream,
+		Content:  agent.Reasoning{Text: "thinking"},
+	})
+	agents["ada"].push(agent.Message{
+		StreamID: "reasoning",
+		Mode:     agent.ModeFlush,
+		Content:  agent.Reasoning{},
+	})
+	m = pumpUntil(t, m, func(event session.Event) bool {
+		message, ok := event.(session.AgentMessage)
+		return ok && message.Msg.StreamID == "reasoning" && message.Msg.Mode == agent.ModeFlush
+	})
+
+	if _, ok := m.projectedTurnByAlias["ada"]; ok {
+		t.Fatal("non-completing reasoning flush advanced projected turn watermark")
+	}
+	if !m.room.HasStagedBatch() {
+		t.Fatal("non-completing reasoning flush dispatched staged handoff")
+	}
+
+	pushAnchorOutput(agents["ada"], "fresh output")
+	m = waitForHandoffEvent(t, m)
+	assertHandoffRaceResolved(t, m)
+}
+
+func TestBarrierBatch_handoffReadinessTracksLatestSourceTurn(t *testing.T) {
+	agents := map[string]*testAgent{
+		"ada":    newTestAgent(),
+		"turing": newTestAgent(),
+		"cat":    newTestAgent(),
+	}
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig, _ session.AgentBackend) agent.Agent {
+		return agents[cfg.Alias]
+	}))
+	t.Cleanup(s.Shutdown)
+	m := newTestModelWithSession(t, s)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	for _, alias := range []string{"ada", "turing", "cat"} {
+		inviteParticipant(t, s, alias)
+	}
+	m = pumpUntilAgentsStarted(t, m, "ada", "turing", "cat")
+	if err := s.Execute(session.PrivateSendCommand{Alias: "cat", Text: "busy"}); err != nil {
+		t.Fatalf("make cat busy: %v", err)
+	}
+	m = submitThroughInterpreter(t, m, "/handoff ada turing")
+
+	firstTurn := completeSourceTurnBeforeProjection(t, &m, s, agents["ada"], "first")
+	m = m.maybeAdvanceProjectedHandoff(completedTurnTrigger(firstTurn))
+	if !m.stagedHandoffSourceReady(m.room.StagedBatch()) || !m.room.HasStagedBatch() {
+		t.Fatal("first source completion did not leave handoff ready and staged")
+	}
+
+	secondTurn := completeSourceTurnBeforeProjection(t, &m, s, agents["ada"], "second")
+	m = m.maybeAdvanceProjectedHandoff(completedTurnTrigger(firstTurn))
+	if m.stagedHandoffSourceReady(m.room.StagedBatch()) {
+		t.Fatal("delayed completion from previous source turn restored readiness")
+	}
+	m = m.maybeAdvanceProjectedHandoff(completedTurnTrigger(secondTurn))
+	if !m.stagedHandoffSourceReady(m.room.StagedBatch()) {
+		t.Fatal("latest source turn completion did not restore readiness")
+	}
+}
+
+func completeSourceTurnBeforeProjection(t *testing.T, m *Model, s *session.Session, a *testAgent, label string) uint64 {
+	t.Helper()
+	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: label + " turn"}); err != nil {
+		t.Fatalf("start %s ada turn: %v", label, err)
+	}
+	if m.stagedHandoffSourceReady(m.room.StagedBatch()) {
+		t.Fatalf("starting %s source turn did not invalidate handoff readiness", label)
+	}
+	pushAnchorOutput(a, label+" output")
+	return waitForAdaIdle(t, m, s)
+}
+
+func TestProjectedTurnReady_preservesWatermarkAcrossTemporaryStates(t *testing.T) {
+	tests := []struct {
+		name          string
+		status        participant.Status
+		currentTurn   uint64
+		projectedTurn uint64
+		want          bool
+	}{
+		{name: "idle projected turn", status: participant.StatusIdle, currentTurn: 4, projectedTurn: 4, want: true},
+		{name: "keepalive same turn", status: participant.StatusKeepalive, currentTurn: 4, projectedTurn: 4},
+		{name: "idle after keepalive", status: participant.StatusIdle, currentTurn: 4, projectedTurn: 4, want: true},
+		{name: "preparing same turn", status: participant.StatusPreparing, currentTurn: 4, projectedTurn: 4},
+		{name: "idle after prepare abort", status: participant.StatusIdle, currentTurn: 4, projectedTurn: 4, want: true},
+		{name: "working newer turn", status: participant.StatusWorking, currentTurn: 5, projectedTurn: 4},
+		{name: "idle newer turn before projection", status: participant.StatusIdle, currentTurn: 5, projectedTurn: 4},
+		{name: "initial idle without turn", status: participant.StatusIdle, currentTurn: 0, projectedTurn: 0, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := projectedTurnReady(tt.status, tt.currentTurn, tt.projectedTurn); got != tt.want {
+				t.Fatalf("projectedTurnReady() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProjectedTurnWatermark_rejectsRemovedParticipantCompletion(t *testing.T) {
+	agents := map[string]*testAgent{
+		"ada":    newTestAgent(),
+		"turing": newTestAgent(),
+	}
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig, _ session.AgentBackend) agent.Agent {
+		return agents[cfg.Alias]
+	}))
+	t.Cleanup(s.Shutdown)
+	m := newTestModelWithSession(t, s)
+	for _, alias := range []string{"ada", "turing"} {
+		inviteParticipant(t, s, alias)
+	}
+	m = pumpUntilAgentsStarted(t, m, "ada", "turing")
+
+	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "old incarnation"}); err != nil {
+		t.Fatalf("start old ada turn: %v", err)
+	}
+	pushAnchorOutput(agents["ada"], "old output")
+	oldTurnID := waitForAdaIdle(t, &m, s)
+	if err := s.Execute(session.RemoveCommand{Alias: "ada"}); err != nil {
+		t.Fatalf("remove old ada: %v", err)
+	}
+
+	agents["ada"] = newTestAgent()
+	inviteParticipant(t, s, "ada")
+	m = pumpUntilAgentsStarted(t, m, "ada")
+	if err := s.Execute(session.PrivateSendCommand{Alias: "ada", Text: "new incarnation"}); err != nil {
+		t.Fatalf("start new ada turn: %v", err)
+	}
+	pushAnchorOutput(agents["ada"], "new output")
+	newTurnID := waitForAdaIdle(t, &m, s)
+	if newTurnID == oldTurnID {
+		t.Fatalf("turn ID reused across alias reincarnation: %d", newTurnID)
+	}
+
+	m = m.maybeAdvanceProjectedHandoff(completedTurnTrigger(oldTurnID))
+	if got := m.projectedTurnByAlias["ada"]; got != 0 {
+		t.Fatalf("delayed old turn advanced watermark to %d", got)
+	}
+	m = m.maybeAdvanceProjectedHandoff(completedTurnTrigger(newTurnID))
+	if got := m.projectedTurnByAlias["ada"]; got != newTurnID {
+		t.Fatalf("new turn watermark = %d, want %d", got, newTurnID)
+	}
+}
+
+func waitForAdaIdle(t *testing.T, m *Model, s *session.Session) uint64 {
+	t.Helper()
+	for {
+		event := mustPullEvent(t, m)
+		status, ok := event.(session.ParticipantStatusChanged)
+		if !ok || status.Alias != "ada" || status.To != participant.StatusIdle {
+			continue
+		}
+		p, ok := s.Participant("ada")
+		if !ok {
+			t.Fatal("participant ada disappeared")
+		}
+		return p.TurnID()
+	}
+}
+
+func completedTurnTrigger(turn uint64) roomstate.UpdateTrigger {
+	return roomstate.UpdateTrigger{
+		Kind:     roomstate.UpdateTriggerAgentTurnCompleted,
+		Alias:    "ada",
+		StreamID: testTurnAnchor,
+		TurnID:   turn,
+	}
+}
+
+func TestBarrierBatch_bystanderDepartureDoesNotBypassHandoffSourceReadiness(t *testing.T) {
+	agents := map[string]*testAgent{
+		"ada":    newTestAgent(),
+		"turing": newTestAgent(),
+		"cat":    newTestAgent(),
+	}
+	s := session.New(session.WithAgentFactory(func(_ *session.Session, cfg roomconfig.ParticipantConfig, _ session.AgentBackend) agent.Agent {
+		return agents[cfg.Alias]
+	}))
+	t.Cleanup(s.Shutdown)
+	m := newTestModelWithSession(t, s)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	for _, alias := range []string{"ada", "turing", "cat"} {
+		inviteParticipant(t, s, alias)
+	}
+	m = pumpUntilAgentsStarted(t, m, "ada", "turing", "cat")
+	m = stageBusyHandoff(t, s, m)
+
+	pushAnchorOutput(agents["ada"], "fresh output")
+	for {
+		event := mustPullEvent(t, &m)
+		status, ok := event.(session.ParticipantStatusChanged)
+		if ok && status.Alias == "ada" && status.To == participant.StatusIdle {
+			break
+		}
+	}
+	m = m.maybeAdvanceStagedBatch(session.AgentStopped{Alias: "cat"})
+
+	if !m.room.HasStagedBatch() {
+		t.Fatal("bystander departure dispatched handoff before source flush projection")
+	}
+}
+
 func newTwoAgentBarrierBatchModel(t *testing.T) (map[string]*testAgent, *session.Session, Model) {
 	t.Helper()
 
@@ -631,12 +844,24 @@ func pushAnchorOutput(a *testAgent, text string) {
 func waitForHandoffEvent(t *testing.T, m Model) Model {
 	t.Helper()
 
-	return pumpUntil(t, m, func(ev session.Event) bool {
-		handoff, ok := ev.(session.ContextHandoff)
-		return ok &&
-			handoff.FromAlias == "ada" &&
-			handoff.ToAlias == "turing"
-	})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ev, ok := m.queue.PullTimeout(10 * time.Millisecond); ok {
+			next, _ := m.Update(sessionEventMsg{event: ev})
+			m = next.(Model)
+			if handoff, ok := ev.(session.ContextHandoff); ok &&
+				handoff.FromAlias == "ada" && handoff.ToAlias == "turing" {
+				return m
+			}
+			continue
+		}
+		if updated, trigger, ok := m.room.WaitObserverUpdateTriggerTimeout(10 * time.Millisecond); ok {
+			m.room = updated
+			m = m.maybeAdvanceProjectedHandoff(trigger)
+		}
+	}
+	t.Fatalf("timed out waiting for handoff event; staged=%v records=%v", m.room.HasStagedBatch(), m.room.HistoryRecords())
+	return m
 }
 
 func assertHandoffRaceResolved(t *testing.T, m Model) {

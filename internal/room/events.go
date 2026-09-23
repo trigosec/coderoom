@@ -14,14 +14,24 @@ func (r *Room) applyEvent(e session.Event) (Update, bool) {
 
 	if msg, ok := e.(session.AgentMessage); ok {
 		dirty := r.handleAgentMessageLocked(msg.Alias, msg.Msg)
-		return r.bumpVersionLocked(dirty...), true
+		update := r.bumpVersionLocked(dirty...)
+		if msg.TurnCompleted {
+			update.Trigger = UpdateTrigger{
+				Kind:     UpdateTriggerAgentTurnCompleted,
+				Alias:    msg.Alias,
+				StreamID: msg.Msg.StreamID,
+				TurnID:   msg.TurnID,
+			}
+		}
+		return update, true
 	}
 
 	dirty, ok := r.handleLifecycleEventLocked(e)
 	if !ok {
 		return Update{}, false
 	}
-	return r.bumpVersionLocked(dirty...), true
+	update := r.bumpVersionLocked(dirty...)
+	return update, true
 }
 
 func (r *Room) handleLifecycleEventLocked(e session.Event) ([]int, bool) {

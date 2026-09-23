@@ -93,6 +93,8 @@ type Model struct {
 	activeLoop       *loopExecution
 	lastSize         tea.WindowSizeMsg
 
+	projectedTurnByAlias map[string]uint64
+
 	activeApprovalID           int64
 	submissionPending          bool
 	submissionAwaitingDispatch string

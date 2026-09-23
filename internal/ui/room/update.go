@@ -6,7 +6,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/trigosec/coderoom/internal/agent"
-	roomstate "github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/ui/editor"
 	"github.com/trigosec/coderoom/internal/ui/room/approval"
 	"github.com/trigosec/coderoom/internal/ui/room/history"
@@ -20,8 +19,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
-	case roomUpdateMsg:
-		return m.applyRoomUpdate(roomstate.Update(msg)), awaitRoomUpdate(m.roomQueue)
+	case UpdateMsg:
+		return m.applyRoomUpdate(msg.update), awaitRoomUpdate(m.roomQueue)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.MouseWheelMsg:

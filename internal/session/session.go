@@ -55,6 +55,7 @@ type Session struct {
 	policies      policy.Set
 	hasInvited    bool
 	approvals     *approvalHub
+	lastTurnID    uint64
 	lifecycle     sessionLifecycle
 }
 
@@ -603,9 +604,11 @@ func (s *Session) prepareParticipantForWork(alias string) error {
 func (s *Session) beginParticipantWorking(alias string, anchor agent.StreamID) {
 	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		from := p.Status
-		if err := p.BeginWorking(s.now(), anchor); err != nil {
+		turnID := s.lastTurnID + 1
+		if err := p.BeginWorking(s.now(), anchor, turnID); err != nil {
 			return nil, fmt.Errorf("begin working: %w", err)
 		}
+		s.lastTurnID = turnID
 		return ParticipantStatusChanged{Alias: alias, From: from, To: p.Status, Since: p.Since}, nil
 	})
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
@@ -633,9 +636,11 @@ func (s *Session) abortWork(alias string) {
 
 // markIdle transitions the participant to Idle via BecomeIdle. Called when the
 // anchor stream flush is received (shouldIdle=true from CloseStream).
-func (s *Session) markIdle(alias string) {
+func (s *Session) markIdle(alias string) (uint64, bool) {
+	var turnID uint64
 	err := s.updateParticipant(alias, func(p *participant.Participant) (Event, error) {
 		from := p.Status
+		turnID = p.TurnID()
 		if err := p.BecomeIdle(s.now()); err != nil {
 			return nil, fmt.Errorf("become idle: %w", err)
 		}
@@ -644,6 +649,7 @@ func (s *Session) markIdle(alias string) {
 	if err != nil && !errors.Is(err, errParticipantNotFound) {
 		s.notifyParticipantInvariant(alias, err)
 	}
+	return turnID, err == nil
 }
 
 // trackAnchorStream tracks a stream for a participant that is already Working
@@ -730,9 +736,14 @@ func (s *Session) handleAgentMessage(alias string, msg agent.Message) {
 		return
 	}
 
-	s.applyTurnLifecycle(alias, msg)
+	turnID, turnCompleted := s.applyTurnLifecycle(alias, msg)
 	m := msg
-	s.notify(AgentMessage{Alias: alias, Msg: m})
+	s.notify(AgentMessage{
+		Alias:         alias,
+		Msg:           m,
+		TurnCompleted: turnCompleted,
+		TurnID:        turnID,
+	})
 }
 
 func (s *Session) finishParticipantKeepalive(alias string) {
@@ -751,7 +762,7 @@ func (s *Session) finishParticipantKeepalive(alias string) {
 	}
 }
 
-func (s *Session) applyTurnLifecycle(alias string, msg agent.Message) {
+func (s *Session) applyTurnLifecycle(alias string, msg agent.Message) (uint64, bool) {
 	// Stream tracking only — no status transitions here. Transitions happen via
 	// prepareParticipantForWork / beginParticipantWorking / markIdle driven by
 	// the session command layer and the anchor stream close.
@@ -762,12 +773,13 @@ func (s *Session) applyTurnLifecycle(alias string, msg agent.Message) {
 			_, _ = s.noteWorkingStreamMessage(alias, msg)
 		case agent.ModeFlush:
 			if shouldIdle, tracked := s.noteWorkingStreamMessage(alias, msg); tracked && shouldIdle {
-				s.markIdle(alias)
+				return s.markIdle(alias)
 			}
 		case agent.ModeSingle:
 			// Standalone messages are not stream-tracked.
 		}
 	}
+	return 0, false
 }
 
 func (s *Session) shouldDropIdleStreamFragment(alias string, msg agent.Message) bool {

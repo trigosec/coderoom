@@ -10,6 +10,7 @@ import (
 	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/promptlang"
+	roomstate "github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room"
 	"github.com/trigosec/coderoom/internal/ui/room/staging"
@@ -51,6 +52,8 @@ func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case room.SubmitMsg:
 		return m.submitToInterpreter(msg.Text), nil
+	case room.UpdateMsg:
+		return m.handleRoomUpdate(msg)
 	case room.ApprovalDecisionMsg:
 		return m.handleApprovalDecision(msg)
 	case room.StagedEditMsg, room.StagedClearMsg:
@@ -66,6 +69,13 @@ func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		return m.forwardMessage(msg)
 	}
+}
+
+func (m Model) handleRoomUpdate(msg room.UpdateMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.room, cmd = m.room.Update(msg)
+	m = m.maybeAdvanceProjectedHandoff(msg.Trigger())
+	return m, cmd
 }
 
 func (m Model) submitToInterpreter(raw string) Model {
@@ -336,7 +346,11 @@ func (m Model) dispatchRoomStagedBatch() Model {
 func (m Model) handleEvent(e session.Event) (Model, tea.Cmd) {
 	next := m.handleMessageEvent(e)
 	// Best-effort only — see DrainObserverUpdates' doc comment.
-	next.room = next.room.DrainObserverUpdates()
+	var triggers []roomstate.UpdateTrigger
+	next.room, triggers = next.room.DrainObserverUpdateTriggers()
+	for _, trigger := range triggers {
+		next = next.maybeAdvanceProjectedHandoff(trigger)
+	}
 	next = next.maybeAdvanceStagedBatch(e)
 	next, loopCmd := next.advanceLoopForEvent(e)
 	var toolboxCmd tea.Cmd
@@ -387,6 +401,9 @@ func (m Model) handleBarrierBatchSubmit(raw string, action promptlang.Statement)
 	nextRoom, shouldDispatch := m.room.StageBatchOrDispatch(b, m.stagedSnapshotStatus)
 	m.room = nextRoom
 	if shouldDispatch {
+		if m.stagedHandoffSourcePending() {
+			return m
+		}
 		return m.dispatchRoomStagedBatch()
 	}
 	return m
@@ -417,6 +434,9 @@ func (m Model) handleStagedInterrupt() Model {
 		m.room = m.room.AppendSystem("[→ " + alias + "] interrupt requested")
 	}
 	if shouldDispatch {
+		if m.stagedHandoffSourcePending() {
+			return m
+		}
 		return m.dispatchRoomStagedBatch()
 	}
 	return m
@@ -426,8 +446,9 @@ func (m Model) maybeAdvanceStagedBatch(e session.Event) Model {
 	if !m.room.HasStagedBatch() {
 		return m
 	}
-	if shouldDeferHandoffDispatch(m.room.StagedBatch(), e) {
-		return m
+	staged := m.room.StagedBatch()
+	if staged.Action.Kind == staging.ActionHandoff && !m.stagedHandoffSourceReady(staged) {
+		return m.handleHandoffEventBeforeSourceReady(staged, e)
 	}
 	switch e := e.(type) {
 	case session.AgentStopped:
@@ -436,10 +457,6 @@ func (m Model) maybeAdvanceStagedBatch(e session.Event) Model {
 		m.room = m.room.MarkStagedDiscarded(e.Alias)
 	case session.ParticipantStatusChanged, session.AgentStarted:
 		// Status changes that may unblock dispatch.
-	case session.AgentMessage:
-		if !shouldRecheckHandoffOnMessage(m.room.StagedBatch(), e) {
-			return m
-		}
 	default:
 		return m
 	}
@@ -452,22 +469,77 @@ func (m Model) maybeAdvanceStagedBatch(e session.Event) Model {
 	return m
 }
 
-func shouldDeferHandoffDispatch(staged *staging.Batch, e session.Event) bool {
-	if staged == nil || staged.Action.Kind != staging.ActionHandoff {
-		return false
-	}
-	status, ok := e.(session.ParticipantStatusChanged)
-	return ok &&
-		status.Alias == staged.Action.FromAlias &&
-		status.To == participant.StatusIdle
+func (m Model) stagedHandoffSourcePending() bool {
+	staged := m.room.StagedBatch()
+	return staged != nil && staged.Action.Kind == staging.ActionHandoff &&
+		!m.stagedHandoffSourceReady(staged)
 }
 
-func shouldRecheckHandoffOnMessage(staged *staging.Batch, e session.Event) bool {
-	if staged == nil || staged.Action.Kind != staging.ActionHandoff {
+func (m Model) stagedHandoffSourceReady(staged *staging.Batch) bool {
+	p, ok := m.sess.Participant(staged.Action.FromAlias)
+	if !ok {
 		return false
 	}
-	msg, ok := e.(session.AgentMessage)
-	return ok && msg.Alias == staged.Action.FromAlias
+	return projectedTurnReady(
+		p.Status,
+		p.TurnID(),
+		m.projectedTurnByAlias[staged.Action.FromAlias],
+	)
+}
+
+func projectedTurnReady(status participant.Status, currentTurn, projectedTurn uint64) bool {
+	return status == participant.StatusIdle &&
+		(currentTurn == 0 || currentTurn == projectedTurn)
+}
+
+func (m Model) handleHandoffEventBeforeSourceReady(staged *staging.Batch, e session.Event) Model {
+	var alias string
+	switch event := e.(type) {
+	case session.AgentStopped:
+		alias = event.Alias
+	case session.AgentCrashed:
+		alias = event.Alias
+	default:
+		return m
+	}
+	m.room = m.room.MarkStagedDiscarded(alias)
+	if alias == staged.Action.FromAlias || alias == staged.Action.ToAlias {
+		return m.dispatchRoomStagedBatch()
+	}
+	nextRoom, _ := m.room.RefreshStagedStatus(m.stagedSnapshotStatus)
+	m.room = nextRoom
+	return m
+}
+
+func (m Model) maybeAdvanceProjectedHandoff(trigger roomstate.UpdateTrigger) Model {
+	if trigger.Kind != roomstate.UpdateTriggerAgentTurnCompleted {
+		return m
+	}
+	p, ok := m.sess.Participant(trigger.Alias)
+	if !ok || p.TurnID() != trigger.TurnID {
+		return m
+	}
+	if m.projectedTurnByAlias == nil {
+		m.projectedTurnByAlias = make(map[string]uint64)
+	}
+	m.projectedTurnByAlias[trigger.Alias] = trigger.TurnID
+
+	staged := m.room.StagedBatch()
+	if staged == nil || staged.Action.Kind != staging.ActionHandoff {
+		return m
+	}
+	if trigger.Alias != staged.Action.FromAlias {
+		return m
+	}
+	if !m.stagedHandoffSourceReady(staged) {
+		return m
+	}
+	nextRoom, shouldDispatch := m.room.RefreshStagedStatus(m.stagedSnapshotStatus)
+	m.room = nextRoom
+	if shouldDispatch {
+		return m.dispatchRoomStagedBatch()
+	}
+	return m
 }
 
 func (m Model) executeAction(a promptlang.Statement) (Model, tea.Cmd) {

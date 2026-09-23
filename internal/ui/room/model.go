@@ -225,22 +225,40 @@ func (m Model) SetHistorySnapshot(snapshot roomstate.Snapshot) Model {
 // by the time this is called — not a correctness requirement. awaitRoomUpdate
 // remains the only guaranteed delivery path; this just reduces visible lag.
 func (m Model) DrainObserverUpdates() Model {
+	updated, _ := m.DrainObserverUpdateTriggers()
+	return updated
+}
+
+// DrainObserverUpdateTriggers applies all currently queued room updates and
+// returns their workflow-relevant triggers.
+func (m Model) DrainObserverUpdateTriggers() (Model, []roomstate.UpdateTrigger) {
+	var triggers []roomstate.UpdateTrigger
 	for {
 		update, ok := m.roomQueue.TryPull()
 		if !ok {
-			return m
+			return m, triggers
 		}
 		m = m.applyRoomUpdate(update)
+		if update.Trigger.Kind != roomstate.UpdateTriggerNone {
+			triggers = append(triggers, update.Trigger)
+		}
 	}
 }
 
 // WaitObserverUpdateTimeout waits up to timeout for the next queued room update.
 func (m Model) WaitObserverUpdateTimeout(timeout time.Duration) (Model, bool) {
+	updated, _, ok := m.WaitObserverUpdateTriggerTimeout(timeout)
+	return updated, ok
+}
+
+// WaitObserverUpdateTriggerTimeout waits for and applies the next queued room
+// update, returning its workflow-relevant trigger.
+func (m Model) WaitObserverUpdateTriggerTimeout(timeout time.Duration) (Model, roomstate.UpdateTrigger, bool) {
 	update, ok := m.roomQueue.PullTimeout(timeout)
 	if !ok {
-		return m, false
+		return m, roomstate.UpdateTrigger{}, false
 	}
-	return m.applyRoomUpdate(update), true
+	return m.applyRoomUpdate(update), update.Trigger, true
 }
 
 // IsStreaming reports whether alias currently has an open turn.
