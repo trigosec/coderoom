@@ -93,7 +93,9 @@ type Model struct {
 	activeLoop       *loopExecution
 	lastSize         tea.WindowSizeMsg
 
-	activeApprovalID int64
+	activeApprovalID           int64
+	submissionPending          bool
+	submissionAwaitingDispatch string
 
 	// showStartupHelpTip is a one-shot flag. When true, the tip will be shown on
 	// the next resize/layout if the room transcript is empty, and then set to false.

@@ -72,18 +72,36 @@ func (m Model) submitToInterpreter(raw string) Model {
 	if strings.TrimSpace(raw) == "" {
 		return m
 	}
-	if err := m.interpreter.Submit(raw); err == nil {
-		m.room = m.room.SetComposeValue("")
+	if m.submissionPending {
+		if m.submissionAwaitingDispatch != raw {
+			return m.restoreSubmittedComposer(raw)
+		}
+		m.submissionAwaitingDispatch = ""
 	}
+	if err := m.interpreter.Submit(raw); err != nil {
+		m.submissionPending = false
+		return m.restoreSubmittedComposer(raw)
+	}
+	m.submissionPending = true
+	m.room = m.clearSubmittedComposer(raw)
 	return m
 }
 
 func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) {
 	switch event := event.(type) {
 	case interpreter.UnknownCommand:
+		m.releaseSubmissionGate()
 		return m.handleSubmit(event.Raw)
 	case interpreter.InputRejected:
+		m.releaseSubmissionGate()
 		m.room = m.room.AppendSystem(formatInputRejection(event.Err))
+		return m, nil
+	case interpreter.SubmissionSucceeded:
+		m.releaseSubmissionGate()
+		return m, nil
+	case interpreter.SubmissionFailed:
+		m.releaseSubmissionGate()
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: %s: %v", event.Operation, event.Err))
 		return m, nil
 	default:
 		return m, nil
@@ -117,9 +135,28 @@ func (m Model) forwardMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	raw := m.room.ComposeValue()
 	var cmd tea.Cmd
 	m.room, cmd = m.room.Update(msg)
+	if !isSubmittedComposer(msg, raw, m.room.ComposeValue(), cmd) {
+		return m, cmd
+	}
+	if m.submissionPending {
+		m.room = m.room.SetComposeValue(raw)
+		return m, nil
+	}
+	m.submissionPending = true
+	m.submissionAwaitingDispatch = raw
 	return m, cmd
+}
+
+func isSubmittedComposer(msg tea.KeyPressMsg, before, after string, cmd tea.Cmd) bool {
+	key := msg.Key()
+	return key.Code == tea.KeyEnter &&
+		!key.Mod.Contains(tea.ModAlt) &&
+		strings.TrimSpace(before) != "" &&
+		after == "" &&
+		cmd != nil
 }
 
 func (m Model) handleResize(msg tea.WindowSizeMsg) Model {
@@ -176,6 +213,18 @@ func (m Model) clearSubmittedComposer(raw string) room.Model {
 		return m.room
 	}
 	return m.room.SetComposeValue("")
+}
+
+func (m Model) restoreSubmittedComposer(raw string) Model {
+	if m.room.ComposeValue() == "" {
+		m.room = m.room.SetComposeValue(raw)
+	}
+	return m
+}
+
+func (m *Model) releaseSubmissionGate() {
+	m.submissionPending = false
+	m.submissionAwaitingDispatch = ""
 }
 
 // routingFor returns the aliases that will receive the action, used to

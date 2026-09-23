@@ -61,7 +61,10 @@ func processInterpreterSubmission(t *testing.T, m Model) Model {
 		updated, _ := next.Update(interpreterEventMsg{event: event})
 		next = updated.(Model)
 		switch event.(type) {
-		case interpreter.UnknownCommand, interpreter.InputRejected:
+		case interpreter.UnknownCommand,
+			interpreter.InputRejected,
+			interpreter.SubmissionSucceeded,
+			interpreter.SubmissionFailed:
 			return next
 		}
 	}

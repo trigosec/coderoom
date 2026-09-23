@@ -111,14 +111,14 @@ go test ./...
       `InputRejected`, `UnknownCommand`, `SubmissionSucceeded`, or
       `SubmissionFailed`. Do not add a second completion event after rejection
       or unknown routing.
-- [ ] While a submission is unresolved, prevent the sequential TUI from
+- [x] While a submission is unresolved, prevent the sequential TUI from
       starting another interpreter or legacy command. Release the gate on its
       single terminal outcome.
 - [ ] Test `/invite ada` followed immediately by `/who`: after the invite
       command returns and its synchronous events drain, `/who` observes `ada`
       in `Starting` state. Submission completion does not wait for the
       asynchronous `AgentStarted` event.
-- [ ] Test failure and shutdown paths release or reject the temporary gate
+- [x] Test failure and shutdown paths release or reject the temporary gate
       without losing the composer's current draft.
 - [ ] Prove native handlers take precedence, fallbacks execute exactly once,
       and fallback causal events drain before the next submission.
