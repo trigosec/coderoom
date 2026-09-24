@@ -22,10 +22,6 @@ type executeLegacyOperation struct {
 	result  chan error
 }
 type snapshotOperation struct{ result chan Snapshot }
-type resolveApprovalOperation struct {
-	id     int64
-	choice ApprovalChoice
-}
 type shutdownOperation struct{}
 type eventDispatchBarrier struct{ reached chan struct{} }
 
@@ -105,13 +101,6 @@ func (i *Interpreter) ExecuteLegacy(command session.Command) error {
 		default:
 			return ErrClosed
 		}
-	}
-}
-
-// ResolveApproval queues a structured response to the active approval.
-func (i *Interpreter) ResolveApproval(id int64, choice ApprovalChoice) {
-	if !i.enqueue(resolveApprovalOperation{id: id, choice: choice}) {
-		return
 	}
 }
 
@@ -240,21 +229,6 @@ func (op executeLegacyOperation) apply(i *Interpreter) {
 
 func (op snapshotOperation) apply(i *Interpreter) {
 	op.result <- i.captureSnapshot()
-}
-
-func (op resolveApprovalOperation) apply(i *Interpreter) {
-	choice, err := i.approvalChoice(op.id, op.choice)
-	if err != nil {
-		i.publish(OperationFailed{Operation: "resolve approval", Err: err})
-		return
-	}
-	err = i.session.Execute(session.ResolveApprovalCommand{ApprovalID: op.id, Choice: choice})
-	if err != nil {
-		i.publish(OperationFailed{Operation: "resolve approval", Err: err})
-		return
-	}
-	i.clearApproval(op.id)
-	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
 }
 
 func (shutdownOperation) apply(i *Interpreter) {

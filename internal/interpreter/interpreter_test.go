@@ -168,11 +168,11 @@ func TestInterpreter_resolvesOnlyOfferedChoiceAndClearsApproval(t *testing.T) {
 
 	emitApproval(sess, 42, agent.OptionDecline, agent.OptionCancel)
 	receiveEvent[interpreter.StateChanged](t, events)
-	interp.ResolveApproval(42, interpreter.ApprovalChoice{OptionID: "accept"})
+	mustResolveApproval(t, interp, 42, "accept")
 	receiveEvent[interpreter.OperationFailed](t, events)
 	assertNotExecuted(t, sess.executed)
 
-	interp.ResolveApproval(42, interpreter.ApprovalChoice{OptionID: "decline"})
+	mustResolveApproval(t, interp, 42, "decline")
 	command := receiveCommand(t, sess.executed)
 	resolved, ok := command.(session.ResolveApprovalCommand)
 	if !ok || resolved.ApprovalID != 42 || resolved.Choice != agent.OptionDecline {
@@ -193,7 +193,7 @@ func TestInterpreter_rejectsResolutionForInactiveApproval(t *testing.T) {
 
 	emitApproval(sess, 42, agent.OptionAccept)
 	receiveEvent[interpreter.StateChanged](t, events)
-	interp.ResolveApproval(41, interpreter.ApprovalChoice{OptionID: "accept"})
+	mustResolveApproval(t, interp, 41, "accept")
 	receiveEvent[interpreter.OperationFailed](t, events)
 	assertNotExecuted(t, sess.executed)
 	if approval := interp.Snapshot().Approval; approval == nil || approval.ID != 42 {
@@ -213,7 +213,7 @@ func TestInterpreter_transitionsToNextApprovalAfterResolution(t *testing.T) {
 
 	emitApproval(sess, 42, agent.OptionAccept)
 	receiveEvent[interpreter.StateChanged](t, events)
-	interp.ResolveApproval(42, interpreter.ApprovalChoice{OptionID: "accept"})
+	mustResolveApproval(t, interp, 42, "accept")
 	receiveCommand(t, sess.executed)
 	cleared := receiveEvent[interpreter.StateChanged](t, events)
 	if cleared.Snapshot.Approval != nil {
@@ -235,7 +235,7 @@ func TestInterpreter_keepsApprovalWhenResolutionFails(t *testing.T) {
 
 	emitApproval(sess, 42, agent.OptionAccept)
 	receiveEvent[interpreter.StateChanged](t, events)
-	interp.ResolveApproval(42, interpreter.ApprovalChoice{OptionID: "accept"})
+	mustResolveApproval(t, interp, 42, "accept")
 	receiveCommand(t, sess.executed)
 	receiveEvent[interpreter.OperationFailed](t, events)
 	if approval := interp.Snapshot().Approval; approval == nil || approval.ID != 42 {
@@ -258,7 +258,7 @@ func TestInterpreter_consumesApprovalOnceUnderConcurrentResolution(t *testing.T)
 	for range operations {
 		go func() {
 			defer submitted.Done()
-			interp.ResolveApproval(1, interpreter.ApprovalChoice{OptionID: "accept"})
+			_ = interp.ResolveApproval(1, interpreter.ApprovalChoice{OptionID: "accept"})
 		}()
 	}
 	submitted.Wait()
@@ -279,7 +279,9 @@ func TestInterpreter_serializesConcurrentSessionExecuteCalls(t *testing.T) {
 
 	const operations = 20
 	for range operations {
-		go interp.ResolveApproval(1, interpreter.ApprovalChoice{OptionID: "accept"})
+		go func() {
+			_ = interp.ResolveApproval(1, interpreter.ApprovalChoice{OptionID: "accept"})
+		}()
 	}
 	for range operations {
 		receiveCommand(t, sess.executed)
@@ -295,7 +297,9 @@ func TestInterpreter_closeIsIdempotentAndRejectsOperations(t *testing.T) {
 
 	interp.Close()
 	interp.Close()
-	interp.ResolveApproval(1, interpreter.ApprovalChoice{OptionID: "accept"})
+	if err := interp.ResolveApproval(1, interpreter.ApprovalChoice{OptionID: "accept"}); !errors.Is(err, interpreter.ErrClosed) {
+		t.Fatalf("ResolveApproval after Close = %v, want ErrClosed", err)
+	}
 
 	select {
 	case <-sess.executed:
@@ -346,6 +350,13 @@ func receiveEvent[T interpreter.Event](t *testing.T, events <-chan interpreter.E
 
 func emitApproval(sess *recordingSession, id int64, options ...agent.ApprovalOption) {
 	sess.emit(approvalRequested(id, options...))
+}
+
+func mustResolveApproval(t *testing.T, interp *interpreter.Interpreter, id int64, optionID string) {
+	t.Helper()
+	if err := interp.ResolveApproval(id, interpreter.ApprovalChoice{OptionID: optionID}); err != nil {
+		t.Fatalf("ResolveApproval: %v", err)
+	}
 }
 
 func approvalRequested(id int64, options ...agent.ApprovalOption) session.ApprovalRequested {

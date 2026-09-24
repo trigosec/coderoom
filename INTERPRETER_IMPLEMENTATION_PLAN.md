@@ -150,7 +150,7 @@ go test ./...
       formatting in the TUI, then route it through `Submit`.
 - [x] Make the interpreter recognize `/quit` and emit an exit-request event;
       the TUI remains responsible for returning `tea.Quit`.
-- [ ] Route approval decisions through `Interpreter.ResolveApproval`, remove
+- [x] Route approval decisions through `Interpreter.ResolveApproval`, remove
       the TUI's `ResolveApprovalCommand` construction, and delete that
       `ExecuteLegacy` call.
 - [ ] Decide explicitly whether debug display commands remain UI-only or

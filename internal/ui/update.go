@@ -119,17 +119,10 @@ func (m Model) submitToInterpreter(raw string) Model {
 }
 
 func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) {
+	if next, cmd, handled := m.handleInterpreterPresentationEvent(event); handled {
+		return next, cmd
+	}
 	switch event := event.(type) {
-	case interpreter.InputAccepted:
-		m.room = m.room.AppendUserInput(event.Raw, event.Routing)
-		return m, nil
-	case interpreter.RosterListed:
-		return m.renderRoster(event.Participants), nil
-	case interpreter.HelpListed:
-		return m.renderHelp(event), nil
-	case interpreter.ExitRequested:
-		m.executions.cancelActive()
-		return m, tea.Quit
 	case interpreter.UnknownCommand:
 		m.releaseSubmissionGate()
 		return m.handleSubmit(event.Raw)
@@ -146,6 +139,26 @@ func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) 
 		return m, nil
 	default:
 		return m, nil
+	}
+}
+
+func (m Model) handleInterpreterPresentationEvent(event interpreter.Event) (Model, tea.Cmd, bool) {
+	switch event := event.(type) {
+	case interpreter.InputAccepted:
+		m.room = m.room.AppendUserInput(event.Raw, event.Routing)
+		return m, nil, true
+	case interpreter.RosterListed:
+		return m.renderRoster(event.Participants), nil, true
+	case interpreter.HelpListed:
+		return m.renderHelp(event), nil, true
+	case interpreter.ExitRequested:
+		m.executions.cancelActive()
+		return m, tea.Quit, true
+	case interpreter.OperationFailed:
+		m.room = m.room.AppendSystem(fmt.Sprintf("error: %s: %v", event.Operation, event.Err))
+		return m, nil, true
+	default:
+		return m, nil, false
 	}
 }
 
@@ -172,8 +185,8 @@ func formatInputRejection(err error) string {
 }
 
 func (m Model) handleApprovalDecision(msg room.ApprovalDecisionMsg) (tea.Model, tea.Cmd) {
-	cmd := session.ResolveApprovalCommand{ApprovalID: m.activeApprovalID, Choice: msg.Choice}
-	if err := m.interpreter.ExecuteLegacy(cmd); err != nil {
+	choice := interpreter.ApprovalChoice{OptionID: string(msg.Choice)}
+	if err := m.interpreter.ResolveApproval(m.activeApprovalID, choice); err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: resolve approval: %v", err))
 		return m, nil
 	}

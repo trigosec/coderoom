@@ -55,7 +55,7 @@ func New(ctx context.Context, sess SessionController, cwd string, opts ...Option
 func (i *Interpreter) Submit(raw string) error
 func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) error
 func (i *Interpreter) ExecuteLegacy(command session.Command) error
-func (i *Interpreter) ResolveApproval(id int64, choice ApprovalChoice)
+func (i *Interpreter) ResolveApproval(id int64, choice ApprovalChoice) error
 func (i *Interpreter) TakeStageForEdit() (string, bool)
 func (i *Interpreter) DiscardStage() bool
 func (i *Interpreter) InterruptAndDispatchStage() bool

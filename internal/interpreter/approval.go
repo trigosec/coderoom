@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/session"
 )
 
 var (
@@ -11,6 +12,34 @@ var (
 	errApprovalNotActive        = errors.New("approval is not active")
 	errApprovalChoiceNotOffered = errors.New("approval choice was not offered")
 )
+
+type resolveApprovalOperation struct {
+	id     int64
+	choice ApprovalChoice
+}
+
+// ResolveApproval queues a structured response to the active approval.
+func (i *Interpreter) ResolveApproval(id int64, choice ApprovalChoice) error {
+	if !i.enqueue(resolveApprovalOperation{id: id, choice: choice}) {
+		return ErrClosed
+	}
+	return nil
+}
+
+func (op resolveApprovalOperation) apply(i *Interpreter) {
+	choice, err := i.approvalChoice(op.id, op.choice)
+	if err != nil {
+		i.publish(OperationFailed{Operation: "resolve approval", Err: err})
+		return
+	}
+	err = i.session.Execute(session.ResolveApprovalCommand{ApprovalID: op.id, Choice: choice})
+	if err != nil {
+		i.publish(OperationFailed{Operation: "resolve approval", Err: err})
+		return
+	}
+	i.clearApproval(op.id)
+	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
+}
 
 func agentApprovalChoice(choice ApprovalChoice) (agent.ApprovalOption, bool) {
 	option := agent.ApprovalOption(choice.OptionID)
