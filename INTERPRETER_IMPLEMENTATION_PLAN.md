@@ -153,10 +153,10 @@ go test ./...
 - [x] Route approval decisions through `Interpreter.ResolveApproval`, remove
       the TUI's `ResolveApprovalCommand` construction, and delete that
       `ExecuteLegacy` call.
-- [ ] Decide explicitly whether debug display commands remain UI-only or
+- [x] Decide explicitly whether debug display commands remain UI-only or
       become interpreter commands; they must not expose UI behavior through a
       fallback callback.
-- [ ] Remove each migrated control/query command from the legacy TUI handler.
+- [x] Remove each migrated control/query command from the legacy TUI handler.
 
 ### 5d. Migrate session commands
 

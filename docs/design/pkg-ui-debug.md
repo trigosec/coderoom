@@ -65,7 +65,8 @@ the first viewport line appears “missing”.
 
 ## Design Constraints
 
+- Debug commands are UI-only because they inspect and mutate presentation
+  state; they are not interpreter commands or session-command fallbacks.
 - Debug mode must not require code changes to enable during development.
 - Debug features must not meaningfully complicate the non-debug code paths.
 - Debug output should be low-noise and safe to paste into issues.
-
