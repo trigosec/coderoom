@@ -258,21 +258,21 @@ func TestSelectedText_removesToolRecordLayoutIndent(t *testing.T) {
 	}
 }
 
-func TestSelectedText_preservesSemanticTrailingSpaces(t *testing.T) {
+func TestSelectedText_removesTrailingWhitespace(t *testing.T) {
 	m := New(nil, "")
 	m = m.SetSize(10, 4)
 	m = m.ReplaceSnapshot(roomstate.Snapshot{
-		Records: []rec.Record{{Kind: rec.KindSystem, Text: "text  "}},
+		Records: []rec.Record{{Kind: rec.KindSystem, Text: "text  \n  indented\t "}},
 	})
 	m.cursor = Cursor{Row: 0, Col: 0, Visible: true}
 	m.selection = Selection{
-		Anchor:  Cursor{Row: 0, Col: lineWidth(m.lines[0]), Visible: true},
+		Anchor:  Cursor{Row: 1, Col: lineWidth(m.lines[1]), Visible: true},
 		Visible: true,
 	}
 
 	got, ok := m.SelectedText()
-	if !ok || got != "text  " {
-		t.Fatalf("selected text = (%q,%v), want (%q,true)", got, ok, "text  ")
+	if !ok || got != "text\n  indented" {
+		t.Fatalf("selected text = (%q,%v), want (%q,true)", got, ok, "text\n  indented")
 	}
 }
 

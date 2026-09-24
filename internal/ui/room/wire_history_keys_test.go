@@ -185,8 +185,8 @@ func TestHistoryFocus_ctrlShiftRightStopsAtExclusiveWordBoundary(t *testing.T) {
 		Code: tea.KeyRight,
 		Mod:  tea.ModCtrl | tea.ModShift,
 	}))
-	if got, ok := m.HistorySelectedText(); !ok || got != "one " {
-		t.Fatalf("word selection = (%q,%v), want (%q,true)", got, ok, "one ")
+	if got, ok := m.HistorySelectedText(); !ok || got != "one" {
+		t.Fatalf("word selection = (%q,%v), want (%q,true)", got, ok, "one")
 	}
 }
 
@@ -200,13 +200,13 @@ func TestHistoryFocus_ctrlShiftLeftShrinksRightwardWordSelectionAtBoundary(t *te
 
 	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: wordSelection}))
 	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: wordSelection}))
-	if got, ok := m.HistorySelectedText(); !ok || got != "one two " {
-		t.Fatalf("expanded word selection = (%q,%v), want (%q,true)", got, ok, "one two ")
+	if got, ok := m.HistorySelectedText(); !ok || got != "one two" {
+		t.Fatalf("expanded word selection = (%q,%v), want (%q,true)", got, ok, "one two")
 	}
 
 	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: wordSelection}))
-	if got, ok := m.HistorySelectedText(); !ok || got != "one " {
-		t.Fatalf("shrunk word selection = (%q,%v), want (%q,true)", got, ok, "one ")
+	if got, ok := m.HistorySelectedText(); !ok || got != "one" {
+		t.Fatalf("shrunk word selection = (%q,%v), want (%q,true)", got, ok, "one")
 	}
 }
 

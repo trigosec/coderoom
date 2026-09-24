@@ -351,7 +351,8 @@ func (m Model) SelectedText() (string, bool) {
 			continue
 		}
 		selStart = max(selStart, m.lines[row].layoutPrefixWidth)
-		parts = append(parts, visibleTextSlice(m.lines[row].plain, selStart, selEnd))
+		selected := visibleTextSlice(m.lines[row].plain, selStart, selEnd)
+		parts = append(parts, strings.TrimRight(selected, " \t"))
 	}
 	return strings.Join(parts, "\n"), true
 }
