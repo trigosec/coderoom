@@ -3,11 +3,9 @@ package interpreter
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/trigosec/coderoom/internal/participant"
-	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/session"
@@ -19,10 +17,6 @@ type Option func(*Interpreter)
 type operation interface{ apply(*Interpreter) }
 
 type drainSessionEventsOperation struct{}
-type submitOperation struct {
-	raw      string
-	fallback session.Command
-}
 type executeLegacyOperation struct {
 	command session.Command
 	result  chan error
@@ -91,25 +85,6 @@ func New(ctx context.Context, sess SessionController, _ string, opts ...Option) 
 		}
 	}()
 	return i
-}
-
-// Submit queues prompt-language input. It returns ErrClosed if ownership cannot
-// be accepted because shutdown has begun.
-func (i *Interpreter) Submit(raw string) error {
-	if !i.enqueue(submitOperation{raw: raw}) {
-		return ErrClosed
-	}
-	return nil
-}
-
-// SubmitWithFallback queues input with a temporary legacy session command and
-// returns ErrClosed if ownership cannot be accepted. Native handlers take
-// precedence once they are introduced.
-func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) error {
-	if !i.enqueue(submitOperation{raw: raw, fallback: fallback}) {
-		return ErrClosed
-	}
-	return nil
 }
 
 // ExecuteLegacy synchronously executes a transitional session command on the
@@ -256,106 +231,10 @@ func (i *Interpreter) applySessionEvent(event session.Event) {
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
 }
 
-func (op submitOperation) apply(i *Interpreter) {
-	if i.stagePending {
-		i.publish(InputRejected{Raw: op.raw, Err: ErrStagePending})
-		return
-	}
-	statement, err := promptlang.Parse(op.raw)
-	if err != nil {
-		i.publish(InputRejected{Raw: op.raw, Err: err})
-		return
-	}
-	if i.executeNative(op.raw, statement) {
-		return
-	}
-	if op.fallback == nil {
-		i.publish(UnknownCommand{Raw: op.raw, Name: commandName(statement)})
-		return
-	}
-
-	i.room.AppendUserInputRecord(op.raw, nil)
-	i.publish(InputAccepted{Raw: op.raw})
-	err = i.session.Execute(op.fallback)
-	i.drainSessionEvents(false)
-	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
-	if err != nil {
-		i.publish(SubmissionFailed{
-			Raw:       op.raw,
-			Operation: "migration fallback",
-			Err:       fmt.Errorf("execute migration fallback: %w", err),
-		})
-		return
-	}
-	i.publish(SubmissionSucceeded{Raw: op.raw})
-}
-
-func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) bool {
-	switch statement.(type) {
-	case promptlang.Who:
-		i.executeWho(raw)
-		return true
-	case promptlang.Help:
-		i.executeHelp(raw)
-		return true
-	default:
-		return false
-	}
-}
-
-func (i *Interpreter) executeWho(raw string) {
-	i.room.AppendUserInputRecord(raw, nil)
-	i.publish(InputAccepted{Raw: raw})
-	snapshot := i.captureSnapshot()
-	i.publish(StateChanged{Snapshot: snapshot})
-	i.publish(RosterListed{Participants: append([]participant.View(nil), snapshot.Participants...)})
-	i.publish(SubmissionSucceeded{Raw: raw})
-}
-
-func (i *Interpreter) executeHelp(raw string) {
-	i.room.AppendUserInputRecord(raw, nil)
-	i.publish(InputAccepted{Raw: raw})
-	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
-	i.publish(helpListing())
-	i.publish(SubmissionSucceeded{Raw: raw})
-}
-
-func helpListing() HelpListed {
-	return HelpListed{
-		Commands: []HelpEntry{
-			{Usage: "/policy enable send-notices", Description: "notify listeners after direct sends"},
-			{Usage: "/policy enable echo-invites", Description: "use deterministic echo agents for invitations"},
-			{Usage: "/invite <alias>", Description: "start an agent"},
-			{Usage: "/remove <alias>", Description: "remove an agent"},
-			{Usage: "/cancel <alias>", Description: "interrupt an agent's current turn"},
-			{Usage: "/handoff <from> <to>", Description: "transfer latest output between agents"},
-			{Usage: "/shell <program>", Description: "execute a shell program"},
-			{Usage: "/def <name> /shell <program>", Description: "define a shell-backed command"},
-			{Usage: "/<name>", Description: "invoke a defined command"},
-			{Usage: "/loop @<alias> <prompt> /until /<name> /max <turns>", Description: "run a bounded participant loop"},
-			{Usage: "/who", Description: "list agents"},
-			{Usage: "/help", Description: "show this message"},
-			{Usage: "/quit", Description: "exit"},
-		},
-		Messages: []HelpEntry{
-			{Usage: "@<alias> <text>", Description: "send to one agent"},
-			{Usage: "<text>", Description: "broadcast to all agents"},
-		},
-	}
-}
-
 func (op executeLegacyOperation) apply(i *Interpreter) {
 	err := i.session.Execute(op.command)
 	i.drainSessionEvents(false)
 	op.result <- err
-}
-
-func commandName(statement promptlang.Statement) string {
-	invocation, ok := statement.(promptlang.CommandInvocation)
-	if !ok {
-		return ""
-	}
-	return invocation.Name
 }
 
 func (op snapshotOperation) apply(i *Interpreter) {
