@@ -1,8 +1,11 @@
 package codex
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/trigosec/coderoom/internal/agent"
@@ -23,12 +26,126 @@ func setupNoticeClient(t *testing.T, stdout string) *Client {
 	return c
 }
 
+func setupKeepaliveClient(t *testing.T, stdout string) *Client {
+	t.Helper()
+	return setupKeepaliveClientWithIO(t, nopWriteCloser{io.Discard}, bytes.NewBufferString(stdout))
+}
+
+func setupKeepaliveClientWithIO(t *testing.T, stdin io.WriteCloser, stdout io.Reader) *Client {
+	t.Helper()
+	c := &Client{proc: newProc("test")}
+	c.proc.codexIn = stdin
+	c.proc.codexOut = bufio.NewReader(stdout)
+	c.proc.codexErr = io.NopCloser(bytes.NewBuffer(nil))
+	c.rpc.obs = noopObserver{}
+	c.initRead()
+	c.initApprovals()
+	c.lifecycle.ctx, c.lifecycle.cancelFn = context.WithCancel(context.Background()) // #nosec: G118
+	t.Cleanup(c.lifecycle.cancelFn)
+	c.turn.threadID = "t1"
+	c.turn.state = turnState{kind: turnInflightUnknownID}
+	c.notice.mu.Lock()
+	c.notice.state = noticePending
+	c.notice.kind = noticeTurnKeepalive
+	c.notice.mu.Unlock()
+	c.initWorkers()
+	return c
+}
+
 const turnStarted = `{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"u1"}}}` + "\n"
 const turnCompleted = `{"method":"turn/completed","params":{}}` + "\n"
 const turnFailed = `{"method":"turn/failed","params":{}}` + "\n"
 
 func agentDelta(text string) string {
 	return `{"method":"item/agentMessage/delta","params":{"delta":"` + text + `"}}` + "\n"
+}
+
+func TestKeepaliveFilter_nonCompliantOutputIsSuppressed(t *testing.T) {
+	c := setupKeepaliveClient(t, turnStarted+agentDelta(`unexpected prose`)+turnCompleted)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("read keepalive completion: %v", err)
+	}
+	if _, ok := msg.Content.(agent.KeepAlive); !ok {
+		t.Fatalf("completion content = %T, want agent.KeepAlive", msg.Content)
+	}
+}
+
+func TestKeepaliveFilter_suppressesToolNotifications(t *testing.T) {
+	tests := []struct {
+		name string
+		wire string
+	}{
+		{
+			name: "command execution",
+			wire: `{"method":"item/started","params":{"turnId":"u1","item":{"type":"commandExecution","id":"cmd1","command":"pwd","cwd":"/tmp","status":"inProgress"}}}` + "\n" +
+				`{"method":"item/commandExecution/outputDelta","params":{"turnId":"u1","itemId":"cmd1","delta":"output"}}` + "\n",
+		},
+		{
+			name: "file change",
+			wire: `{"method":"item/started","params":{"turnId":"u1","item":{"type":"fileChange","id":"patch1","status":"inProgress","changes":[]}}}` + "\n" +
+				`{"method":"item/fileChange/patchUpdated","params":{"turnId":"u1","itemId":"patch1","changes":[]}}` + "\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := setupKeepaliveClient(t, turnStarted+tt.wire+turnCompleted)
+			msg, err := c.Read()
+			if err != nil {
+				t.Fatalf("read tool diagnostic: %v", err)
+			}
+			log, ok := msg.Content.(agent.Log)
+			if !ok || !strings.Contains(log.Text, "SECURITY:") {
+				t.Fatalf("first content = %#v, want security diagnostic", msg.Content)
+			}
+			msg, err = c.Read()
+			if err != nil {
+				t.Fatalf("read keepalive completion: %v", err)
+			}
+			if _, ok := msg.Content.(agent.KeepAlive); !ok {
+				t.Fatalf("completion content = %T, want agent.KeepAlive", msg.Content)
+			}
+		})
+	}
+}
+
+func TestKeepaliveFilter_autoDeclinesApproval(t *testing.T) {
+	stdin := &bytes.Buffer{}
+	wire := turnStarted +
+		`{"id":41,"method":"item/commandExecution/requestApproval","params":{"command":"pwd","cwd":"/tmp"}}` + "\n" +
+		turnCompleted
+	c := setupKeepaliveClientWithIO(t, nopWriteCloser{stdin}, bytes.NewBufferString(wire))
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("read approval diagnostic: %v", err)
+	}
+	if _, ok := msg.Content.(agent.Log); !ok {
+		t.Fatalf("first content = %T, want agent.Log", msg.Content)
+	}
+	msg, err = c.Read()
+	if err != nil {
+		t.Fatalf("read keepalive completion: %v", err)
+	}
+	if _, ok := msg.Content.(agent.KeepAlive); !ok {
+		t.Fatalf("completion content = %T, want agent.KeepAlive", msg.Content)
+	}
+	if got := stdin.String(); !strings.Contains(got, `"id":41`) || !strings.Contains(got, `"decision":"decline"`) {
+		t.Fatalf("approval response = %q, want decline for request 41", got)
+	}
+}
+
+func TestKeepaliveFilter_failedTurnStillCompletes(t *testing.T) {
+	c := setupKeepaliveClient(t, turnStarted+turnFailed)
+
+	msg, err := c.Read()
+	if err != nil {
+		t.Fatalf("read keepalive completion: %v", err)
+	}
+	if _, ok := msg.Content.(agent.KeepAlive); !ok {
+		t.Fatalf("completion content = %T, want agent.KeepAlive", msg.Content)
+	}
 }
 
 // TestNoticeFilter_compliantAck verifies that a response of {"acknowledge":true}

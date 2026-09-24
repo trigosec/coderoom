@@ -10,6 +10,14 @@ import (
 
 type noticeState uint8
 
+type noticeTurnKind uint8
+
+const (
+	noticeTurnNone noticeTurnKind = iota
+	noticeTurnDelivery
+	noticeTurnKeepalive
+)
+
 const (
 	noticeIdle      noticeState = iota
 	noticePending               // SendNotice called; awaiting turn/started
@@ -33,11 +41,13 @@ const (
 // treated as compliant; extra fields are intentionally accepted.
 const noticeContextPrefix = "[CONTEXT UPDATE — respond only with {\"acknowledge\":true}]\n\n"
 
-// noticeOutputSchema is passed as outputSchema in the turn/start request.
+const keepaliveNoticePrompt = "[MAINTENANCE — do not use tools; respond only with {\"acknowledge\":true}]"
+
+// noticeAcknowledgementSchema constrains notice turns to a minimal response.
 // It constrains the agent message to the acknowledgment shape at the Codex
 // protocol level, complementing the prompt instruction for models that honour
 // structured output.
-var noticeOutputSchema = json.RawMessage(`{"type":"object","properties":{"acknowledge":{"type":"boolean","const":true}},"required":["acknowledge"],"additionalProperties":false}`)
+var noticeAcknowledgementSchema = json.RawMessage(`{"type":"object","properties":{"acknowledge":{"type":"boolean","const":true}},"required":["acknowledge"],"additionalProperties":false}`)
 
 // interceptNotice is called from handleStdoutEnvelope after turn state has
 // been updated. noticeUnhandled means the caller should process the envelope
@@ -45,10 +55,18 @@ var noticeOutputSchema = json.RawMessage(`{"type":"object","properties":{"acknow
 func (c *Client) interceptNotice(ctx context.Context, msg rpcEnvelope) noticeOutcome {
 	c.notice.mu.Lock()
 	state := c.notice.state
+	kind := c.notice.kind
 	c.notice.mu.Unlock()
 
 	if state == noticeIdle {
 		return noticeUnhandled
+	}
+	return c.interceptActiveNotice(ctx, msg, kind)
+}
+
+func (c *Client) interceptActiveNotice(ctx context.Context, msg rpcEnvelope, kind noticeTurnKind) noticeOutcome {
+	if kind == noticeTurnKeepalive {
+		return c.interceptKeepalive(ctx, msg)
 	}
 
 	switch msg.Method {
@@ -100,7 +118,7 @@ func (c *Client) handleNoticeDelta(ctx context.Context, msg rpcEnvelope) noticeO
 	// a notice turn. The {-heuristic and acknowledgment check only apply to the
 	// agent message, so reasoning must not trigger the noticeRelaying path and
 	// swallow subsequent agent message deltas.
-	if msg.Method == methodReasoningTextDelta || msg.Method == methodReasoningSummaryTextDelta {
+	if isNoticeReasoningDelta(msg.Method) {
 		return noticeContinue
 	}
 
@@ -135,14 +153,18 @@ func (c *Client) handleNoticeDelta(ctx context.Context, msg rpcEnvelope) noticeO
 	}
 }
 
+func isNoticeReasoningDelta(method string) bool {
+	return method == methodReasoningTextDelta || method == methodReasoningSummaryTextDelta
+}
+
 func (c *Client) handleNoticeCompleted(ctx context.Context) noticeOutcome {
 	c.notice.mu.Lock()
 	state := c.notice.state
 	buf := c.notice.buf.String()
 	c.notice.state = noticeIdle
+	c.notice.kind = noticeTurnNone
 	c.notice.buf.Reset()
 	c.notice.mu.Unlock()
-
 	switch state {
 	case noticeActive:
 		// No deltas at all — treat as acknowledgment.
@@ -168,6 +190,14 @@ func (c *Client) handleNoticeCompleted(ctx context.Context) noticeOutcome {
 	default:
 		return noticeUnhandled
 	}
+}
+
+func (c *Client) emitKeepalive(ctx context.Context) noticeOutcome {
+	return outcomeOf(sendBufMessage(ctx, c, readMessage{msg: agent.Message{
+		StreamID: keepaliveStreamID,
+		Mode:     agent.ModeSingle,
+		Content:  agent.KeepAlive{},
+	}}))
 }
 
 func (c *Client) emitNoticeTurnFlush(ctx context.Context) noticeOutcome {
@@ -221,6 +251,7 @@ func (c *Client) handleNoticeFailed(ctx context.Context) noticeOutcome {
 	c.notice.mu.Lock()
 	prevState := c.notice.state
 	c.notice.state = noticeIdle
+	c.notice.kind = noticeTurnNone
 	c.notice.buf.Reset()
 	c.notice.mu.Unlock()
 	if prevState == noticeRelaying {
@@ -229,6 +260,73 @@ func (c *Client) handleNoticeFailed(ctx context.Context) noticeOutcome {
 		return relayAndTurnFlush(ctx, c)
 	}
 	return c.emitNoticeTurnFlush(ctx)
+}
+
+func (c *Client) interceptKeepalive(ctx context.Context, msg rpcEnvelope) noticeOutcome {
+	switch msg.Method {
+	case methodTurnStarted:
+		return noticeContinue
+	case methodTurnCompleted, methodTurnFailed:
+		c.notice.mu.Lock()
+		c.notice.state = noticeIdle
+		c.notice.kind = noticeTurnNone
+		c.notice.toolViolationReported = false
+		c.notice.buf.Reset()
+		c.notice.mu.Unlock()
+		return c.emitKeepalive(ctx)
+	default:
+		if strings.HasPrefix(msg.Method, "item/") {
+			if isKeepaliveToolActivity(msg) {
+				return c.reportKeepaliveToolActivity(ctx, msg.Method)
+			}
+			return noticeContinue
+		}
+		return noticeUnhandled
+	}
+}
+
+func isKeepaliveToolActivity(msg rpcEnvelope) bool {
+	switch msg.Method {
+	case methodAgentDelta, methodReasoningTextDelta, methodReasoningSummaryTextDelta, methodReasoningSummaryPartAdded:
+		return false
+	case methodItemStarted, methodItemCompleted:
+		var p itemLifecycleParams
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			return true
+		}
+		var item itemKind
+		if err := json.Unmarshal(p.Item, &item); err != nil {
+			return true
+		}
+		return item.Type != "agentMessage" && item.Type != "reasoning"
+	default:
+		return true
+	}
+}
+
+func (c *Client) reportKeepaliveToolActivity(ctx context.Context, method string) noticeOutcome {
+	if !c.markToolViolationReported() {
+		return noticeContinue
+	}
+	text := "SECURITY: keepalive attempted tool activity (" + method + "); maintenance turn interrupted"
+	if err := c.Interrupt(); err != nil {
+		text += "; interrupt failed: " + err.Error()
+	}
+	return outcomeOf(sendBufMessage(ctx, c, readMessage{msg: agent.Message{
+		StreamID: logStreamID,
+		Mode:     agent.ModeSingle,
+		Content:  agent.Log{Text: text},
+	}}))
+}
+
+func (c *Client) markToolViolationReported() bool {
+	c.notice.mu.Lock()
+	defer c.notice.mu.Unlock()
+	if c.notice.toolViolationReported {
+		return false
+	}
+	c.notice.toolViolationReported = true
+	return true
 }
 
 func suppressNoticeAgentMessageItemCompleted(msg rpcEnvelope) noticeOutcome {

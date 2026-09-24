@@ -106,6 +106,22 @@ still emits a synthetic `Output + ModeFlush` on `codex:notice-turn` derived from
 `turn/completed` (or `turn/failed`). This lets downstream consumers treat a
 silent notice as a complete lifecycle without overloading normal output streams.
 
+### KeepAlive semantics
+
+`SendNotice` and `KeepAlive` share the same notice-turn mechanism. `KeepAlive`
+starts a maintenance notice constrained to the same minimal JSON
+acknowledgement shape as delivery notices. The adapter suppresses all response content
+and emits `agent.KeepAlive{}` when the turn completes or fails. This preserves
+the existing session keepalive contract while ensuring the maintenance request
+exercises the model-side thread context rather than merely reading metadata.
+
+The pinned app-server protocol has no per-turn switch that disables built-in
+tools. The maintenance prompt therefore explicitly forbids tool use. As a
+defensive boundary, the adapter also suppresses every `item/*` notification and
+auto-declines approval requests without forwarding them to the UI. The first
+tool-related notification marks the maintenance turn failed, emits a prominent
+diagnostic, and interrupts the turn; subsequent tool output remains suppressed.
+
 ### Turn anchors
 
 `Send` and `SendNotice` return a turn anchor to the caller.

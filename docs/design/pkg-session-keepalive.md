@@ -25,8 +25,9 @@ That makes idle expiry too expensive to treat as a normal path.
 
 ## Chosen approach
 
-We implement option 2 from the earlier exploration: a read-only keepalive via
-Codex `thread/read`.
+Codex keepalive starts a maintenance notice turn. A read-only
+`thread/read` probe was insufficient because it did not preserve the
+model-side context lifetime.
 
 The important split is:
 
@@ -49,7 +50,7 @@ type Keepaliver interface {
 For Codex:
 
 - `KeepAliveSchedule()` returns `20 * time.Minute`
-- `KeepAlive()` sends `thread/read {threadId, includeTurns:false}`
+- `KeepAlive()` starts a minimal `turn/start` constrained to an acknowledgement
 
 `KeepAlive()` is fire-and-forget, matching the shape of `SendNotice()`.
 Completion is reported through the normal `Read()` path as an internal
@@ -143,9 +144,9 @@ request in flight.
 Codex keepalive uses the standard message workflow:
 
 1. session calls `agent.KeepAlive()`
-2. Codex sends `thread/read`
-3. Codex client later receives the bare RPC response on stdout
-4. the client translates that response to `agent.KeepAlive{}`
+2. Codex starts a maintenance notice turn
+3. the client suppresses the acknowledgement output
+4. `turn/completed` or `turn/failed` becomes `agent.KeepAlive{}`
 5. session consumes that message internally and moves the participant from
    `keepalive` back to `idle`
 
@@ -155,10 +156,9 @@ The participant may still render as `keepalive` in status-oriented UI such as
 the toolbox. "Invisible" here means "no shared-room transcript record is
 created for a successful keepalive round-trip."
 
-For now, post-start `thread/read` is the only supported bare thread-shaped RPC
-response in the Codex adapter. That is why the response classifier can treat a
-thread-shaped bare response as keepalive completion without adding correlation
-machinery yet.
+The keepalive notice uses the same acknowledgement schema as delivery notices, but keeps
+its completion semantic distinct: it emits `agent.KeepAlive{}` rather than a
+notice-turn stream flush.
 
 ## Failure behavior
 
@@ -182,11 +182,10 @@ Reason:
 
 ## Tradeoffs and rejected approaches
 
-### Synthetic notice turn
+### Read-only thread probe
 
-Rejected as the primary design because it creates fake conversation traffic,
-consumes turn machinery, and muddies history for what should be invisible
-transport maintenance.
+Rejected after implementation experience showed that `thread/read` detects a
+thread but does not keep its model-side context warm.
 
 ### Ticker-based polling loop
 
@@ -208,13 +207,3 @@ Tradeoff:
 
 Rejected because the scheduler no longer uses per-idle waiters. The only
 keepalive-owned lifetime is the session ticker itself.
-
-## Open question
-
-The remaining product question is empirical:
-
-- does `thread/read` only detect expiry, or does it also refresh Codex's idle
-  TTL?
-
-The implementation is intentionally structured so we can answer that question
-without changing the rest of the app contract.

@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
@@ -276,9 +276,13 @@ func TestRead_reasoningSummaryTextDelta(t *testing.T) {
 	}
 }
 
-func TestKeepAlive_threadRead(t *testing.T) {
+func TestKeepAlive_startsHiddenAcknowledgementTurn(t *testing.T) {
 	stdin := &bytes.Buffer{}
-	stdout := bytes.NewBufferString(line(`{"id":1,"result":{"thread":{"id":"th1"}}}`))
+	stdout := bytes.NewBufferString(
+		line(`{"method":"turn/started","params":{"threadId":"th1","turn":{"id":"u1"}}}`) +
+			line(`{"method":"item/agentMessage/delta","params":{"delta":"{\"acknowledge\":true}"}}`) +
+			line(`{"method":"turn/completed","params":{}}`),
+	)
 	c := newWithIO(t, nopWriteCloser{stdin}, stdout, nil)
 	c.turn.threadID = "th1"
 	c.turn.state = turnState{kind: turnIdle}
@@ -287,8 +291,8 @@ func TestKeepAlive_threadRead(t *testing.T) {
 		t.Fatalf("KeepAlive(): %v", err)
 	}
 	got := stdin.String()
-	if !strings.Contains(got, `"method":"thread/read"`) {
-		t.Fatalf("expected thread/read request, got %q", got)
+	if !strings.Contains(got, `"method":"turn/start"`) {
+		t.Fatalf("expected turn/start request, got %q", got)
 	}
 	if !strings.Contains(got, `"threadId":"th1"`) {
 		t.Fatalf("expected threadId in request, got %q", got)
@@ -303,17 +307,13 @@ func TestKeepAlive_threadRead(t *testing.T) {
 	}
 }
 
-func TestKeepaliveResponseMessages_ignoresBareRPCError(t *testing.T) {
-	id := 1
-	msg := rpcEnvelope{
-		ID:     &id,
-		Error:  json.RawMessage(`{"message":"boom"}`),
-		Result: nil,
-	}
+func TestKeepAlive_rejectsOverlappingTurn(t *testing.T) {
+	c := newWithIO(t, nopWriteCloser{io.Discard}, bytes.NewBuffer(nil), nil)
+	c.turn.threadID = "th1"
+	c.turn.state = turnState{kind: turnInflightKnownID, turnID: "u1"}
 
-	got, ok := keepaliveResponseMessages(msg)
-	if ok {
-		t.Fatalf("expected bare RPC error not to be classified as keepalive, got %#v", got)
+	if err := c.KeepAlive(); !errors.Is(err, agent.ErrTurnInProgress) {
+		t.Fatalf("KeepAlive() error = %v, want ErrTurnInProgress", err)
 	}
 }
 

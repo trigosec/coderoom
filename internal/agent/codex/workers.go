@@ -89,9 +89,6 @@ func handleStdoutReadError(ctx context.Context, c *Client, err error) bool {
 }
 
 func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool {
-	if keepaliveMsgs, ok := keepaliveResponseMessages(msg); ok {
-		return sendAgentMessages(ctx, c, keepaliveMsgs)
-	}
 	if shouldIgnoreStdoutEnvelope(msg) {
 		return true
 	}
@@ -99,6 +96,9 @@ func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool 
 		return handled
 	}
 	if isApprovalRequest(msg) {
+		if c.isKeepaliveTurn() {
+			return declineKeepaliveApproval(ctx, c, msg)
+		}
 		return enqueueApprovalRequest(ctx, c, msg)
 	}
 	started := turnStartedFromEnvelope(msg)
@@ -116,6 +116,38 @@ func handleStdoutEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) bool 
 		return false
 	}
 	return sendAgentMessages(ctx, c, agentMsgs)
+}
+
+func (c *Client) isKeepaliveTurn() bool {
+	c.notice.mu.Lock()
+	defer c.notice.mu.Unlock()
+	return c.notice.kind == noticeTurnKeepalive
+}
+
+func declineKeepaliveApproval(ctx context.Context, c *Client, msg rpcEnvelope) bool {
+	_, approvalCtx, parseErr := normalizeApproval(msg.Method, msg.Params)
+	responseErr := writeApprovalResult(c, *msg.ID, approvalCtx, agent.OptionDecline)
+	text := "SECURITY: keepalive requested tool approval; auto-declined and maintenance turn interrupted"
+	if parseErr != nil {
+		text += "; parse failed: " + parseErr.Error()
+	}
+	if responseErr != nil {
+		text += "; response failed: " + responseErr.Error()
+	}
+	firstReport := c.markToolViolationReported()
+	if firstReport {
+		if err := c.Interrupt(); err != nil {
+			text += "; interrupt failed: " + err.Error()
+		}
+	}
+	if !firstReport {
+		return true
+	}
+	return sendBufMessage(ctx, c, readMessage{msg: agent.Message{
+		StreamID: logStreamID,
+		Mode:     agent.ModeSingle,
+		Content:  agent.Log{Text: text},
+	}})
 }
 
 func shouldIgnoreStdoutEnvelope(msg rpcEnvelope) bool {
@@ -137,46 +169,6 @@ func handleTurnErrorEnvelope(ctx context.Context, c *Client, msg rpcEnvelope) (b
 		return true, true
 	}
 	return sendBufMessage(ctx, c, readMessage{msg: logMsg}), true
-}
-
-// keepaliveResponseMessages converts a bare thread/read RPC response into a
-// semantic keepalive completion. This is valid because thread/read is currently
-// only used for keepalive.
-func keepaliveResponseMessages(msg rpcEnvelope) ([]agent.Message, bool) {
-	if msg.ID == nil || msg.Method != "" {
-		return nil, false
-	}
-	if !isNullJSON(msg.Error) {
-		return nil, false
-	}
-
-	if !looksLikeThreadReadResult(msg.Result) {
-		return nil, false
-	}
-
-	return []agent.Message{
-		{
-			StreamID: keepaliveStreamID,
-			Mode:     agent.ModeSingle,
-			Content:  agent.KeepAlive{},
-		},
-	}, true
-}
-
-func looksLikeThreadReadResult(raw json.RawMessage) bool {
-	if isNullJSON(raw) {
-		return false
-	}
-	// Post-start, keepalive is the only feature that currently expects a bare
-	// thread-shaped RPC response. If we start using additional thread RPCs, this
-	// shape check will need proper request/response correlation instead.
-	var payload struct {
-		Thread json.RawMessage `json:"thread"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return false
-	}
-	return !isNullJSON(payload.Thread)
 }
 
 func turnStartedFromEnvelope(msg rpcEnvelope) *turnStartedParams {

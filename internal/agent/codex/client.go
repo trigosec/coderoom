@@ -56,9 +56,11 @@ type Client struct {
 	}
 
 	notice struct {
-		mu    sync.Mutex
-		state noticeState
-		buf   strings.Builder
+		mu                    sync.Mutex
+		state                 noticeState
+		kind                  noticeTurnKind
+		toolViolationReported bool
+		buf                   strings.Builder
 	}
 
 	lifecycle struct {
@@ -284,10 +286,22 @@ func (c *Client) Send(prompt string) (agent.StreamID, error) {
 // model to return only {"acknowledge":true}. Any JSON response containing
 // "acknowledge":true is silently discarded; other responses surface as reasoning.
 func (c *Client) SendNotice(prompt string) (agent.StreamID, error) {
+	err := c.startNoticeTurn(noticeContextPrefix+prompt, noticeTurnDelivery)
+	if err != nil {
+		return "", err
+	}
+	return noticeTurnStreamID, nil
+}
+
+func (c *Client) startNoticeTurn(prompt string, kind noticeTurnKind) error {
 	c.turn.mu.Lock()
+	if c.turn.threadID == "" {
+		c.turn.mu.Unlock()
+		return fmt.Errorf("codex: thread not started")
+	}
 	if c.turn.state.kind != turnIdle {
 		c.turn.mu.Unlock()
-		return "", agent.ErrTurnInProgress
+		return agent.ErrTurnInProgress
 	}
 	c.turn.state = turnState{kind: turnInflightUnknownID}
 	threadID := c.turn.threadID
@@ -295,13 +309,15 @@ func (c *Client) SendNotice(prompt string) (agent.StreamID, error) {
 
 	c.notice.mu.Lock()
 	c.notice.state = noticePending
+	c.notice.kind = kind
+	c.notice.toolViolationReported = false
 	c.notice.buf.Reset()
 	c.notice.mu.Unlock()
 
 	err := rpcWrite(c, methodTurnStart, turnStartParams{
 		ThreadID:     threadID,
-		Input:        []turnInput{{Type: "text", Text: noticeContextPrefix + prompt}},
-		OutputSchema: noticeOutputSchema,
+		Input:        []turnInput{{Type: "text", Text: prompt}},
+		OutputSchema: noticeAcknowledgementSchema,
 	})
 	if err != nil {
 		c.turn.mu.Lock()
@@ -310,10 +326,12 @@ func (c *Client) SendNotice(prompt string) (agent.StreamID, error) {
 
 		c.notice.mu.Lock()
 		c.notice.state = noticeIdle
+		c.notice.kind = noticeTurnNone
+		c.notice.toolViolationReported = false
 		c.notice.mu.Unlock()
-		return "", err
+		return err
 	}
-	return noticeTurnStreamID, nil
+	return nil
 }
 
 // Read blocks until a meaningful message is ready — either a stdout-derived
@@ -338,25 +356,10 @@ func (c *Client) KeepAliveSchedule() time.Duration {
 	return 20 * time.Minute
 }
 
-// KeepAlive performs a low-cost thread read to keep the Codex thread warm.
+// KeepAlive starts a maintenance notice turn so the model-side thread context
+// remains active during otherwise idle periods.
 func (c *Client) KeepAlive() error {
-	c.turn.mu.Lock()
-	threadID := c.turn.threadID
-	state := c.turn.state
-	c.turn.mu.Unlock()
-
-	if threadID == "" {
-		return fmt.Errorf("codex: thread not started")
-	}
-	if state.kind != turnIdle {
-		return agent.ErrTurnInProgress
-	}
-
-	err := rpcWrite(c, methodThreadRead, threadReadParams{
-		ThreadID:     threadID,
-		IncludeTurns: false,
-	})
-	return err
+	return c.startNoticeTurn(keepaliveNoticePrompt, noticeTurnKeepalive)
 }
 
 func (c *Client) updateTurnState(method string, p *turnStartedParams) {
