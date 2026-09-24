@@ -95,14 +95,14 @@ go test ./...
 
 ### 5b. Establish temporary submission routing
 
-- [ ] Replace the current submit-everything/`UnknownCommand` fallback with
+- [x] Replace the current submit-everything/`UnknownCommand` fallback with
       explicit temporary branching in the existing TUI submission function:
       - legacy prompt commands continue through the current TUI parser and
         invoke `ExecuteLegacy` when they produce a session command;
       - legacy control/query and other non-session commands continue through
         the existing TUI handler;
       - native interpreter commands use `Submit` (initially none).
-- [ ] Keep `SubmitWithFallback` limited to data-only `session.Command` values;
+- [x] Keep `SubmitWithFallback` limited to data-only `session.Command` values;
       do not pass callbacks, UI state, or presentation behavior into the
       interpreter.
 - [ ] Introduce `SubmitWithFallback` at the submission boundary only after all
@@ -114,7 +114,7 @@ go test ./...
 - [x] While a submission is unresolved, prevent the sequential TUI from
       starting another interpreter or legacy command. Release the gate on its
       single terminal outcome.
-- [ ] Test `/invite ada` followed immediately by `/who`: after the invite
+- [x] Test `/invite ada` followed immediately by `/who`: after the invite
       command returns and its synchronous events drain, `/who` observes `ada`
       in `Starting` state. Submission completion does not wait for the
       asynchronous `AgentStarted` event.
@@ -122,7 +122,7 @@ go test ./...
       without losing the composer's current draft.
 - [ ] Prove native handlers take precedence, fallbacks execute exactly once,
       and fallback causal events drain before the next submission.
-- [ ] Do not use precomputed fallbacks for workflows that depend on mutable
+- [x] Do not use precomputed fallbacks for workflows that depend on mutable
       session or room state; keep them on synchronous `ExecuteLegacy` and
       migrate those workflows as units.
 - [x] Add the submission contract suite in dedicated

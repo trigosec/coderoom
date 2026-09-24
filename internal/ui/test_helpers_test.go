@@ -47,7 +47,11 @@ func newTestModelWithSession(t *testing.T, sess *session.Session) Model {
 
 func submitThroughInterpreter(t *testing.T, m Model, raw string) Model {
 	t.Helper()
-	return processInterpreterSubmission(t, m.submitToInterpreter(raw))
+	next, _ := m.submit(raw)
+	if !next.submissionPending {
+		return next
+	}
+	return processInterpreterSubmission(t, next)
 }
 
 func processInterpreterSubmission(t *testing.T, m Model) Model {

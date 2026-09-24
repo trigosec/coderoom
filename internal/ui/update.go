@@ -51,7 +51,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case room.SubmitMsg:
-		return m.submitToInterpreter(msg.Text), nil
+		return m.submit(msg.Text)
 	case room.UpdateMsg:
 		return m.handleRoomUpdate(msg)
 	case room.ApprovalDecisionMsg:
@@ -76,6 +76,24 @@ func (m Model) handleRoomUpdate(msg room.UpdateMsg) (tea.Model, tea.Cmd) {
 	m.room, cmd = m.room.Update(msg)
 	m = m.maybeAdvanceProjectedHandoff(msg.Trigger())
 	return m, cmd
+}
+
+func (m Model) submit(raw string) (Model, tea.Cmd) {
+	if strings.TrimSpace(raw) == "" {
+		return m, nil
+	}
+	statement, err := promptlang.Parse(raw)
+	if err != nil || isNativeInterpreterStatement(statement) {
+		return m.submitToInterpreter(raw), nil
+	}
+	m.releaseSubmissionGate()
+	return m.handleSubmit(raw)
+}
+
+func isNativeInterpreterStatement(promptlang.Statement) bool {
+	// Native handlers are introduced command-by-command in the next migration
+	// step. Until then every valid statement remains on its legacy workflow.
+	return false
 }
 
 func (m Model) submitToInterpreter(raw string) Model {

@@ -6,11 +6,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/trigosec/coderoom/internal/agent"
+	roomconfig "github.com/trigosec/coderoom/internal/config"
 	"github.com/trigosec/coderoom/internal/interpreter"
+	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
-func TestSubmit_UnknownInterpreterCommandFallsBackToLegacyDispatcher(t *testing.T) {
+func TestSubmit_LegacyCommandBypassesInterpreter(t *testing.T) {
 	m := makeReadyModel(t)
 
 	m = submitThroughInterpreter(t, m, "/who")
@@ -20,6 +24,9 @@ func TestSubmit_UnknownInterpreterCommandFallsBackToLegacyDispatcher(t *testing.
 	}
 	if !hasRecord(m, record.KindSystem, "[no agents]") {
 		t.Fatalf("expected legacy /who result; records: %v", m.room.HistoryRecords())
+	}
+	if _, ok := m.interpreterQueue.TryPull(); ok {
+		t.Fatal("legacy command produced an interpreter event")
 	}
 }
 
@@ -54,7 +61,7 @@ func TestSubmit_ResponseDoesNotClearNewComposerDraft(t *testing.T) {
 
 func TestSubmit_GatesSecondSubmissionUntilTerminalOutcome(t *testing.T) {
 	m := makeReadyModel(t)
-	m.room = m.room.SetComposeValue("/who")
+	m.room = m.room.SetComposeValue("/invite")
 	first, firstCmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	m = first.(Model)
 	if !m.submissionPending {
@@ -86,6 +93,26 @@ func TestSubmit_GatesSecondSubmissionUntilTerminalOutcome(t *testing.T) {
 	}
 	if got := countRecords(m, record.KindUserInput, "/help"); got != 0 {
 		t.Fatalf("second submission records = %d, want 0", got)
+	}
+}
+
+func TestSubmit_InviteCompletesBeforeFollowingWho(t *testing.T) {
+	startGate := make(chan struct{})
+	sess := session.New(session.WithAgentFactory(func(*session.Session, roomconfig.ParticipantConfig, session.AgentBackend) agent.Agent {
+		return &gateStartAgent{testAgent: newTestAgent(), startGate: startGate}
+	}))
+	m := newTestModelWithSession(t, sess)
+	t.Cleanup(func() { close(startGate) })
+
+	m = submitThroughInterpreter(t, m, "/invite ada")
+	p, ok := sess.Participant("ada")
+	if !ok || p.Status != participant.StatusStarting {
+		t.Fatalf("participant = %#v, %v; want ada starting", p, ok)
+	}
+	m = submitThroughInterpreter(t, m, "/who")
+
+	if !hasRecord(m, record.KindSystem, "[agents] ada") {
+		t.Fatalf("expected /who to observe ada; records: %v", m.room.HistoryRecords())
 	}
 }
 

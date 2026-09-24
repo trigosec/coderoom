@@ -15,23 +15,8 @@ func TestWhoEcho_twiceRendersTwoEchosInTallTerminal(t *testing.T) {
 	// Reserve one row for the UI header.
 	m := makeReadyModelWithHeight(t, 41)
 
-	sendLine := func(line string) {
-		// Many terminals deliver "normal typing" as KeyRunes with a single rune,
-		// but some inputs (IME/paste) may deliver multiple runes at once. Exercise
-		// both forms by sending the whole line as one KeyRunes message.
-		next, _ := m.Update(tea.PasteMsg{Content: line})
-		m = next.(Model)
-		next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-		m = next.(Model)
-		if cmd != nil {
-			next, _ = m.Update(cmd())
-			m = next.(Model)
-			m = processInterpreterSubmission(t, m)
-		}
-	}
-
-	sendLine("/who")
-	sendLine("/who")
+	m = submitWhoInteractive(t, m)
+	m = submitWhoInteractive(t, m)
 
 	// Ensure the underlying content contains both echos regardless of scroll.
 	content := ansi.Strip(m.room.HistoryRenderedContent())
@@ -66,20 +51,8 @@ func TestWhoEcho_twiceVisibleInSmallTerminal(t *testing.T) {
 	// Reserve one row for the UI header.
 	m := makeReadyModelWithHeight(t, 11)
 
-	sendLine := func(line string) {
-		next, _ := m.Update(tea.PasteMsg{Content: line})
-		m = next.(Model)
-		next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-		m = next.(Model)
-		if cmd != nil {
-			next, _ = m.Update(cmd())
-			m = next.(Model)
-			m = processInterpreterSubmission(t, m)
-		}
-	}
-
-	sendLine("/who")
-	sendLine("/who")
+	m = submitWhoInteractive(t, m)
+	m = submitWhoInteractive(t, m)
 
 	contentLines := strings.Count(ansi.Strip(m.room.HistoryRenderedContent()), "\n") + 1
 	if contentLines <= m.room.HistoryHeight() && m.room.YOffset() != 0 {
@@ -95,4 +68,22 @@ func TestWhoEcho_twiceVisibleInSmallTerminal(t *testing.T) {
 			t.Fatalf("expected two visible /who results; got:\n%s", view)
 		}
 	}
+}
+
+func submitWhoInteractive(t *testing.T, m Model) Model {
+	t.Helper()
+	// Paste exercises the multi-rune input path used by terminals and IMEs.
+	next, _ := m.Update(tea.PasteMsg{Content: "/who"})
+	m = next.(Model)
+	next, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	m = next.(Model)
+	if cmd == nil {
+		return m
+	}
+	next, _ = m.Update(cmd())
+	m = next.(Model)
+	if !m.submissionPending {
+		return m
+	}
+	return processInterpreterSubmission(t, m)
 }
