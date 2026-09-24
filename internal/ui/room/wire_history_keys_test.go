@@ -151,6 +151,137 @@ func TestHistoryFocus_shiftArrowStartsSelectionFromCurrentCursor(t *testing.T) {
 	}
 }
 
+func TestHistoryFocus_ctrlShiftArrowExtendsSelectionByWord(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("one two three")
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	wordSelection := tea.ModCtrl | tea.ModShift
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: wordSelection}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "three" {
+		t.Fatalf("first word selection = (%q,%v), want (%q,true)", got, ok, "three")
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: wordSelection}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "two three" {
+		t.Fatalf("second word selection = (%q,%v), want (%q,true)", got, ok, "two three")
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: wordSelection}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "three" {
+		t.Fatalf("shrunk word selection = (%q,%v), want (%q,true)", got, ok, "three")
+	}
+}
+
+func TestHistoryFocus_ctrlShiftRightStopsAtExclusiveWordBoundary(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("one two")
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyRight,
+		Mod:  tea.ModCtrl | tea.ModShift,
+	}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "one " {
+		t.Fatalf("word selection = (%q,%v), want (%q,true)", got, ok, "one ")
+	}
+}
+
+func TestHistoryFocus_ctrlShiftLeftShrinksRightwardWordSelectionAtBoundary(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("one two three")
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
+	wordSelection := tea.ModCtrl | tea.ModShift
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: wordSelection}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: wordSelection}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "one two " {
+		t.Fatalf("expanded word selection = (%q,%v), want (%q,true)", got, ok, "one two ")
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: wordSelection}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "one " {
+		t.Fatalf("shrunk word selection = (%q,%v), want (%q,true)", got, ok, "one ")
+	}
+}
+
+func TestHistoryFocus_shiftLeftShrinksRightwardWordSelectionByCell(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("one two")
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyRight,
+		Mod:  tea.ModCtrl | tea.ModShift,
+	}))
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "one" {
+		t.Fatalf("mixed word/cell selection = (%q,%v), want (%q,true)", got, ok, "one")
+	}
+}
+
+func TestHistoryFocus_selectionCrossesAnchorAndSelectsOppositeSide(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("hello")
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "el" {
+		t.Fatalf("left side selection = (%q,%v), want (%q,true)", got, ok, "el")
+	}
+	for range 2 {
+		m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: tea.ModShift}))
+	}
+	if got, ok := m.HistorySelectedText(); !ok || got != "ll" {
+		t.Fatalf("opposite side selection = (%q,%v), want (%q,true)", got, ok, "ll")
+	}
+}
+
+func TestHistoryFocus_ctrlShiftLeftMovesAcrossRenderedLineBoundary(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("one\ntwo")
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	wordSelection := tea.ModCtrl | tea.ModShift
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: wordSelection}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "two" {
+		t.Fatalf("last-line word selection = (%q,%v), want (%q,true)", got, ok, "two")
+	}
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyLeft, Mod: wordSelection}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "one\ntwo" {
+		t.Fatalf("cross-line word selection = (%q,%v), want (%q,true)", got, ok, "one\ntwo")
+	}
+}
+
+func TestHistoryFocus_ctrlShiftRightStopsAtRenderedLineBoundary(t *testing.T) {
+	m := newTestModel(t)
+	m = m.HandleResize(20, 12)
+	m = m.AppendSystem("one\ntwo")
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: 'o', Mod: tea.ModCtrl}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyHome}))
+
+	m, _ = m.Update(tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyRight,
+		Mod:  tea.ModCtrl | tea.ModShift,
+	}))
+	if got, ok := m.HistorySelectedText(); !ok || got != "one\n" {
+		t.Fatalf("cross-line word selection = (%q,%v), want (%q,true)", got, ok, "one\n")
+	}
+}
+
 func TestHistoryFocus_plainMovementClearsSelection(t *testing.T) {
 	m := newTestModel(t)
 	m = m.HandleResize(20, 12)

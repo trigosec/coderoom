@@ -237,6 +237,11 @@ func (m Model) pasteComposeClipboard() (Model, tea.Cmd) {
 
 func (m Model) handleHistoryKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	k := msg.Key()
+	if nextHistory, handled := applyHistoryModifiedSelectionKey(m.history, k); handled {
+		m.history = nextHistory
+		m.historyLive = m.history.CursorAtLiveEnd()
+		return m, nil
+	}
 	if k.Mod.Contains(tea.ModCtrl) {
 		return m.handleHistoryCtrlKey(msg)
 	}
@@ -267,6 +272,24 @@ func (m Model) handleHistoryKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.history, cmd = m.history.Update(msg)
 	return m, cmd
+}
+
+func applyHistoryModifiedSelectionKey(historyModel history.Model, key tea.Key) (history.Model, bool) {
+	if !key.Mod.Contains(tea.ModCtrl) || !key.Mod.Contains(tea.ModShift) {
+		return historyModel, false
+	}
+	return applyHistoryWordSelectionKey(historyModel, key)
+}
+
+func applyHistoryWordSelectionKey(historyModel history.Model, key tea.Key) (history.Model, bool) {
+	switch key.Code {
+	case tea.KeyLeft:
+		return historyModel.SelectWordLeft(), true
+	case tea.KeyRight:
+		return historyModel.SelectWordRight(), true
+	default:
+		return historyModel, false
+	}
 }
 
 func (m Model) handleHistoryCtrlKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {

@@ -293,8 +293,15 @@ func (m Model) selectionColumnsForRow(row int) (int, int, bool) {
 }
 
 func (m Model) selectionSpan() (Cursor, Cursor) {
-	if compareSurfacePositions(m.cursor, m.selection.Anchor) <= 0 {
+	comparison := compareSurfacePositions(m.cursor, m.selection.Anchor)
+	if comparison == 0 {
 		return m.cursor, m.selection.Anchor
+	}
+	if comparison < 0 {
+		return m.cursor, m.advanceSelectionCursor(m.selection.Anchor)
+	}
+	if m.selection.CursorEndExclusive {
+		return m.selection.Anchor, m.cursor
 	}
 	return m.selection.Anchor, m.advanceSelectionCursor(m.cursor)
 }
@@ -343,6 +350,7 @@ func (m Model) SelectedText() (string, bool) {
 			parts = append(parts, "")
 			continue
 		}
+		selStart = max(selStart, m.lines[row].layoutPrefixWidth)
 		parts = append(parts, visibleTextSlice(m.lines[row].plain, selStart, selEnd))
 	}
 	return strings.Join(parts, "\n"), true

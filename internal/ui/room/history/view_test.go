@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/trigosec/coderoom/internal/agent"
 	roomstate "github.com/trigosec/coderoom/internal/room"
 	rec "github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -92,8 +93,8 @@ func TestSelectionColumnsForRow_wrapsAcrossRows(t *testing.T) {
 		t.Fatalf("row0 selection = (%d,%d,%v), want (2,4,true)", start0, end0, ok0)
 	}
 	start1, end1, ok1 := m.selectionColumnsForRow(1)
-	if !ok1 || start1 != 0 || end1 != 1 {
-		t.Fatalf("row1 selection = (%d,%d,%v), want (0,1,true)", start1, end1, ok1)
+	if !ok1 || start1 != 0 || end1 != 2 {
+		t.Fatalf("row1 selection = (%d,%d,%v), want (0,2,true)", start1, end1, ok1)
 	}
 }
 
@@ -113,8 +114,8 @@ func TestSelectedText_returnsVisibleSelectionAsPlainText(t *testing.T) {
 	if !ok {
 		t.Fatal("expected selected text")
 	}
-	if got != "cd\ne" {
-		t.Fatalf("selected text = %q, want %q", got, "cd\ne")
+	if got != "cd\nef" {
+		t.Fatalf("selected text = %q, want %q", got, "cd\nef")
 	}
 }
 
@@ -154,5 +155,144 @@ func TestSelectedText_includesCursorCellWhenSelectionExtendsRight(t *testing.T) 
 	}
 	if got != "ell" {
 		t.Fatalf("selected text = %q, want %q", got, "ell")
+	}
+}
+
+func TestSelectedText_isSymmetricAcrossSelectionDirections(t *testing.T) {
+	m := New(nil, "")
+	m = m.SetSize(10, 4)
+	m = m.ReplaceSnapshot(roomstate.Snapshot{
+		Records: []rec.Record{{Kind: rec.KindSystem, Text: "hello"}},
+	})
+
+	m.selection = Selection{Anchor: Cursor{Row: 0, Col: 1, Visible: true}, Visible: true}
+	m.cursor = Cursor{Row: 0, Col: 3, Visible: true}
+	forward, ok := m.SelectedText()
+	if !ok {
+		t.Fatal("expected forward selection")
+	}
+
+	m.selection.Anchor = Cursor{Row: 0, Col: 3, Visible: true}
+	m.cursor = Cursor{Row: 0, Col: 1, Visible: true}
+	backward, ok := m.SelectedText()
+	if !ok {
+		t.Fatal("expected backward selection")
+	}
+	if forward != "ell" || backward != forward {
+		t.Fatalf("selected text forward=%q backward=%q, want both %q", forward, backward, "ell")
+	}
+}
+
+func TestSelectedText_removesLayoutIndentAndPreservesContentIndent(t *testing.T) {
+	m := New(nil, "")
+	m = m.SetSize(20, 6)
+	record := roomstate.NewAgentRecord("ada", agent.Message{
+		Content: agent.Output{Text: "one\n  code"},
+	})
+	m = m.ReplaceSnapshot(roomstate.Snapshot{Records: []rec.Record{record}})
+	m.cursor = Cursor{Row: 2, Col: 0, Visible: true}
+	m.selection = Selection{
+		Anchor:  Cursor{Row: 3, Col: lineWidth(m.lines[3]), Visible: true},
+		Visible: true,
+	}
+
+	got, ok := m.SelectedText()
+	if !ok {
+		t.Fatal("expected selected agent body")
+	}
+	if got != "one\n  code" {
+		t.Fatalf("selected text = %q, want %q", got, "one\n  code")
+	}
+}
+
+func TestSelectedText_removesToolRecordLayoutIndent(t *testing.T) {
+	exitCode := 0
+	tests := []struct {
+		name       string
+		record     rec.Record
+		wantPrefix string
+		wantText   string
+	}{
+		{
+			name: "command",
+			record: roomstate.NewAgentRecord("ada", agent.Message{Content: agent.Command{
+				Command: "echo hi", Output: "  indented\n", ExitCode: &exitCode,
+			}}),
+			wantPrefix: "$ echo hi",
+			wantText:   "\n  indented\n",
+		},
+		{
+			name: "file change",
+			record: roomstate.NewAgentRecord("ada", agent.Message{Content: agent.FileChangeSet{
+				Status:  agent.ToolStatusCompleted,
+				Changes: []agent.FileChange{{Path: "a.txt", ChangeKind: "update", Diff: "line"}},
+			}}),
+			wantPrefix: "✎ files:",
+			wantText:   "\n- update a.txt\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(nil, "")
+			m = m.SetSize(40, 12)
+			m = m.ReplaceSnapshot(roomstate.Snapshot{Records: []rec.Record{tt.record}})
+			m.cursor = Cursor{Row: 2, Col: 0, Visible: true}
+			lastRow := len(m.lines) - 1
+			m.selection = Selection{
+				Anchor:  Cursor{Row: lastRow, Col: lineWidth(m.lines[lastRow]), Visible: true},
+				Visible: true,
+			}
+
+			got, ok := m.SelectedText()
+			if !ok {
+				t.Fatal("expected selected tool record body")
+			}
+			if !strings.HasPrefix(got, tt.wantPrefix) {
+				t.Fatalf("selected text = %q, want prefix %q", got, tt.wantPrefix)
+			}
+			if !strings.Contains(got, tt.wantText) {
+				t.Fatalf("selected text = %q, want content %q", got, tt.wantText)
+			}
+		})
+	}
+}
+
+func TestSelectedText_preservesSemanticTrailingSpaces(t *testing.T) {
+	m := New(nil, "")
+	m = m.SetSize(10, 4)
+	m = m.ReplaceSnapshot(roomstate.Snapshot{
+		Records: []rec.Record{{Kind: rec.KindSystem, Text: "text  "}},
+	})
+	m.cursor = Cursor{Row: 0, Col: 0, Visible: true}
+	m.selection = Selection{
+		Anchor:  Cursor{Row: 0, Col: lineWidth(m.lines[0]), Visible: true},
+		Visible: true,
+	}
+
+	got, ok := m.SelectedText()
+	if !ok || got != "text  " {
+		t.Fatalf("selected text = (%q,%v), want (%q,true)", got, ok, "text  ")
+	}
+}
+
+func TestSelectedText_excludesViewportTrailingPadding(t *testing.T) {
+	m := New(nil, "")
+	m = m.SetSize(10, 4)
+	m = m.ReplaceSnapshot(roomstate.Snapshot{
+		Records: []rec.Record{{Kind: rec.KindSystem, Text: "text"}},
+	})
+	m.cursor = Cursor{Row: 0, Col: 0, Visible: true}
+	m.selection = Selection{
+		Anchor:  Cursor{Row: 0, Col: lineWidth(m.lines[0]), Visible: true},
+		Visible: true,
+	}
+
+	if paddedWidth := ansi.StringWidth(m.renderViewportRow(0, true)); paddedWidth != 10 {
+		t.Fatalf("rendered row width = %d, want viewport width 10", paddedWidth)
+	}
+	got, ok := m.SelectedText()
+	if !ok || got != "text" {
+		t.Fatalf("selected text = (%q,%v), want (%q,true)", got, ok, "text")
 	}
 }

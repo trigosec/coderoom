@@ -216,6 +216,16 @@ func (m Model) CursorRight() Model {
 	return m.ensureCursorVisible()
 }
 
+// CursorWordLeft moves the cursor to the start of the previous visible word.
+func (m Model) CursorWordLeft() Model {
+	return m.moveCursorByWord(-1)
+}
+
+// CursorWordRight moves the cursor to the start of the next visible word.
+func (m Model) CursorWordRight() Model {
+	return m.moveCursorByWord(1)
+}
+
 // CursorLineStart moves the cursor to the start of the current visible line.
 func (m Model) CursorLineStart() Model {
 	if !m.hasCursor() {
@@ -266,6 +276,29 @@ func (m Model) SelectRight() Model {
 	return m.extendSelection(func(next Model) Model { return next.CursorRight() })
 }
 
+// SelectWordLeft extends selection to the previous visible word boundary.
+func (m Model) SelectWordLeft() Model {
+	cursorEndExclusive := m.selection.CursorEndExclusive
+	m = m.extendSelection(func(next Model) Model { return next.CursorWordLeft() })
+	if cursorEndExclusive && compareSurfacePositions(m.cursor, m.selection.Anchor) > 0 {
+		m.selection.CursorEndExclusive = true
+	}
+	return m
+}
+
+// SelectWordRight extends selection to the next visible word boundary.
+func (m Model) SelectWordRight() Model {
+	if !m.hasCursor() {
+		return m
+	}
+	if !m.selection.Visible {
+		m.selection = Selection{Anchor: m.cursor, Visible: true}
+	}
+	m = m.CursorWordRight()
+	m.selection.CursorEndExclusive = true
+	return m
+}
+
 // SelectLineStart extends selection to the start of the current visible line.
 func (m Model) SelectLineStart() Model {
 	return m.extendSelection(func(next Model) Model { return next.CursorLineStart() })
@@ -307,11 +340,126 @@ func (m Model) syncViewport(remapCursor bool) Model {
 	}
 	content := joinRenderedForViewport(m.records, rendered)
 	m.lines = splitHistoryLines(content)
+	applyLayoutPrefixes(m.lines, m.records, rendered)
 	m.viewport.SetContent(content)
 	m.viewport.SetYOffset(clampViewportTop(prevTop, len(m.lines), m.viewport.Height()))
 	m = m.syncCursor(remapCursor, wasLiveEnd, cursorCoord, hasCursorCoord)
 	m = m.syncSelection(remapCursor, selectionCoord, hasSelectionCoord)
 	return m
+}
+
+func applyLayoutPrefixes(lines []historyLine, records []viewRecord, rendered []string) {
+	row := 0
+	for i, renderedRecord := range rendered {
+		if i > 0 && records[i].record.Kind != rec.KindSystem {
+			row++
+		}
+		recordLines := strings.Split(strings.TrimSuffix(renderedRecord, "\n"), "\n")
+		for lineIndex, line := range recordLines {
+			if row >= len(lines) {
+				return
+			}
+			lines[row].layoutPrefixWidth = rec.LayoutPrefixWidth(records[i].record, lineIndex, ansi.Strip(line))
+			row++
+		}
+	}
+}
+
+func (m Model) moveCursorByWord(direction int) Model {
+	if !m.hasCursor() {
+		return m
+	}
+	if direction < 0 {
+		m.cursor = m.wordStartBefore(m.cursor)
+	} else {
+		m.cursor = m.wordStartAfter(m.cursor)
+	}
+	m.cursor.PreferredCol = m.cursor.Col
+	return m.ensureCursorVisible()
+}
+
+func (m Model) wordStartBefore(cursor Cursor) Cursor {
+	next, ok := m.previousCell(cursor)
+	for ok && m.cellIsSpace(next) {
+		next, ok = m.previousCell(next)
+	}
+	if !ok {
+		return Cursor{Row: 0, Col: 0, Visible: true}
+	}
+	cursor = next
+	for {
+		if cursor.Col == 0 {
+			return cursor
+		}
+		next, ok = m.previousCell(cursor)
+		if !ok || m.cellIsSpace(next) {
+			return cursor
+		}
+		cursor = next
+	}
+}
+
+func (m Model) wordStartAfter(cursor Cursor) Cursor {
+	for !m.cellIsSpace(cursor) {
+		next, ok := m.nextCell(cursor)
+		if !ok {
+			return m.lastCursorPosition()
+		}
+		cursor = next
+	}
+	for m.cellIsSpace(cursor) {
+		next, ok := m.nextCell(cursor)
+		if !ok {
+			return m.lastCursorPosition()
+		}
+		cursor = next
+	}
+	return cursor
+}
+
+func (m Model) previousCell(cursor Cursor) (Cursor, bool) {
+	if cursor.Col > 0 {
+		cursor.Col--
+		return cursor, true
+	}
+	if cursor.Row == 0 {
+		return cursor, false
+	}
+	cursor.Row--
+	cursor.Col = lineWidth(m.lines[cursor.Row])
+	if cursor.Col > 0 {
+		cursor.Col--
+	}
+	return cursor, true
+}
+
+func (m Model) nextCell(cursor Cursor) (Cursor, bool) {
+	if cursor.Col < lineWidth(m.lines[cursor.Row]) {
+		cursor.Col++
+		return cursor, true
+	}
+	if cursor.Row >= len(m.lines)-1 {
+		return cursor, false
+	}
+	cursor.Row++
+	cursor.Col = 0
+	return cursor, true
+}
+
+func (m Model) cellIsSpace(cursor Cursor) bool {
+	if cursor.Row < 0 || cursor.Row >= len(m.lines) {
+		return true
+	}
+	lineEnd := lineWidth(m.lines[cursor.Row])
+	if cursor.Col >= lineEnd {
+		return true
+	}
+	return strings.TrimSpace(visibleTextSlice(m.lines[cursor.Row].plain, cursor.Col, cursor.Col+1)) == ""
+}
+
+func (m Model) lastCursorPosition() Cursor {
+	row := len(m.lines) - 1
+	return Cursor{Row: row, Col: lineWidth(m.lines[row]), Visible: true}
 }
 
 func joinRenderedForViewport(records []viewRecord, rendered []string) string {
@@ -451,7 +599,14 @@ func (m Model) extendSelection(move func(Model) Model) Model {
 			Visible: true,
 		}
 	}
-	return move(m)
+	if m.selection.CursorEndExclusive && compareSurfacePositions(m.cursor, m.selection.Anchor) > 0 {
+		if cursor, ok := m.previousCell(m.cursor); ok {
+			m.cursor = cursor
+		}
+	}
+	m = move(m)
+	m.selection.CursorEndExclusive = false
+	return m
 }
 
 func (m Model) positionSurfaceCoord(row, col int) (surfaceCoord, bool) {

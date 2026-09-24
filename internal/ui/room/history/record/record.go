@@ -71,6 +71,19 @@ const (
 	agentBodyIndent  = "  "
 )
 
+// LayoutPrefixWidth reports presentation-only leading space on a rendered line.
+func LayoutPrefixWidth(r Record, lineIndex int, plain string) int {
+	if lineIndex < 2 || !strings.HasPrefix(plain, agentBodyIndent) {
+		return 0
+	}
+	switch r.Kind {
+	case KindAgentOutput, KindReasoning, KindCommand, KindFileChange:
+		return ansi.StringWidth(agentBodyIndent)
+	default:
+		return 0
+	}
+}
+
 // NewAgent constructs a record backed by an agent message.
 func NewAgent(alias string, msg agent.Message) Record {
 	return roomstate.NewAgentRecord(alias, msg)

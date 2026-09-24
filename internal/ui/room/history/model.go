@@ -27,8 +27,9 @@ type viewRecord struct {
 }
 
 type historyLine struct {
-	raw   string
-	plain string
+	raw               string
+	plain             string
+	layoutPrefixWidth int
 }
 
 // Cursor tracks the history caret on the visible rendered surface.
@@ -41,8 +42,9 @@ type Cursor struct {
 
 // Selection tracks a caret-anchored range on the visible history surface.
 type Selection struct {
-	Anchor  Cursor
-	Visible bool
+	Anchor             Cursor
+	Visible            bool
+	CursorEndExclusive bool
 }
 
 // Model holds the conversation record list and its viewport.
