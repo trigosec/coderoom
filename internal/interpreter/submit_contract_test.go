@@ -162,7 +162,7 @@ func TestSubmitContract_reportsFallbackExecutionFailure(t *testing.T) {
 	if !errors.Is(failed.Err, wantErr) {
 		t.Fatalf("failure = %v, want wrapped execution error", failed.Err)
 	}
-	if failed.Raw != "/cancel ada" || failed.Operation != "migration fallback" {
+	if failed.Raw != "/cancel ada" || failed.Operation != "cancel" {
 		t.Fatalf("failure = %#v", failed)
 	}
 	assertNoSubmitEvent(t, events)

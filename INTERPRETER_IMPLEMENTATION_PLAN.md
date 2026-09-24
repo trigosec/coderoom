@@ -105,7 +105,7 @@ go test ./...
 - [x] Keep `SubmitWithFallback` limited to data-only `session.Command` values;
       do not pass callbacks, UI state, or presentation behavior into the
       interpreter.
-- [ ] Introduce `SubmitWithFallback` at the submission boundary only after all
+- [x] Introduce `SubmitWithFallback` at the submission boundary only after all
       direct session execution has been centralized through `ExecuteLegacy`.
 - [x] Implement the documented mutually exclusive terminal outcomes:
       `InputRejected`, `UnknownCommand`, `SubmissionSucceeded`, or
@@ -160,7 +160,7 @@ go test ./...
 
 ### 5d. Migrate session commands
 
-- [ ] Route eligible legacy data-only session commands (`/invite`, `/remove`,
+- [x] Route eligible legacy data-only session commands (`/invite`, `/remove`,
       `/cancel`, and policy) through `SubmitWithFallback` so the interpreter
       loop remains the sole caller of `session.Execute`.
 - [ ] After the temporary routing model and control/query commands are stable,

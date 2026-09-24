@@ -224,6 +224,35 @@ func TestSubmit_TerminalOutcomesReleaseGateWithoutClearingDraft(t *testing.T) {
 	}
 }
 
+func TestSubmit_FallbackFailuresPreserveCommandContext(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "invite", raw: "/invite ada", want: `error: invite "ada": failed`},
+		{name: "remove", raw: "/remove ada", want: `error: remove "ada": failed`},
+		{name: "cancel", raw: "/cancel ada", want: `error: cancel "ada": failed`},
+		{name: "policy", raw: "/policy enable send-notices", want: "error: policy: failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := makeReadyModel(t)
+			m.submissionPending = true
+
+			m, _ = m.handleInterpreterEvent(interpreter.SubmissionFailed{
+				Raw:       tt.raw,
+				Operation: tt.name,
+				Err:       errors.New("failed"),
+			})
+
+			if !hasRecord(m, record.KindSystem, tt.want) {
+				t.Fatalf("expected %q; records: %v", tt.want, m.room.HistoryRecords())
+			}
+		})
+	}
+}
+
 func TestSubmit_ShutdownRejectionRestoresClearedDraft(t *testing.T) {
 	m := makeReadyModel(t)
 	m.interpreter.Close()

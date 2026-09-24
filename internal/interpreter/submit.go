@@ -1,8 +1,6 @@
 package interpreter
 
 import (
-	"fmt"
-
 	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/session"
 )
@@ -48,7 +46,7 @@ func (op submitOperation) apply(i *Interpreter) {
 		i.publish(UnknownCommand{Raw: op.raw, Name: commandName(statement)})
 		return
 	}
-	i.executeFallback(op.raw, op.fallback)
+	i.executeFallback(op.raw, statement, op.fallback)
 }
 
 func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) bool {
@@ -67,7 +65,7 @@ func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) 
 	}
 }
 
-func (i *Interpreter) executeFallback(raw string, fallback session.Command) {
+func (i *Interpreter) executeFallback(raw string, statement promptlang.Statement, fallback session.Command) {
 	i.room.AppendUserInputRecord(raw, nil)
 	i.publish(InputAccepted{Raw: raw})
 	err := i.session.Execute(fallback)
@@ -76,12 +74,27 @@ func (i *Interpreter) executeFallback(raw string, fallback session.Command) {
 	if err != nil {
 		i.publish(SubmissionFailed{
 			Raw:       raw,
-			Operation: "migration fallback",
-			Err:       fmt.Errorf("execute migration fallback: %w", err),
+			Operation: submissionOperation(statement),
+			Err:       err,
 		})
 		return
 	}
 	i.publish(SubmissionSucceeded{Raw: raw})
+}
+
+func submissionOperation(statement promptlang.Statement) string {
+	switch statement.(type) {
+	case promptlang.Invite:
+		return "invite"
+	case promptlang.Remove:
+		return "remove"
+	case promptlang.Cancel:
+		return "cancel"
+	case promptlang.PolicyEnable:
+		return "policy"
+	default:
+		return commandName(statement)
+	}
 }
 
 func commandName(statement promptlang.Statement) string {

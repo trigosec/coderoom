@@ -86,6 +86,9 @@ func (m Model) submit(raw string) (Model, tea.Cmd) {
 	if err != nil || isNativeInterpreterStatement(statement) {
 		return m.submitToInterpreter(raw), nil
 	}
+	if fallback, ok := legacySessionFallback(statement); ok {
+		return m.submitWithFallbackToInterpreter(raw, fallback), nil
+	}
 	m.releaseSubmissionGate()
 	return m.handleSubmit(raw)
 }
@@ -100,6 +103,14 @@ func isNativeInterpreterStatement(statement promptlang.Statement) bool {
 }
 
 func (m Model) submitToInterpreter(raw string) Model {
+	return m.enqueueInterpreterSubmission(raw, nil)
+}
+
+func (m Model) submitWithFallbackToInterpreter(raw string, fallback session.Command) Model {
+	return m.enqueueInterpreterSubmission(raw, fallback)
+}
+
+func (m Model) enqueueInterpreterSubmission(raw string, fallback session.Command) Model {
 	if strings.TrimSpace(raw) == "" {
 		return m
 	}
@@ -109,13 +120,34 @@ func (m Model) submitToInterpreter(raw string) Model {
 		}
 		m.submissionAwaitingDispatch = ""
 	}
-	if err := m.interpreter.Submit(raw); err != nil {
+	var err error
+	if fallback == nil {
+		err = m.interpreter.Submit(raw)
+	} else {
+		err = m.interpreter.SubmitWithFallback(raw, fallback)
+	}
+	if err != nil {
 		m.submissionPending = false
 		return m.restoreSubmittedComposer(raw)
 	}
 	m.submissionPending = true
 	m.room = m.clearSubmittedComposer(raw)
 	return m
+}
+
+func legacySessionFallback(statement promptlang.Statement) (session.Command, bool) {
+	switch action := statement.(type) {
+	case promptlang.Invite:
+		return session.InviteCommand{Alias: action.Alias}, true
+	case promptlang.Remove:
+		return session.RemoveCommand{Alias: action.Alias}, true
+	case promptlang.Cancel:
+		return session.CancelCommand{Alias: action.Alias}, true
+	case promptlang.PolicyEnable:
+		return session.EnablePolicyCommand{Name: action.Name}, true
+	default:
+		return nil, false
+	}
 }
 
 func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) {
@@ -132,14 +164,46 @@ func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) 
 		return m, nil
 	case interpreter.SubmissionSucceeded:
 		m.releaseSubmissionGate()
+		m = m.renderLegacyFallbackSuccess(event.Raw)
 		return m, nil
 	case interpreter.SubmissionFailed:
 		m.releaseSubmissionGate()
-		m.room = m.room.AppendSystem(fmt.Sprintf("error: %s: %v", event.Operation, event.Err))
+		m.room = m.room.AppendSystem(formatSubmissionFailure(event))
 		return m, nil
 	default:
 		return m, nil
 	}
+}
+
+func formatSubmissionFailure(event interpreter.SubmissionFailed) string {
+	statement, err := promptlang.Parse(event.Raw)
+	if err == nil {
+		switch action := statement.(type) {
+		case promptlang.Invite:
+			return fmt.Sprintf("error: invite %q: %v", action.Alias, event.Err)
+		case promptlang.Remove:
+			return fmt.Sprintf("error: remove %q: %v", action.Alias, event.Err)
+		case promptlang.Cancel:
+			return fmt.Sprintf("error: cancel %q: %v", action.Alias, event.Err)
+		case promptlang.PolicyEnable:
+			return "error: policy: " + event.Err.Error()
+		}
+	}
+	return fmt.Sprintf("error: %s: %v", event.Operation, event.Err)
+}
+
+func (m Model) renderLegacyFallbackSuccess(raw string) Model {
+	statement, err := promptlang.Parse(raw)
+	if err != nil {
+		return m
+	}
+	switch action := statement.(type) {
+	case promptlang.Cancel:
+		m.room = m.room.AppendSystem("[→ " + action.Alias + "] cancel requested")
+	case promptlang.PolicyEnable:
+		m.room = m.room.AppendSystem("[policy] " + string(action.Name) + " enabled")
+	}
+	return m
 }
 
 func (m Model) handleInterpreterPresentationEvent(event interpreter.Event) (Model, tea.Cmd, bool) {
