@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/trigosec/coderoom/internal/agent"
+	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/queue"
@@ -325,12 +326,15 @@ func TestRenderRoster_noAgents(t *testing.T) {
 	}
 }
 
-func TestShowHelp_coversAllCommands(t *testing.T) {
+func TestRenderHelp_includesMetadataAndUIShortcuts(t *testing.T) {
 	m := makeReadyModel(t)
-	m = m.showHelp()
-	for _, cmd := range []string{"/policy", "/invite", "/remove", "/cancel", "/handoff", "/shell", "/def", "/<name>", "/loop", "/who", "/help", "@<alias>", "/quit"} {
-		if !hasRecord(m, record.KindSystem, cmd) {
-			t.Errorf("help output missing %q; records: %v", cmd, m.room.HistoryRecords())
+	m = m.renderHelp(interpreter.HelpListed{
+		Commands: []interpreter.HelpEntry{{Usage: "/example", Description: "run example"}},
+		Messages: []interpreter.HelpEntry{{Usage: "@<alias> <text>", Description: "send message"}},
+	})
+	for _, text := range []string{"/example", "run example", "@<alias> <text>", "Ctrl+O"} {
+		if !hasRecord(m, record.KindSystem, text) {
+			t.Errorf("help output missing %q; records: %v", text, m.room.HistoryRecords())
 		}
 	}
 }

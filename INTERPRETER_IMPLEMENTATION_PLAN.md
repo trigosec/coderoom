@@ -146,7 +146,7 @@ go test ./...
 
 - [x] Move `/who` semantics into the interpreter and route it through
       `Submit`.
-- [ ] Move `/help` command metadata into the interpreter while leaving visual
+- [x] Move `/help` command metadata into the interpreter while leaving visual
       formatting in the TUI, then route it through `Submit`.
 - [ ] Make the interpreter recognize `/quit` and emit an exit-request event;
       the TUI remains responsible for returning `tea.Quit`.
@@ -171,6 +171,11 @@ go test ./...
       planning/staging workflows; until then they use `ExecuteLegacy` rather
       than precomputed asynchronous fallbacks.
 - [ ] Move the room-scoped command registry.
+- [ ] After all built-in commands are interpreter-owned, make their canonical
+      definitions drive native dispatch and help metadata. Replace duplicated
+      help catalogs and exhaustive usage lists with parameterized coverage,
+      while retaining an independent invariant that every built-in recognized
+      by `promptlang` has a registered command definition.
 - [ ] Move shell execution, definitions, invocation, and cancellation.
 - [ ] Add a fake shell runner for interpreter tests.
 - [ ] Preserve existing syntax, routing, output, and error behavior.

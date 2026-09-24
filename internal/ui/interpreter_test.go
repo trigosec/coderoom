@@ -17,16 +17,31 @@ import (
 func TestSubmit_LegacyCommandBypassesInterpreter(t *testing.T) {
 	m := makeReadyModel(t)
 
+	m = submitThroughInterpreter(t, m, "/debugview")
+
+	if got := countUserInputRecords(m, "/debugview"); got != 1 {
+		t.Fatalf("user input records = %d, want 1", got)
+	}
+	if !hasRecord(m, record.KindSystem, "debug commands disabled") {
+		t.Fatalf("expected legacy debug result; records: %v", m.room.HistoryRecords())
+	}
+	if _, ok := m.interpreterQueue.TryPull(); ok {
+		t.Fatal("legacy command produced an interpreter event")
+	}
+}
+
+func TestSubmit_HelpUsesNativeInterpreterMetadata(t *testing.T) {
+	m := makeReadyModel(t)
+
 	m = submitThroughInterpreter(t, m, "/help")
 
 	if got := countUserInputRecords(m, "/help"); got != 1 {
 		t.Fatalf("user input records = %d, want 1", got)
 	}
-	if !hasRecord(m, record.KindSystem, "[help]") {
-		t.Fatalf("expected legacy /help result; records: %v", m.room.HistoryRecords())
-	}
-	if _, ok := m.interpreterQueue.TryPull(); ok {
-		t.Fatal("legacy command produced an interpreter event")
+	for _, text := range []string{"[help]", "/invite <alias>", "@<alias> <text>", "Ctrl+O"} {
+		if !hasRecord(m, record.KindSystem, text) {
+			t.Fatalf("help output missing %q; records: %v", text, m.room.HistoryRecords())
+		}
 	}
 }
 

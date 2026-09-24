@@ -91,8 +91,12 @@ func (m Model) submit(raw string) (Model, tea.Cmd) {
 }
 
 func isNativeInterpreterStatement(statement promptlang.Statement) bool {
-	_, ok := statement.(promptlang.Who)
-	return ok
+	switch statement.(type) {
+	case promptlang.Who, promptlang.Help:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m Model) submitToInterpreter(raw string) Model {
@@ -121,6 +125,8 @@ func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) 
 		return m, nil
 	case interpreter.RosterListed:
 		return m.renderRoster(event.Participants), nil
+	case interpreter.HelpListed:
+		return m.renderHelp(event), nil
 	case interpreter.UnknownCommand:
 		m.releaseSubmissionGate()
 		return m.handleSubmit(event.Raw)
@@ -648,8 +654,6 @@ func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 		return m.invokeCommand(act)
 	case promptlang.Loop:
 		return m.startLoop(act), nil
-	case promptlang.Help:
-		return m.showHelp(), nil
 	case promptlang.Quit:
 		m.executions.cancelActive()
 		m.sess.Shutdown()
@@ -774,37 +778,7 @@ func (m Model) broadcastAll(text string) Model {
 	return m
 }
 
-func (m Model) showHelp() Model {
-	m.room = m.room.AppendSystem(m.helpText())
-	return m
-}
-
-const helpTextTemplate = `[help]
-
-Commands:
-	/policy enable send-notices
-	                     notify listeners after direct sends
-	/policy enable echo-invites
-	                     use deterministic echo agents for invitations
-  /invite <alias>      start an agent
-  /remove <alias>      remove an agent
-  /cancel <alias>      interrupt an agent's current turn
-  /handoff <from> <to> transfer latest output between agents
-  /shell <program>     execute a shell program
-  /def <name> /shell <program>
-                       define a shell-backed command
-  /<name>              invoke a defined command
-  /loop @<alias> <prompt> /until /<name> /max <turns>
-                       run a bounded participant loop
-  /who                 list agents
-%s  /help                show this message
-  /quit                exit
-
-Sending messages:
-  @<alias> <text>      send to one agent
-  <text>               broadcast to all agents
-
-General keys:
+const helpKeysText = `General keys:
   Ctrl+O               toggle focus (compose ⇄ history)
   PgUp / PgDn          scroll transcript (works in any focus)
 
@@ -833,17 +807,37 @@ UI hints:
   The separator label shows the current focus: compose/history/approval
   When history is focused, the first visible history row is highlighted`
 
-func (m Model) helpText() string {
-	return fmt.Sprintf(helpTextTemplate, m.debugHelpBlock())
+func (m Model) renderHelp(help interpreter.HelpListed) Model {
+	var text strings.Builder
+	text.WriteString("[help]\n\nCommands:\n")
+	writeHelpEntries(&text, help.Commands)
+	writeHelpEntries(&text, m.debugHelpEntries())
+	text.WriteString("\nSending messages:\n")
+	writeHelpEntries(&text, help.Messages)
+	text.WriteString("\n")
+	text.WriteString(helpKeysText)
+	m.room = m.room.AppendSystem(text.String())
+	return m
 }
 
-func (m Model) debugHelpBlock() string {
-	if !m.debug {
-		return ""
+func writeHelpEntries(text *strings.Builder, entries []interpreter.HelpEntry) {
+	for _, entry := range entries {
+		if len(entry.Usage) > 20 {
+			fmt.Fprintf(text, "  %s\n  %-20s %s\n", entry.Usage, "", entry.Description)
+			continue
+		}
+		fmt.Fprintf(text, "  %-20s %s\n", entry.Usage, entry.Description)
 	}
-	return "" +
-		"  /debugview           print viewport debug\n" +
-		"  /debugrows           toggle row number overlay\n"
+}
+
+func (m Model) debugHelpEntries() []interpreter.HelpEntry {
+	if !m.debug {
+		return nil
+	}
+	return []interpreter.HelpEntry{
+		{Usage: "/debugview", Description: "print viewport debug"},
+		{Usage: "/debugrows", Description: "toggle row number overlay"},
+	}
 }
 
 func (m Model) debugView() Model {

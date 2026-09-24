@@ -85,6 +85,19 @@ type UnknownCommand struct {
 // decide how to format the participant values for presentation.
 type RosterListed struct{ Participants []participant.View }
 
+// HelpEntry describes one prompt-language form without prescribing how a
+// front end lays it out.
+type HelpEntry struct {
+	Usage       string
+	Description string
+}
+
+// HelpListed reports the command metadata requested by /help.
+type HelpListed struct {
+	Commands []HelpEntry
+	Messages []HelpEntry
+}
+
 // SubmissionSucceeded reports that recognized input executed or scheduled
 // successfully. Asynchronous work started by the command may still be active.
 type SubmissionSucceeded struct{ Raw string }
@@ -102,6 +115,7 @@ func (InputAccepted) interpreterEvent()       {}
 func (InputRejected) interpreterEvent()       {}
 func (UnknownCommand) interpreterEvent()      {}
 func (RosterListed) interpreterEvent()        {}
+func (HelpListed) interpreterEvent()          {}
 func (SubmissionSucceeded) interpreterEvent() {}
 func (SubmissionFailed) interpreterEvent()    {}
 
