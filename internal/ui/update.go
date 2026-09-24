@@ -697,7 +697,7 @@ func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 }
 
 func (m Model) defineCommand(definition promptlang.CommandDefinition) Model {
-	if err := m.commands.Define(definition); err != nil {
+	if err := m.interpreter.DefineCommand(definition); err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: define /%s: %v", definition.Name, err))
 		return m
 	}
@@ -706,7 +706,7 @@ func (m Model) defineCommand(definition promptlang.CommandDefinition) Model {
 }
 
 func (m Model) invokeCommand(invocation promptlang.CommandInvocation) (Model, tea.Cmd) {
-	body, err := m.commands.Resolve(invocation)
+	body, err := m.interpreter.ResolveCommand(invocation)
 	if err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: invoke /%s: %v", invocation.Name, err))
 		return m, nil

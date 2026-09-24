@@ -171,15 +171,7 @@ go test ./...
       and delete its fallback translation.
 - [x] Migrate policy commands from `SubmitWithFallback` to native `Submit`
       handling and delete their fallback translations.
-- [ ] Move send, broadcast, and handoff translation only with their mutable
-      planning/staging workflows; until then they use `ExecuteLegacy` rather
-      than precomputed asynchronous fallbacks.
-- [ ] Move the room-scoped command registry.
-- [ ] After all built-in commands are interpreter-owned, make their canonical
-      definitions drive native dispatch and help metadata. Replace duplicated
-      help catalogs and exhaustive usage lists with parameterized coverage,
-      while retaining an independent invariant that every built-in recognized
-      by `promptlang` has a registered command definition.
+- [x] Move the room-scoped command registry.
 - [ ] Move shell execution, definitions, invocation, and cancellation.
 - [ ] Add a fake shell runner for interpreter tests.
 - [ ] Preserve existing syntax, routing, output, and error behavior.
@@ -212,6 +204,9 @@ go test ./...
 
 - [ ] Move frozen routing plans, barrier aliases, and staged state into the
       interpreter.
+- [ ] Move send, broadcast, and handoff translation with their mutable
+      planning/staging workflows; until then they use `ExecuteLegacy` rather
+      than precomputed asynchronous fallbacks.
 - [ ] Preserve immediate and lifecycle-delayed dispatch.
 - [ ] Preserve target departure, partial delivery, and handoff output/idle
       ordering.
@@ -234,6 +229,11 @@ go test ./...
 
 ## 8. Cut the TUI over
 
+- [ ] After all built-in commands are interpreter-owned, make their canonical
+      definitions drive native dispatch and help metadata. Replace duplicated
+      help catalogs and exhaustive usage lists with parameterized coverage,
+      while retaining an independent invariant that every built-in recognized
+      by `promptlang` has a registered command definition.
 - [ ] Replace remaining `SubmitWithFallback` calls with `Submit`.
 - [ ] Remove `SubmitWithFallback` after the final legacy translator is gone.
 - [ ] Remove `ExecuteLegacy` after the final TUI workflow moves into the

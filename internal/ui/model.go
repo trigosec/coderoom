@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/interpreter"
-	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/shell"
@@ -82,7 +81,6 @@ type Model struct {
 	sess             *session.Session
 	interpreter      *interpreter.Interpreter
 	executions       *executionLifetime
-	commands         *promptlang.Registry
 	queue            *queue.Queue[session.Event]
 	interpreterQueue *queue.Queue[interpreter.Event]
 	room             room.Model
@@ -129,7 +127,6 @@ func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option)
 		sess:             sess,
 		interpreter:      interp,
 		executions:       newExecutionLifetime(ctx),
-		commands:         promptlang.NewRegistry(),
 		queue:            q,
 		interpreterQueue: interpreterQueue,
 		room:             roomModel,

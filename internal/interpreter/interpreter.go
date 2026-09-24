@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/trigosec/coderoom/internal/participant"
+	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/room"
 	"github.com/trigosec/coderoom/internal/session"
@@ -22,6 +23,18 @@ type executeLegacyOperation struct {
 	result  chan error
 }
 type snapshotOperation struct{ result chan Snapshot }
+type defineCommandOperation struct {
+	definition promptlang.CommandDefinition
+	result     chan error
+}
+type resolveCommandResult struct {
+	body promptlang.Shell
+	err  error
+}
+type resolveCommandOperation struct {
+	invocation promptlang.CommandInvocation
+	result     chan resolveCommandResult
+}
 type shutdownOperation struct{}
 type eventDispatchBarrier struct{ reached chan struct{} }
 
@@ -29,8 +42,9 @@ func (eventDispatchBarrier) interpreterEvent() {}
 
 // Interpreter serializes application operations and session dispatch.
 type Interpreter struct {
-	session SessionController
-	room    *room.Room
+	session  SessionController
+	room     *room.Room
+	commands *promptlang.Registry
 
 	operations   *queue.Queue[operation]
 	events       *queue.Queue[Event]
@@ -62,6 +76,7 @@ func New(ctx context.Context, sess SessionController, _ string, opts ...Option) 
 	i := &Interpreter{
 		session:      sess,
 		room:         room.New(),
+		commands:     promptlang.NewRegistry(),
 		operations:   queue.New[operation](),
 		events:       queue.New[Event](),
 		done:         make(chan struct{}),
@@ -82,6 +97,46 @@ func New(ctx context.Context, sess SessionController, _ string, opts ...Option) 
 		}
 	}()
 	return i
+}
+
+// DefineCommand stores a room-scoped command definition. It returns ErrClosed
+// if shutdown prevents acceptance.
+func (i *Interpreter) DefineCommand(definition promptlang.CommandDefinition) error {
+	result := make(chan error, 1)
+	if !i.enqueue(defineCommandOperation{definition: definition, result: result}) {
+		return ErrClosed
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-i.done:
+		select {
+		case err := <-result:
+			return err
+		default:
+			return ErrClosed
+		}
+	}
+}
+
+// ResolveCommand returns a room-scoped command body. It returns ErrClosed if
+// shutdown prevents acceptance.
+func (i *Interpreter) ResolveCommand(invocation promptlang.CommandInvocation) (promptlang.Shell, error) {
+	result := make(chan resolveCommandResult, 1)
+	if !i.enqueue(resolveCommandOperation{invocation: invocation, result: result}) {
+		return promptlang.Shell{}, ErrClosed
+	}
+	select {
+	case resolved := <-result:
+		return resolved.body, resolved.err
+	case <-i.done:
+		select {
+		case resolved := <-result:
+			return resolved.body, resolved.err
+		default:
+			return promptlang.Shell{}, ErrClosed
+		}
+	}
 }
 
 // ExecuteLegacy synchronously executes a transitional session command on the
@@ -229,6 +284,15 @@ func (op executeLegacyOperation) apply(i *Interpreter) {
 
 func (op snapshotOperation) apply(i *Interpreter) {
 	op.result <- i.captureSnapshot()
+}
+
+func (op defineCommandOperation) apply(i *Interpreter) {
+	op.result <- i.commands.Define(op.definition)
+}
+
+func (op resolveCommandOperation) apply(i *Interpreter) {
+	body, err := i.commands.Resolve(op.invocation)
+	op.result <- resolveCommandResult{body: body, err: err}
 }
 
 func (shutdownOperation) apply(i *Interpreter) {

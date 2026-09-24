@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
 	roomconfig "github.com/trigosec/coderoom/internal/config"
+	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/session"
@@ -203,13 +204,13 @@ func newLoopTestModel(t *testing.T) (Model, *testAgent) {
 	m := newTestModelWithSession(t, sess)
 	inviteParticipant(t, sess, "ada")
 	m = pumpUntilAgentsStarted(t, m, "ada")
-	defineLoopCondition(t, m.commands)
+	defineLoopCondition(t, m.interpreter)
 	return m, participantAgent
 }
 
-func defineLoopCondition(t *testing.T, registry *promptlang.Registry) {
+func defineLoopCondition(t *testing.T, interp *interpreter.Interpreter) {
 	t.Helper()
-	err := registry.Define(promptlang.CommandDefinition{
+	err := interp.DefineCommand(promptlang.CommandDefinition{
 		Name: "tests",
 		Body: promptlang.Shell{Program: "go test ./..."},
 	})

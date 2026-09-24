@@ -38,7 +38,7 @@ func (m Model) startLoop(statement promptlang.Loop) Model {
 		m.room = m.room.AppendSystem("error: a loop is already active")
 		return m
 	}
-	body, err := m.commands.Resolve(promptlang.CommandInvocation{Name: statement.Condition})
+	body, err := m.interpreter.ResolveCommand(promptlang.CommandInvocation{Name: statement.Condition})
 	if err != nil {
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: loop condition /%s: %v", statement.Condition, err))
 		return m
