@@ -86,16 +86,13 @@ func (m Model) submit(raw string) (Model, tea.Cmd) {
 	if err != nil || isNativeInterpreterStatement(statement) {
 		return m.submitToInterpreter(raw), nil
 	}
-	if fallback, ok := legacySessionFallback(statement); ok {
-		return m.submitWithFallbackToInterpreter(raw, fallback), nil
-	}
 	m.releaseSubmissionGate()
 	return m.handleSubmit(raw)
 }
 
 func isNativeInterpreterStatement(statement promptlang.Statement) bool {
 	switch statement.(type) {
-	case promptlang.Invite, promptlang.Remove, promptlang.Cancel, promptlang.Who, promptlang.Help, promptlang.Quit:
+	case promptlang.Invite, promptlang.Remove, promptlang.Cancel, promptlang.PolicyEnable, promptlang.Who, promptlang.Help, promptlang.Quit:
 		return true
 	default:
 		return false
@@ -103,14 +100,6 @@ func isNativeInterpreterStatement(statement promptlang.Statement) bool {
 }
 
 func (m Model) submitToInterpreter(raw string) Model {
-	return m.enqueueInterpreterSubmission(raw, nil)
-}
-
-func (m Model) submitWithFallbackToInterpreter(raw string, fallback session.Command) Model {
-	return m.enqueueInterpreterSubmission(raw, fallback)
-}
-
-func (m Model) enqueueInterpreterSubmission(raw string, fallback session.Command) Model {
 	if strings.TrimSpace(raw) == "" {
 		return m
 	}
@@ -120,28 +109,13 @@ func (m Model) enqueueInterpreterSubmission(raw string, fallback session.Command
 		}
 		m.submissionAwaitingDispatch = ""
 	}
-	var err error
-	if fallback == nil {
-		err = m.interpreter.Submit(raw)
-	} else {
-		err = m.interpreter.SubmitWithFallback(raw, fallback)
-	}
-	if err != nil {
+	if err := m.interpreter.Submit(raw); err != nil {
 		m.submissionPending = false
 		return m.restoreSubmittedComposer(raw)
 	}
 	m.submissionPending = true
 	m.room = m.clearSubmittedComposer(raw)
 	return m
-}
-
-func legacySessionFallback(statement promptlang.Statement) (session.Command, bool) {
-	switch action := statement.(type) {
-	case promptlang.PolicyEnable:
-		return session.EnablePolicyCommand{Name: action.Name}, true
-	default:
-		return nil, false
-	}
 }
 
 func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) {
@@ -682,20 +656,9 @@ func (m Model) executeAgentAction(a promptlang.Statement) (Model, bool) {
 		return m.broadcastAll(act.Text), true
 	case promptlang.Handoff:
 		return m.handoff(act.FromAlias, act.ToAlias), true
-	case promptlang.PolicyEnable:
-		return m.enablePolicy(act), true
 	default:
 		return m, false
 	}
-}
-
-func (m Model) enablePolicy(act promptlang.PolicyEnable) Model {
-	if err := m.interpreter.ExecuteLegacy(session.EnablePolicyCommand{Name: act.Name}); err != nil {
-		m.room = m.room.AppendSystem("error: policy: " + err.Error())
-		return m
-	}
-	m.room = m.room.AppendSystem("[policy] " + string(act.Name) + " enabled")
-	return m
 }
 
 func (m Model) executeDebugAction(a promptlang.Statement) (Model, bool) {

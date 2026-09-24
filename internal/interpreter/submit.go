@@ -60,6 +60,9 @@ func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) 
 	case promptlang.Cancel:
 		i.executeCancel(raw, statement)
 		return true
+	case promptlang.PolicyEnable:
+		i.executePolicyEnable(raw, statement)
+		return true
 	case promptlang.Who:
 		i.executeWho(raw)
 		return true
@@ -92,12 +95,7 @@ func (i *Interpreter) executeFallback(raw string, statement promptlang.Statement
 }
 
 func submissionOperation(statement promptlang.Statement) string {
-	switch statement.(type) {
-	case promptlang.PolicyEnable:
-		return "policy"
-	default:
-		return commandName(statement)
-	}
+	return commandName(statement)
 }
 
 func commandName(statement promptlang.Statement) string {

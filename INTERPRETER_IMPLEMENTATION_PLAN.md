@@ -169,7 +169,7 @@ go test ./...
       and delete its fallback translation.
 - [x] Migrate `/cancel` from `SubmitWithFallback` to native `Submit` handling
       and delete its fallback translation.
-- [ ] Migrate policy commands from `SubmitWithFallback` to native `Submit`
+- [x] Migrate policy commands from `SubmitWithFallback` to native `Submit`
       handling and delete their fallback translations.
 - [ ] Move send, broadcast, and handoff translation only with their mutable
       planning/staging workflows; until then they use `ExecuteLegacy` rather
