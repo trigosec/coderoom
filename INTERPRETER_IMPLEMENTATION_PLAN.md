@@ -120,7 +120,7 @@ go test ./...
       asynchronous `AgentStarted` event.
 - [x] Test failure and shutdown paths release or reject the temporary gate
       without losing the composer's current draft.
-- [ ] Prove native handlers take precedence, fallbacks execute exactly once,
+- [x] Prove native handlers take precedence, fallbacks execute exactly once,
       and fallback causal events drain before the next submission.
 - [x] Do not use precomputed fallbacks for workflows that depend on mutable
       session or room state; keep them on synchronous `ExecuteLegacy` and
@@ -144,7 +144,7 @@ go test ./...
 
 ### 5c. Migrate control and query commands
 
-- [ ] Move `/who` semantics into the interpreter and route it through
+- [x] Move `/who` semantics into the interpreter and route it through
       `Submit`.
 - [ ] Move `/help` command metadata into the interpreter while leaving visual
       formatting in the TUI, then route it through `Submit`.

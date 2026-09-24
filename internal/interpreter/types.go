@@ -81,6 +81,10 @@ type UnknownCommand struct {
 	Name string
 }
 
+// RosterListed reports the participant roster requested by /who. Front ends
+// decide how to format the participant values for presentation.
+type RosterListed struct{ Participants []participant.View }
+
 // SubmissionSucceeded reports that recognized input executed or scheduled
 // successfully. Asynchronous work started by the command may still be active.
 type SubmissionSucceeded struct{ Raw string }
@@ -97,6 +101,7 @@ func (OperationFailed) interpreterEvent()     {}
 func (InputAccepted) interpreterEvent()       {}
 func (InputRejected) interpreterEvent()       {}
 func (UnknownCommand) interpreterEvent()      {}
+func (RosterListed) interpreterEvent()        {}
 func (SubmissionSucceeded) interpreterEvent() {}
 func (SubmissionFailed) interpreterEvent()    {}
 

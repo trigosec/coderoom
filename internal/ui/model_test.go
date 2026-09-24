@@ -315,11 +315,11 @@ func TestBroadcastAll_noAgentsShowsHint(t *testing.T) {
 	}
 }
 
-// --- showWho / showHelp ---
+// --- roster / help rendering ---
 
-func TestShowWho_noAgents(t *testing.T) {
+func TestRenderRoster_noAgents(t *testing.T) {
 	m := makeReadyModel(t)
-	m = m.showWho()
+	m = m.renderRoster(nil)
 	if !hasRecord(m, record.KindSystem, "[no agents]") {
 		t.Errorf("expected [no agents] system record; records: %v", m.room.HistoryRecords())
 	}

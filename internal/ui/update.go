@@ -90,10 +90,9 @@ func (m Model) submit(raw string) (Model, tea.Cmd) {
 	return m.handleSubmit(raw)
 }
 
-func isNativeInterpreterStatement(promptlang.Statement) bool {
-	// Native handlers are introduced command-by-command in the next migration
-	// step. Until then every valid statement remains on its legacy workflow.
-	return false
+func isNativeInterpreterStatement(statement promptlang.Statement) bool {
+	_, ok := statement.(promptlang.Who)
+	return ok
 }
 
 func (m Model) submitToInterpreter(raw string) Model {
@@ -117,6 +116,11 @@ func (m Model) submitToInterpreter(raw string) Model {
 
 func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) {
 	switch event := event.(type) {
+	case interpreter.InputAccepted:
+		m.room = m.room.AppendUserInput(event.Raw, event.Routing)
+		return m, nil
+	case interpreter.RosterListed:
+		return m.renderRoster(event.Participants), nil
 	case interpreter.UnknownCommand:
 		m.releaseSubmissionGate()
 		return m.handleSubmit(event.Raw)
@@ -134,6 +138,20 @@ func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) 
 	default:
 		return m, nil
 	}
+}
+
+func (m Model) renderRoster(participants []participant.View) Model {
+	if len(participants) == 0 {
+		m.room = m.room.AppendSystem("[no agents]")
+		return m
+	}
+	aliases := make([]string, len(participants))
+	for index, view := range participants {
+		aliases[index] = view.Alias
+	}
+	slices.Sort(aliases)
+	m.room = m.room.AppendSystem("[agents] " + strings.Join(aliases, ", "))
+	return m
 }
 
 func formatInputRejection(err error) string {
@@ -630,8 +648,6 @@ func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 		return m.invokeCommand(act)
 	case promptlang.Loop:
 		return m.startLoop(act), nil
-	case promptlang.Who:
-		return m.showWho(), nil
 	case promptlang.Help:
 		return m.showHelp(), nil
 	case promptlang.Quit:
@@ -755,21 +771,6 @@ func (m Model) executeBroadcastAll(text string) (Model, []string, error) {
 
 func (m Model) broadcastAll(text string) Model {
 	m, _, _ = m.executeBroadcastAll(text)
-	return m
-}
-
-func (m Model) showWho() Model {
-	ps := m.sess.Participants()
-	if len(ps) == 0 {
-		m.room = m.room.AppendSystem("[no agents]")
-		return m
-	}
-	aliases := make([]string, len(ps))
-	for i, p := range ps {
-		aliases[i] = p.Alias
-	}
-	slices.Sort(aliases)
-	m.room = m.room.AppendSystem("[agents] " + strings.Join(aliases, ", "))
 	return m
 }
 

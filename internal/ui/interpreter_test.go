@@ -17,16 +17,29 @@ import (
 func TestSubmit_LegacyCommandBypassesInterpreter(t *testing.T) {
 	m := makeReadyModel(t)
 
-	m = submitThroughInterpreter(t, m, "/who")
+	m = submitThroughInterpreter(t, m, "/help")
 
-	if got := countRecords(m, record.KindUserInput, "/who"); got != 1 {
+	if got := countUserInputRecords(m, "/help"); got != 1 {
 		t.Fatalf("user input records = %d, want 1", got)
 	}
-	if !hasRecord(m, record.KindSystem, "[no agents]") {
-		t.Fatalf("expected legacy /who result; records: %v", m.room.HistoryRecords())
+	if !hasRecord(m, record.KindSystem, "[help]") {
+		t.Fatalf("expected legacy /help result; records: %v", m.room.HistoryRecords())
 	}
 	if _, ok := m.interpreterQueue.TryPull(); ok {
 		t.Fatal("legacy command produced an interpreter event")
+	}
+}
+
+func TestSubmit_WhoUsesNativeInterpreterHandler(t *testing.T) {
+	m := makeReadyModel(t)
+
+	m = submitThroughInterpreter(t, m, "/who")
+
+	if got := countUserInputRecords(m, "/who"); got != 1 {
+		t.Fatalf("user input records = %d, want 1", got)
+	}
+	if !hasRecord(m, record.KindSystem, "[no agents]") {
+		t.Fatalf("expected native /who result; records: %v", m.room.HistoryRecords())
 	}
 }
 
@@ -35,7 +48,7 @@ func TestSubmit_InvalidInputIsRenderedWithoutLegacyFallback(t *testing.T) {
 
 	m = submitThroughInterpreter(t, m, "/invite")
 
-	if got := countRecords(m, record.KindUserInput, "/invite"); got != 0 {
+	if got := countUserInputRecords(m, "/invite"); got != 0 {
 		t.Fatalf("user input records = %d, want 0", got)
 	}
 	if !hasRecord(m, record.KindSystem, "error:") {
@@ -91,7 +104,7 @@ func TestSubmit_GatesSecondSubmissionUntilTerminalOutcome(t *testing.T) {
 	if got := m.room.ComposeValue(); got != "/help" {
 		t.Fatalf("composer after terminal outcome = %q, want preserved draft", got)
 	}
-	if got := countRecords(m, record.KindUserInput, "/help"); got != 0 {
+	if got := countUserInputRecords(m, "/help"); got != 0 {
 		t.Fatalf("second submission records = %d, want 0", got)
 	}
 }
@@ -158,10 +171,10 @@ func TestSubmit_ShutdownRejectionRestoresClearedDraft(t *testing.T) {
 	}
 }
 
-func countRecords(m Model, kind record.Kind, text string) int {
+func countUserInputRecords(m Model, text string) int {
 	count := 0
 	for _, item := range m.room.HistoryRecords() {
-		if item.Kind == kind && strings.TrimSpace(item.Text) == text {
+		if item.Kind == record.KindUserInput && strings.TrimSpace(item.Text) == text {
 			count++
 		}
 	}

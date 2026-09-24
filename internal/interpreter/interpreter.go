@@ -266,6 +266,9 @@ func (op submitOperation) apply(i *Interpreter) {
 		i.publish(InputRejected{Raw: op.raw, Err: err})
 		return
 	}
+	if i.executeNative(op.raw, statement) {
+		return
+	}
 	if op.fallback == nil {
 		i.publish(UnknownCommand{Raw: op.raw, Name: commandName(statement)})
 		return
@@ -285,6 +288,25 @@ func (op submitOperation) apply(i *Interpreter) {
 		return
 	}
 	i.publish(SubmissionSucceeded{Raw: op.raw})
+}
+
+func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) bool {
+	switch statement.(type) {
+	case promptlang.Who:
+		i.executeWho(raw)
+		return true
+	default:
+		return false
+	}
+}
+
+func (i *Interpreter) executeWho(raw string) {
+	i.room.AppendUserInputRecord(raw, nil)
+	i.publish(InputAccepted{Raw: raw})
+	snapshot := i.captureSnapshot()
+	i.publish(StateChanged{Snapshot: snapshot})
+	i.publish(RosterListed{Participants: append([]participant.View(nil), snapshot.Participants...)})
+	i.publish(SubmissionSucceeded{Raw: raw})
 }
 
 func (op executeLegacyOperation) apply(i *Interpreter) {
