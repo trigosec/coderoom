@@ -50,6 +50,7 @@ type Interpreter struct {
 	stateMu      sync.RWMutex
 	approval     *Approval
 	stagePending bool
+	sessionDown  bool
 
 	sessionEventMu      sync.Mutex
 	sessionEvents       []session.Event
@@ -257,13 +258,21 @@ func (op resolveApprovalOperation) apply(i *Interpreter) {
 }
 
 func (shutdownOperation) apply(i *Interpreter) {
-	i.session.Shutdown()
+	i.shutdownSession()
 	i.cancel()
 	i.operations.Close()
 	i.room.Close()
 	i.flushEvents()
 	i.events.Close()
 	close(i.done)
+}
+
+func (i *Interpreter) shutdownSession() {
+	if i.sessionDown {
+		return
+	}
+	i.sessionDown = true
+	i.session.Shutdown()
 }
 
 func (i *Interpreter) flushEvents() {

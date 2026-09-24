@@ -148,7 +148,7 @@ go test ./...
       `Submit`.
 - [x] Move `/help` command metadata into the interpreter while leaving visual
       formatting in the TUI, then route it through `Submit`.
-- [ ] Make the interpreter recognize `/quit` and emit an exit-request event;
+- [x] Make the interpreter recognize `/quit` and emit an exit-request event;
       the TUI remains responsible for returning `tea.Quit`.
 - [ ] Route approval decisions through `Interpreter.ResolveApproval`, remove
       the TUI's `ResolveApprovalCommand` construction, and delete that

@@ -59,6 +59,9 @@ func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) 
 	case promptlang.Help:
 		i.executeHelp(raw)
 		return true
+	case promptlang.Quit:
+		i.executeQuit(raw)
+		return true
 	default:
 		return false
 	}

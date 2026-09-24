@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
@@ -13,6 +14,16 @@ import (
 	"github.com/trigosec/coderoom/internal/session"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
+
+type quitTrackingAgent struct {
+	*testAgent
+	stopped chan struct{}
+}
+
+func (a *quitTrackingAgent) Stop() error {
+	close(a.stopped)
+	return a.testAgent.Stop()
+}
 
 func TestSubmit_LegacyCommandBypassesInterpreter(t *testing.T) {
 	m := makeReadyModel(t)
@@ -55,6 +66,47 @@ func TestSubmit_WhoUsesNativeInterpreterHandler(t *testing.T) {
 	}
 	if !hasRecord(m, record.KindSystem, "[no agents]") {
 		t.Fatalf("expected native /who result; records: %v", m.room.HistoryRecords())
+	}
+}
+
+func TestSubmit_QuitStopsSessionBeforeReturningTeaQuit(t *testing.T) {
+	stopped := make(chan struct{})
+	sess := session.New(session.WithAgentFactory(func(*session.Session, roomconfig.ParticipantConfig, session.AgentBackend) agent.Agent {
+		return &quitTrackingAgent{testAgent: newTestAgent(), stopped: stopped}
+	}))
+	m := newTestModelWithSession(t, sess)
+	inviteParticipant(t, sess, "ada")
+	m = pumpUntil(t, m, func(event session.Event) bool {
+		_, started := event.(session.AgentStarted)
+		return started
+	})
+	m = m.submitToInterpreter("/quit")
+
+	for {
+		event, ok := m.interpreterQueue.PullTimeout(2 * time.Second)
+		if !ok {
+			t.Fatal("timed out waiting for exit request")
+		}
+		next, cmd := m.Update(interpreterEventMsg{event: event})
+		m = next.(Model)
+		if _, exit := event.(interpreter.ExitRequested); !exit {
+			continue
+		}
+		if cmd == nil {
+			t.Fatal("exit request did not return tea.Quit")
+		}
+		select {
+		case <-stopped:
+		default:
+			t.Fatal("tea.Quit returned before the session stopped its agent")
+		}
+		if m.submissionPending {
+			t.Fatal("exit request arrived before submission completion released the gate")
+		}
+		if got := countUserInputRecords(m, "/quit"); got != 1 {
+			t.Fatalf("user input records = %d, want 1", got)
+		}
+		return
 	}
 }
 

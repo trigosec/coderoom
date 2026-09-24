@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
-	"github.com/trigosec/coderoom/internal/promptlang"
+	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/shell"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
@@ -135,7 +135,7 @@ func TestShellExecutionStopsWithUILifetime(t *testing.T) {
 		{"parent context", func(_ Model, cancel context.CancelFunc) { cancel() }},
 		{"model close", func(m Model, _ context.CancelFunc) { m.Close() }},
 		{"quit command", func(m Model, _ context.CancelFunc) {
-			_, _ = m.executeUIAction(promptlang.Quit{})
+			_, _ = m.handleInterpreterEvent(interpreter.ExitRequested{})
 		}},
 	}
 	for _, tt := range tests {

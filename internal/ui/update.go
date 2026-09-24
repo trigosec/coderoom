@@ -92,7 +92,7 @@ func (m Model) submit(raw string) (Model, tea.Cmd) {
 
 func isNativeInterpreterStatement(statement promptlang.Statement) bool {
 	switch statement.(type) {
-	case promptlang.Who, promptlang.Help:
+	case promptlang.Who, promptlang.Help, promptlang.Quit:
 		return true
 	default:
 		return false
@@ -127,6 +127,9 @@ func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) 
 		return m.renderRoster(event.Participants), nil
 	case interpreter.HelpListed:
 		return m.renderHelp(event), nil
+	case interpreter.ExitRequested:
+		m.executions.cancelActive()
+		return m, tea.Quit
 	case interpreter.UnknownCommand:
 		m.releaseSubmissionGate()
 		return m.handleSubmit(event.Raw)
@@ -654,10 +657,6 @@ func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 		return m.invokeCommand(act)
 	case promptlang.Loop:
 		return m.startLoop(act), nil
-	case promptlang.Quit:
-		m.executions.cancelActive()
-		m.sess.Shutdown()
-		return m, tea.Quit
 	default:
 		return m, nil
 	}

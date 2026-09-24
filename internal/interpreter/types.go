@@ -98,6 +98,9 @@ type HelpListed struct {
 	Messages []HelpEntry
 }
 
+// ExitRequested asks a front end to end its interactive session.
+type ExitRequested struct{}
+
 // SubmissionSucceeded reports that recognized input executed or scheduled
 // successfully. Asynchronous work started by the command may still be active.
 type SubmissionSucceeded struct{ Raw string }
@@ -116,6 +119,7 @@ func (InputRejected) interpreterEvent()       {}
 func (UnknownCommand) interpreterEvent()      {}
 func (RosterListed) interpreterEvent()        {}
 func (HelpListed) interpreterEvent()          {}
+func (ExitRequested) interpreterEvent()       {}
 func (SubmissionSucceeded) interpreterEvent() {}
 func (SubmissionFailed) interpreterEvent()    {}
 
