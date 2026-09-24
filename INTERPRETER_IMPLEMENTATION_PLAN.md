@@ -163,7 +163,7 @@ go test ./...
 - [x] Route eligible legacy data-only session commands (`/invite`, `/remove`,
       `/cancel`, and policy) through `SubmitWithFallback` so the interpreter
       loop remains the sole caller of `session.Execute`.
-- [ ] After the temporary routing model and control/query commands are stable,
+- [x] After the temporary routing model and control/query commands are stable,
       migrate `/invite` from `SubmitWithFallback` to native `Submit` handling.
 - [ ] Then migrate `/remove`, `/cancel`, and policy commands one at a time,
       deleting each fallback translation as its native handler lands.

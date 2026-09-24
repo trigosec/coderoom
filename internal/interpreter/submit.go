@@ -50,7 +50,10 @@ func (op submitOperation) apply(i *Interpreter) {
 }
 
 func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) bool {
-	switch statement.(type) {
+	switch statement := statement.(type) {
+	case promptlang.Invite:
+		i.executeInvite(raw, statement)
+		return true
 	case promptlang.Who:
 		i.executeWho(raw)
 		return true
@@ -84,8 +87,6 @@ func (i *Interpreter) executeFallback(raw string, statement promptlang.Statement
 
 func submissionOperation(statement promptlang.Statement) string {
 	switch statement.(type) {
-	case promptlang.Invite:
-		return "invite"
 	case promptlang.Remove:
 		return "remove"
 	case promptlang.Cancel:
