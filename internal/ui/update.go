@@ -95,7 +95,7 @@ func (m Model) submit(raw string) (Model, tea.Cmd) {
 
 func isNativeInterpreterStatement(statement promptlang.Statement) bool {
 	switch statement.(type) {
-	case promptlang.Invite, promptlang.Who, promptlang.Help, promptlang.Quit:
+	case promptlang.Invite, promptlang.Remove, promptlang.Who, promptlang.Help, promptlang.Quit:
 		return true
 	default:
 		return false
@@ -137,8 +137,6 @@ func (m Model) enqueueInterpreterSubmission(raw string, fallback session.Command
 
 func legacySessionFallback(statement promptlang.Statement) (session.Command, bool) {
 	switch action := statement.(type) {
-	case promptlang.Remove:
-		return session.RemoveCommand{Alias: action.Alias}, true
 	case promptlang.Cancel:
 		return session.CancelCommand{Alias: action.Alias}, true
 	case promptlang.PolicyEnable:

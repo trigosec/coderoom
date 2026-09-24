@@ -165,8 +165,12 @@ go test ./...
       loop remains the sole caller of `session.Execute`.
 - [x] After the temporary routing model and control/query commands are stable,
       migrate `/invite` from `SubmitWithFallback` to native `Submit` handling.
-- [ ] Then migrate `/remove`, `/cancel`, and policy commands one at a time,
-      deleting each fallback translation as its native handler lands.
+- [x] Migrate `/remove` from `SubmitWithFallback` to native `Submit` handling
+      and delete its fallback translation.
+- [ ] Migrate `/cancel` from `SubmitWithFallback` to native `Submit` handling
+      and delete its fallback translation.
+- [ ] Migrate policy commands from `SubmitWithFallback` to native `Submit`
+      handling and delete their fallback translations.
 - [ ] Move send, broadcast, and handoff translation only with their mutable
       planning/staging workflows; until then they use `ExecuteLegacy` rather
       than precomputed asynchronous fallbacks.
