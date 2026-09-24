@@ -167,7 +167,7 @@ go test ./...
       migrate `/invite` from `SubmitWithFallback` to native `Submit` handling.
 - [x] Migrate `/remove` from `SubmitWithFallback` to native `Submit` handling
       and delete its fallback translation.
-- [ ] Migrate `/cancel` from `SubmitWithFallback` to native `Submit` handling
+- [x] Migrate `/cancel` from `SubmitWithFallback` to native `Submit` handling
       and delete its fallback translation.
 - [ ] Migrate policy commands from `SubmitWithFallback` to native `Submit`
       handling and delete their fallback translations.

@@ -57,6 +57,9 @@ func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) 
 	case promptlang.Remove:
 		i.executeRemove(raw, statement)
 		return true
+	case promptlang.Cancel:
+		i.executeCancel(raw, statement)
+		return true
 	case promptlang.Who:
 		i.executeWho(raw)
 		return true
@@ -90,8 +93,6 @@ func (i *Interpreter) executeFallback(raw string, statement promptlang.Statement
 
 func submissionOperation(statement promptlang.Statement) string {
 	switch statement.(type) {
-	case promptlang.Cancel:
-		return "cancel"
 	case promptlang.PolicyEnable:
 		return "policy"
 	default:
