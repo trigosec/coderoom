@@ -1,6 +1,8 @@
 package interpreter
 
 import (
+	"errors"
+
 	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/session"
 )
@@ -31,12 +33,12 @@ func (i *Interpreter) SubmitWithFallback(raw string, fallback session.Command) e
 
 func (op submitOperation) apply(i *Interpreter) {
 	if i.stagePending {
-		i.publish(InputRejected{Raw: op.raw, Err: ErrStagePending})
+		i.publish(InputRejected{Raw: op.raw, Code: ErrorStagePending, Err: ErrStagePending})
 		return
 	}
 	statement, err := promptlang.Parse(op.raw)
 	if err != nil {
-		i.publish(InputRejected{Raw: op.raw, Err: err})
+		i.publish(InputRejected{Raw: op.raw, Code: ErrorInvalidInput, Err: err})
 		return
 	}
 	if i.executeNative(op.raw, statement) {
@@ -116,11 +118,24 @@ func (i *Interpreter) executeFallback(raw string, statement promptlang.Statement
 		i.publish(SubmissionFailed{
 			Raw:       raw,
 			Operation: submissionOperation(statement),
+			Code:      ErrorExecutionFailed,
 			Err:       err,
 		})
 		return
 	}
 	i.publish(SubmissionSucceeded{Raw: raw})
+}
+
+func submissionErrorCode(err error) ErrorCode {
+	var reserved promptlang.ReservedCommandNameError
+	if errors.As(err, &reserved) {
+		return ErrorReservedCommand
+	}
+	var exists promptlang.CommandAlreadyDefinedError
+	if errors.As(err, &exists) {
+		return ErrorCommandExists
+	}
+	return ErrorExecutionFailed
 }
 
 func submissionOperation(statement promptlang.Statement) string {

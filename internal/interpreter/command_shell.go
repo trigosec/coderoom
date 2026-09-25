@@ -37,7 +37,12 @@ func WithShellRunner(runner ShellRunner) Option {
 func (i *Interpreter) executeCommandDefinition(raw string, definition promptlang.CommandDefinition) {
 	i.acceptInput(raw)
 	if err := i.commands.Define(definition); err != nil {
-		i.publish(SubmissionFailed{Raw: raw, Operation: "define /" + definition.Name, Err: err})
+		i.publish(SubmissionFailed{
+			Raw:       raw,
+			Operation: "define /" + definition.Name,
+			Code:      submissionErrorCode(err),
+			Err:       err,
+		})
 		return
 	}
 	i.room.AppendSystemRecord("[defined] /" + definition.Name)

@@ -174,8 +174,8 @@ go test ./...
 - [x] Move the room-scoped command registry.
 - [x] Move shell execution, definitions, invocation, and cancellation.
 - [x] Add a fake shell runner for interpreter tests.
-- [ ] Preserve existing syntax, routing, output, and error behavior.
-- [ ] Remove each TUI translator as its native interpreter handler lands.
+- [x] Preserve existing syntax, routing, output, and error behavior.
+- [x] Remove each TUI translator as its native interpreter handler lands.
 
 Verification:
 

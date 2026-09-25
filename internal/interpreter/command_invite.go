@@ -12,7 +12,7 @@ func (i *Interpreter) executeInvite(raw string, invite promptlang.Invite) {
 	i.drainSessionEvents(false)
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
 	if err != nil {
-		i.publish(SubmissionFailed{Raw: raw, Operation: "invite", Err: err})
+		i.publish(SubmissionFailed{Raw: raw, Operation: "invite", Code: ErrorExecutionFailed, Err: err})
 		return
 	}
 	i.publish(SubmissionSucceeded{Raw: raw})

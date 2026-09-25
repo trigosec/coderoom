@@ -125,6 +125,42 @@ func TestSubmitContract_definesAndInvokesShellCommand(t *testing.T) {
 	}
 }
 
+func TestSubmitContract_duplicateCommandDefinitionFails(t *testing.T) {
+	interp, events := newShellTestInterpreter(t, &fakeShellRunner{})
+
+	mustSubmit(t, interp.Submit("/def tests /shell true"))
+	receiveSubmitEvent[InputAccepted](t, events)
+	receiveSubmitEvent[StateChanged](t, events)
+	receiveSubmitEvent[SubmissionSucceeded](t, events)
+
+	mustSubmit(t, interp.Submit("/def tests /shell false"))
+	receiveSubmitEvent[InputAccepted](t, events)
+	failed := receiveSubmitEvent[SubmissionFailed](t, events)
+	if failed.Operation == "" || failed.Code != ErrorCommandExists || failed.Err == nil {
+		t.Fatalf("failure = %#v", failed)
+	}
+	assertNoSubmitEvent(t, events)
+}
+
+func TestSubmitContract_reservedCommandDefinitionFails(t *testing.T) {
+	interp, events := newShellTestInterpreter(t, &fakeShellRunner{})
+
+	mustSubmit(t, interp.Submit("/def help /shell true"))
+	receiveSubmitEvent[InputAccepted](t, events)
+	failed := receiveSubmitEvent[SubmissionFailed](t, events)
+	if failed.Operation == "" || failed.Code != ErrorReservedCommand || failed.Err == nil {
+		t.Fatalf("failure = %#v", failed)
+	}
+	assertNoSubmitEvent(t, events)
+}
+
+func TestFormatShellResult_keepsStatusOnlyOutputCompact(t *testing.T) {
+	got := formatShellResult(shell.Result{Status: shell.StatusFailure})
+	if got != "status: failure" {
+		t.Errorf("formatShellResult = %q, want compact status", got)
+	}
+}
+
 func TestSubmitContract_undefinedInvocationIsUnknown(t *testing.T) {
 	interp, events := newShellTestInterpreter(t, &fakeShellRunner{})
 

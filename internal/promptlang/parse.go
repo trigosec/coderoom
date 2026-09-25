@@ -147,7 +147,7 @@ func isDecimalInteger(text string) bool {
 
 func parseDefinition(rest string) (Statement, error) {
 	name, body := cutToken(rest)
-	if !isIdentifier(name) || isReservedCommand(name) {
+	if !isIdentifier(name) {
 		return nil, fmt.Errorf("invalid command name")
 	}
 	bodyCommand, program := cutToken(strings.TrimSpace(body))

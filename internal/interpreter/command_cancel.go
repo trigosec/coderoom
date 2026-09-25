@@ -12,7 +12,7 @@ func (i *Interpreter) executeCancel(raw string, cancel promptlang.Cancel) {
 	i.drainSessionEvents(false)
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
 	if err != nil {
-		i.publish(SubmissionFailed{Raw: raw, Operation: "cancel", Err: err})
+		i.publish(SubmissionFailed{Raw: raw, Operation: "cancel", Code: ErrorExecutionFailed, Err: err})
 		return
 	}
 	i.publish(SubmissionSucceeded{Raw: raw})

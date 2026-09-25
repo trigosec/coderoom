@@ -16,6 +16,19 @@ var (
 	ErrStagePending = errors.New("submission blocked by pending stage")
 )
 
+// ErrorCode classifies terminal submission errors independently of their
+// presentation text or concrete Go error type.
+type ErrorCode string
+
+// Stable terminal submission error codes.
+const (
+	ErrorInvalidInput    ErrorCode = "invalid_input"
+	ErrorStagePending    ErrorCode = "stage_pending"
+	ErrorReservedCommand ErrorCode = "reserved_command"
+	ErrorCommandExists   ErrorCode = "command_exists"
+	ErrorExecutionFailed ErrorCode = "execution_failed"
+)
+
 // ApprovalKind identifies an approval request without exposing agent protocol
 // types to front ends.
 type ApprovalKind string
@@ -72,8 +85,9 @@ type InputAccepted struct {
 
 // InputRejected reports input rejected before acceptance.
 type InputRejected struct {
-	Raw string
-	Err error
+	Raw  string
+	Code ErrorCode
+	Err  error
 }
 
 // UnknownCommand reports valid input with no interpreter handler or fallback.
@@ -118,6 +132,7 @@ type SubmissionSucceeded struct{ Raw string }
 type SubmissionFailed struct {
 	Raw       string
 	Operation string
+	Code      ErrorCode
 	Err       error
 }
 

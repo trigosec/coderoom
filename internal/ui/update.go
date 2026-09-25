@@ -653,12 +653,6 @@ func (m Model) executeAction(a promptlang.Statement) (Model, tea.Cmd) {
 
 func (m Model) executeAgentAction(a promptlang.Statement) (Model, bool) {
 	switch act := a.(type) {
-	case promptlang.Invite:
-		return m.inviteAgent(act.Alias), true
-	case promptlang.Remove:
-		return m.removeAgent(act.Alias), true
-	case promptlang.Cancel:
-		return m.cancelAgent(act.Alias), true
 	case promptlang.Send:
 		return m.sendToAgent(act.Alias, act.Text), true
 	case promptlang.Broadcast:
@@ -697,31 +691,6 @@ func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
-}
-
-func (m Model) inviteAgent(alias string) Model {
-	err := m.interpreter.ExecuteLegacy(session.InviteCommand{Alias: alias})
-	if err != nil {
-		m.room = m.room.AppendSystem(fmt.Sprintf("error: invite %q: %v", alias, err))
-		return m
-	}
-	return m
-}
-
-func (m Model) removeAgent(alias string) Model {
-	if err := m.interpreter.ExecuteLegacy(session.RemoveCommand{Alias: alias}); err != nil {
-		m.room = m.room.AppendSystem(fmt.Sprintf("error: remove %q: %v", alias, err))
-	}
-	return m
-}
-
-func (m Model) cancelAgent(alias string) Model {
-	if err := m.interpreter.ExecuteLegacy(session.CancelCommand{Alias: alias}); err != nil {
-		m.room = m.room.AppendSystem(fmt.Sprintf("error: cancel %q: %v", alias, err))
-		return m
-	}
-	m.room = m.room.AppendSystem("[→ " + alias + "] cancel requested")
-	return m
 }
 
 func (m Model) executeHandoff(fromAlias, toAlias string, idleAliases []string) (Model, []string, error) {

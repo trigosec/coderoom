@@ -403,6 +403,12 @@ interpreter-owned command registry produces `UnknownCommand`. Neither outcome
 appends a room record, publishes `InputAccepted`, calls `session.Execute`, or
 changes workflow state.
 
+Command-definition names are parsed as identifiers before registry policy is
+applied. A reserved or previously defined name is therefore accepted input and
+terminates with `SubmissionFailed`, classified as `ErrorReservedCommand` or
+`ErrorCommandExists`. Event consumers can branch on `ErrorCode` without
+inspecting presentation-oriented error strings.
+
 Every successfully enqueued `Submit` or `SubmitWithFallback` produces exactly
 one terminal outcome. Rejection and unknown routing are already complete
 outcomes; they do not need a second confirmation event. Recognized input first
@@ -454,8 +460,9 @@ type InputAccepted struct {
 }
 
 type InputRejected struct {
-    Raw string
-    Err error
+	Raw  string
+	Code ErrorCode
+	Err  error
 }
 
 type UnknownCommand struct {
@@ -468,9 +475,10 @@ type SubmissionSucceeded struct {
 }
 
 type SubmissionFailed struct {
-    Raw       string
-    Operation string
-    Err       error
+	Raw       string
+	Operation string
+	Code      ErrorCode
+	Err       error
 }
 
 type ShellCompleted struct {

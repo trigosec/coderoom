@@ -12,7 +12,7 @@ func (i *Interpreter) executePolicyEnable(raw string, enable promptlang.PolicyEn
 	i.drainSessionEvents(false)
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
 	if err != nil {
-		i.publish(SubmissionFailed{Raw: raw, Operation: "policy", Err: err})
+		i.publish(SubmissionFailed{Raw: raw, Operation: "policy", Code: ErrorExecutionFailed, Err: err})
 		return
 	}
 	i.publish(SubmissionSucceeded{Raw: raw})
