@@ -36,6 +36,10 @@ type shellCompletedOperation struct {
 	command string
 	result  shell.Result
 }
+type loopConditionCompletedOperation struct {
+	condition string
+	result    shell.Result
+}
 type shutdownOperation struct{}
 type eventDispatchBarrier struct{ reached chan struct{} }
 
@@ -65,6 +69,7 @@ type Interpreter struct {
 	stateMu      sync.RWMutex
 	approval     *Approval
 	stagePending bool
+	activeLoop   *loopExecution
 	sessionDown  bool
 
 	sessionEventMu      sync.Mutex
@@ -261,6 +266,7 @@ func (i *Interpreter) applySessionEvent(event session.Event) {
 			return
 		}
 	}
+	i.advanceLoop(event)
 	i.publish(StateChanged{Snapshot: i.captureSnapshot()})
 }
 

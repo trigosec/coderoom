@@ -71,6 +71,9 @@ func (i *Interpreter) executeNativeSession(raw string, statement promptlang.Stat
 	case promptlang.PolicyEnable:
 		i.executePolicyEnable(raw, statement)
 		return true
+	case promptlang.Loop:
+		i.executeLoop(raw, statement)
+		return true
 	default:
 		return false
 	}

@@ -91,6 +91,14 @@ func TestHandleInterpreterEvent_undefinedInvocationDoesNotEchoInput(t *testing.T
 	}
 }
 
+func TestHandleInterpreterEvent_rendersLoopStatus(t *testing.T) {
+	m := makeReadyModel(t)
+	m, _ = m.handleInterpreterEvent(interpreter.LoopStatus{Message: "[loop] turn 1/3 sent to @ada"})
+	if !hasRecord(m, record.KindSystem, "[loop] turn 1/3 sent to @ada") {
+		t.Fatal("loop status was not rendered")
+	}
+}
+
 func shellCommandCount(m Model) int {
 	count := 0
 	for _, rec := range m.room.HistoryRecords() {

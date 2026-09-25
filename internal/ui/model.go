@@ -9,7 +9,6 @@ import (
 	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/queue"
 	"github.com/trigosec/coderoom/internal/session"
-	"github.com/trigosec/coderoom/internal/shell"
 	"github.com/trigosec/coderoom/internal/ui/palette"
 	"github.com/trigosec/coderoom/internal/ui/room"
 	"github.com/trigosec/coderoom/internal/ui/toolbox"
@@ -17,8 +16,6 @@ import (
 
 // Option configures a Model at construction time.
 type Option func(*Model)
-
-type shellRunner func(context.Context, string, string) shell.Result
 
 // WithDebug enables developer debugging features (debug commands and optional
 // overlays). Intended to be wired to CODEROOM_DEBUG=1 in the CLI.
@@ -80,15 +77,12 @@ func (o channelObserver) OnEvent(e session.Event) {
 type Model struct {
 	sess             *session.Session
 	interpreter      *interpreter.Interpreter
-	executions       *executionLifetime
 	queue            *queue.Queue[session.Event]
 	interpreterQueue *queue.Queue[interpreter.Event]
 	room             room.Model
 	toolbox          toolbox.Model
 	debug            bool
 	cwd              string
-	runShell         shellRunner
-	activeLoop       *loopExecution
 	lastSize         tea.WindowSizeMsg
 
 	projectedTurnByAlias map[string]uint64
@@ -126,13 +120,11 @@ func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option)
 	m := Model{
 		sess:             sess,
 		interpreter:      interp,
-		executions:       newExecutionLifetime(ctx),
 		queue:            q,
 		interpreterQueue: interpreterQueue,
 		room:             roomModel,
 		toolbox:          toolbox.New(),
 		cwd:              cwd,
-		runShell:         shell.Run,
 	}
 	for _, o := range opts {
 		o(&m)
@@ -142,7 +134,6 @@ func New(ctx context.Context, sess *session.Session, cwd string, opts ...Option)
 
 // Close stops the model-owned background queues.
 func (m Model) Close() {
-	m.executions.close()
 	m.room.Close()
 	if m.interpreter != nil {
 		m.interpreter.Close()

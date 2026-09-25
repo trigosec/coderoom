@@ -62,8 +62,6 @@ func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case room.StagedInterruptMsg:
 		next := m.handleStagedInterrupt()
 		return next, nil
-	case loopConditionResultMsg:
-		return m.handleLoopConditionResult(msg)
 	default:
 		return m.forwardMessage(msg)
 	}
@@ -92,7 +90,7 @@ func isNativeInterpreterStatement(statement promptlang.Statement) bool {
 	switch statement.(type) {
 	case promptlang.Invite, promptlang.Remove, promptlang.Cancel, promptlang.PolicyEnable,
 		promptlang.Shell, promptlang.CommandDefinition, promptlang.CommandInvocation,
-		promptlang.Who, promptlang.Help, promptlang.Quit:
+		promptlang.Loop, promptlang.Who, promptlang.Help, promptlang.Quit:
 		return true
 	default:
 		return false
@@ -191,10 +189,12 @@ func (m Model) handleInterpreterPresentationEvent(event interpreter.Event) (Mode
 	case interpreter.HelpListed:
 		return m.renderHelp(event), nil, true
 	case interpreter.ExitRequested:
-		m.executions.cancelActive()
 		return m, tea.Quit, true
 	case interpreter.ShellCompleted:
 		return m.appendShellResult(event), nil, true
+	case interpreter.LoopStatus:
+		m.room = m.room.AppendSystem(event.Message)
+		return m, nil, true
 	case interpreter.OperationFailed:
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: %s: %v", event.Operation, event.Err))
 		return m, nil, true
@@ -451,10 +451,9 @@ func (m Model) handleEvent(e session.Event) (Model, tea.Cmd) {
 		next = next.maybeAdvanceProjectedHandoff(trigger)
 	}
 	next = next.maybeAdvanceStagedBatch(e)
-	next, loopCmd := next.advanceLoopForEvent(e)
 	var toolboxCmd tea.Cmd
 	next.toolbox, toolboxCmd = next.toolbox.SetParticipants(next.sess.Roster())
-	return next, tea.Batch(loopCmd, toolboxCmd)
+	return next, toolboxCmd
 }
 
 func (m Model) handleMessageEvent(e session.Event) Model {
@@ -684,13 +683,8 @@ func (m Model) executeDebugAction(a promptlang.Statement) (Model, bool) {
 	}
 }
 
-func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
-	switch act := a.(type) {
-	case promptlang.Loop:
-		return m.startLoop(act), nil
-	default:
-		return m, nil
-	}
+func (m Model) executeUIAction(promptlang.Statement) (Model, tea.Cmd) {
+	return m, nil
 }
 
 func (m Model) executeHandoff(fromAlias, toAlias string, idleAliases []string) (Model, []string, error) {

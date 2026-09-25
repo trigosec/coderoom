@@ -124,6 +124,9 @@ type ShellCompleted struct {
 	Output  string
 }
 
+// LoopStatus reports a user-visible bounded-loop lifecycle transition.
+type LoopStatus struct{ Message string }
+
 // SubmissionSucceeded reports that recognized input executed or scheduled
 // successfully. Asynchronous work started by the command may still be active.
 type SubmissionSucceeded struct{ Raw string }
@@ -145,6 +148,7 @@ func (RosterListed) interpreterEvent()        {}
 func (HelpListed) interpreterEvent()          {}
 func (ExitRequested) interpreterEvent()       {}
 func (ShellCompleted) interpreterEvent()      {}
+func (LoopStatus) interpreterEvent()          {}
 func (SubmissionSucceeded) interpreterEvent() {}
 func (SubmissionFailed) interpreterEvent()    {}
 

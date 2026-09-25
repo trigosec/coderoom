@@ -186,12 +186,12 @@ go test ./...
 
 ## 6. Move bounded loops
 
-- [ ] Move active loop state and transitions into the interpreter.
-- [ ] Advance loops from queued participant lifecycle events.
-- [ ] Feed shell completion back through the interpreter loop.
-- [ ] Preserve condition evidence and user-visible status behavior.
-- [ ] Preserve cancellation, maximum-turn, stop, and crash behavior.
-- [ ] Move equivalent loop tests from `internal/ui`.
+- [x] Move active loop state and transitions into the interpreter.
+- [x] Advance loops from queued participant lifecycle events.
+- [x] Feed shell completion back through the interpreter loop.
+- [x] Preserve condition evidence and user-visible status behavior.
+- [x] Preserve cancellation, maximum-turn, stop, and crash behavior.
+- [x] Move equivalent loop tests from `internal/ui`.
 
 Verification:
 
