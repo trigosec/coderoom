@@ -29,11 +29,25 @@ const (
 // noticeOutcome is returned by interceptNotice and its helpers.
 type noticeOutcome uint8
 
+type keepaliveActivityKind uint8
+
 const (
 	noticeUnhandled noticeOutcome = iota // not a notice turn; caller should process normally
 	noticeContinue                       // handled; keep reading
 	noticeExit                           // handled; exit worker (context cancelled)
 )
+
+const (
+	keepalivePassive keepaliveActivityKind = iota
+	keepaliveTool
+	keepaliveUnknown
+	keepaliveMalformed
+)
+
+type keepaliveActivity struct {
+	kind     keepaliveActivityKind
+	itemType string
+}
 
 // noticeContextPrefix is prepended to every notice prompt. It instructs the
 // model to respond with only {"acknowledge":true} so the response can be
@@ -276,8 +290,9 @@ func (c *Client) interceptKeepalive(ctx context.Context, msg rpcEnvelope) notice
 		return c.emitKeepalive(ctx)
 	default:
 		if strings.HasPrefix(msg.Method, "item/") {
-			if isKeepaliveToolActivity(msg) {
-				return c.reportKeepaliveToolActivity(ctx, msg.Method)
+			activity := classifyKeepaliveActivity(msg)
+			if activity.kind != keepalivePassive {
+				return c.reportKeepaliveActivity(ctx, msg.Method, activity)
 			}
 			return noticeContinue
 		}
@@ -285,30 +300,50 @@ func (c *Client) interceptKeepalive(ctx context.Context, msg rpcEnvelope) notice
 	}
 }
 
-func isKeepaliveToolActivity(msg rpcEnvelope) bool {
+func classifyKeepaliveActivity(msg rpcEnvelope) keepaliveActivity {
 	switch msg.Method {
 	case methodAgentDelta, methodReasoningTextDelta, methodReasoningSummaryTextDelta, methodReasoningSummaryPartAdded:
-		return false
+		return keepaliveActivity{kind: keepalivePassive}
 	case methodItemStarted, methodItemCompleted:
 		var p itemLifecycleParams
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			return true
+			return keepaliveActivity{kind: keepaliveMalformed}
 		}
 		var item itemKind
 		if err := json.Unmarshal(p.Item, &item); err != nil {
-			return true
+			return keepaliveActivity{kind: keepaliveMalformed}
 		}
-		return item.Type != "agentMessage" && item.Type != "reasoning"
+		return classifyKeepaliveItem(item.Type)
 	default:
-		return true
+		return keepaliveActivity{kind: keepaliveUnknown}
 	}
 }
 
-func (c *Client) reportKeepaliveToolActivity(ctx context.Context, method string) noticeOutcome {
+func classifyKeepaliveItem(itemType string) keepaliveActivity {
+	activity := keepaliveActivity{itemType: itemType}
+	switch itemType {
+	case "userMessage", "agentMessage", "reasoning":
+		activity.kind = keepalivePassive
+	case "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall",
+		"collabAgentToolCall", "webSearch", "imageView", "imageGeneration":
+		activity.kind = keepaliveTool
+	case "":
+		activity.kind = keepaliveMalformed
+	default:
+		activity.kind = keepaliveUnknown
+	}
+	return activity
+}
+
+func (c *Client) reportKeepaliveActivity(
+	ctx context.Context,
+	method string,
+	activity keepaliveActivity,
+) noticeOutcome {
 	if !c.markToolViolationReported() {
 		return noticeContinue
 	}
-	text := "SECURITY: keepalive attempted tool activity (" + method + "); maintenance turn interrupted"
+	text := keepaliveActivityDiagnostic(method, activity)
 	if err := c.Interrupt(); err != nil {
 		text += "; interrupt failed: " + err.Error()
 	}
@@ -317,6 +352,24 @@ func (c *Client) reportKeepaliveToolActivity(ctx context.Context, method string)
 		Mode:     agent.ModeSingle,
 		Content:  agent.Log{Text: text},
 	}}))
+}
+
+func keepaliveActivityDiagnostic(method string, activity keepaliveActivity) string {
+	switch activity.kind {
+	case keepaliveTool:
+		return "Keepalive interrupted: unexpected " + activity.itemType +
+			" activity during maintenance (" + method + "). coderoom stopped the maintenance turn; normal participant work is unaffected."
+	case keepaliveMalformed:
+		return "Keepalive interrupted: malformed item lifecycle payload during maintenance (" + method +
+			"). coderoom stopped the maintenance turn as a precaution; please report this event with the Codex version."
+	default:
+		item := activity.itemType
+		if item == "" {
+			item = "unknown"
+		}
+		return "Keepalive interrupted: unrecognized item type " + item +
+			" during maintenance (" + method + "). coderoom stopped the maintenance turn as a precaution; please report this event with the Codex version."
+	}
 }
 
 func (c *Client) markToolViolationReported() bool {

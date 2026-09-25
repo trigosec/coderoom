@@ -127,7 +127,8 @@ func (c *Client) isKeepaliveTurn() bool {
 func declineKeepaliveApproval(ctx context.Context, c *Client, msg rpcEnvelope) bool {
 	_, approvalCtx, parseErr := normalizeApproval(msg.Method, msg.Params)
 	responseErr := writeApprovalResult(c, *msg.ID, approvalCtx, agent.OptionDecline)
-	text := "SECURITY: keepalive requested tool approval; auto-declined and maintenance turn interrupted"
+	text := "Keepalive interrupted: unexpected approval request during maintenance (" + msg.Method +
+		"). coderoom auto-declined the request and stopped the maintenance turn; normal participant work is unaffected."
 	if parseErr != nil {
 		text += "; parse failed: " + parseErr.Error()
 	}

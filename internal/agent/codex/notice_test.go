@@ -74,16 +74,19 @@ func TestKeepaliveFilter_nonCompliantOutputIsSuppressed(t *testing.T) {
 
 func TestKeepaliveFilter_suppressesToolNotifications(t *testing.T) {
 	tests := []struct {
-		name string
-		wire string
+		name     string
+		itemType string
+		wire     string
 	}{
 		{
-			name: "command execution",
+			name:     "command execution",
+			itemType: "commandExecution",
 			wire: `{"method":"item/started","params":{"turnId":"u1","item":{"type":"commandExecution","id":"cmd1","command":"pwd","cwd":"/tmp","status":"inProgress"}}}` + "\n" +
 				`{"method":"item/commandExecution/outputDelta","params":{"turnId":"u1","itemId":"cmd1","delta":"output"}}` + "\n",
 		},
 		{
-			name: "file change",
+			name:     "file change",
+			itemType: "fileChange",
 			wire: `{"method":"item/started","params":{"turnId":"u1","item":{"type":"fileChange","id":"patch1","status":"inProgress","changes":[]}}}` + "\n" +
 				`{"method":"item/fileChange/patchUpdated","params":{"turnId":"u1","itemId":"patch1","changes":[]}}` + "\n",
 		},
@@ -96,8 +99,16 @@ func TestKeepaliveFilter_suppressesToolNotifications(t *testing.T) {
 				t.Fatalf("read tool diagnostic: %v", err)
 			}
 			log, ok := msg.Content.(agent.Log)
-			if !ok || !strings.Contains(log.Text, "SECURITY:") {
-				t.Fatalf("first content = %#v, want security diagnostic", msg.Content)
+			if !ok {
+				t.Fatalf("first content = %#v, want interruption diagnostic", msg.Content)
+			}
+			for _, want := range []string{"Keepalive interrupted", tt.itemType, "item/started", "normal participant work is unaffected"} {
+				if !strings.Contains(log.Text, want) {
+					t.Errorf("diagnostic %q does not contain %q", log.Text, want)
+				}
+			}
+			if strings.Contains(log.Text, "SECURITY") {
+				t.Errorf("diagnostic retained alarming SECURITY label: %q", log.Text)
 			}
 			msg, err = c.Read()
 			if err != nil {
@@ -105,6 +116,71 @@ func TestKeepaliveFilter_suppressesToolNotifications(t *testing.T) {
 			}
 			if _, ok := msg.Content.(agent.KeepAlive); !ok {
 				t.Fatalf("completion content = %T, want agent.KeepAlive", msg.Content)
+			}
+		})
+	}
+}
+
+func TestKeepaliveFilter_explainsUnrecognizedActivity(t *testing.T) {
+	tests := []struct {
+		name string
+		wire string
+		want string
+	}{
+		{
+			name: "unknown item type",
+			wire: `{"method":"item/started","params":{"turnId":"u1","item":{"type":"futureItem","id":"item1"}}}` + "\n",
+			want: "unrecognized item type futureItem",
+		},
+		{
+			name: "malformed lifecycle payload",
+			wire: `{"method":"item/started","params":[]}` + "\n",
+			want: "malformed item lifecycle payload",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := setupKeepaliveClient(t, turnStarted+tt.wire+turnCompleted)
+			msg, err := c.Read()
+			if err != nil {
+				t.Fatalf("read interruption diagnostic: %v", err)
+			}
+			log, ok := msg.Content.(agent.Log)
+			if !ok {
+				t.Fatalf("first content = %T, want agent.Log", msg.Content)
+			}
+			for _, want := range []string{tt.want, "item/started", "please report this event with the Codex version"} {
+				if !strings.Contains(log.Text, want) {
+					t.Errorf("diagnostic %q does not contain %q", log.Text, want)
+				}
+			}
+		})
+	}
+}
+
+func TestKeepaliveFilter_allowsUserMessageLifecycle(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+	}{
+		{name: "started", method: "item/started"},
+		{name: "completed", method: "item/completed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdin := &bytes.Buffer{}
+			lifecycle := `{"method":"` + tt.method + `","params":{"turnId":"u1","item":{"type":"userMessage","id":"msg1","content":[]}}}` + "\n"
+			c := setupKeepaliveClientWithIO(t, nopWriteCloser{stdin}, bytes.NewBufferString(turnStarted+lifecycle+turnCompleted))
+
+			msg, err := c.Read()
+			if err != nil {
+				t.Fatalf("read keepalive completion: %v", err)
+			}
+			if _, ok := msg.Content.(agent.KeepAlive); !ok {
+				t.Fatalf("completion content = %T, want agent.KeepAlive", msg.Content)
+			}
+			if strings.Contains(stdin.String(), `"method":"turn/interrupt"`) {
+				t.Fatalf("user message lifecycle triggered interrupt: %s", stdin.String())
 			}
 		})
 	}
@@ -123,6 +199,12 @@ func TestKeepaliveFilter_autoDeclinesApproval(t *testing.T) {
 	}
 	if _, ok := msg.Content.(agent.Log); !ok {
 		t.Fatalf("first content = %T, want agent.Log", msg.Content)
+	}
+	log := msg.Content.(agent.Log)
+	for _, want := range []string{"Keepalive interrupted", "approval request", "requestApproval", "auto-declined", "normal participant work is unaffected"} {
+		if !strings.Contains(log.Text, want) {
+			t.Errorf("diagnostic %q does not contain %q", log.Text, want)
+		}
 	}
 	msg, err = c.Read()
 	if err != nil {
