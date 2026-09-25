@@ -62,8 +62,6 @@ func (m Model) handleNonSessionMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case room.StagedInterruptMsg:
 		next := m.handleStagedInterrupt()
 		return next, nil
-	case shellResultMsg:
-		return m.handleShellResult(msg), nil
 	case loopConditionResultMsg:
 		return m.handleLoopConditionResult(msg)
 	default:
@@ -92,7 +90,9 @@ func (m Model) submit(raw string) (Model, tea.Cmd) {
 
 func isNativeInterpreterStatement(statement promptlang.Statement) bool {
 	switch statement.(type) {
-	case promptlang.Invite, promptlang.Remove, promptlang.Cancel, promptlang.PolicyEnable, promptlang.Who, promptlang.Help, promptlang.Quit:
+	case promptlang.Invite, promptlang.Remove, promptlang.Cancel, promptlang.PolicyEnable,
+		promptlang.Shell, promptlang.CommandDefinition, promptlang.CommandInvocation,
+		promptlang.Who, promptlang.Help, promptlang.Quit:
 		return true
 	default:
 		return false
@@ -125,6 +125,11 @@ func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) 
 	switch event := event.(type) {
 	case interpreter.UnknownCommand:
 		m.releaseSubmissionGate()
+		if event.Name != "" {
+			err := promptlang.UndefinedCommandError{Name: event.Name}
+			m.room = m.room.AppendSystem(fmt.Sprintf("error: invoke /%s: %v", event.Name, err))
+			return m, nil
+		}
 		return m.handleSubmit(event.Raw)
 	case interpreter.InputRejected:
 		m.releaseSubmissionGate()
@@ -132,7 +137,7 @@ func (m Model) handleInterpreterEvent(event interpreter.Event) (Model, tea.Cmd) 
 		return m, nil
 	case interpreter.SubmissionSucceeded:
 		m.releaseSubmissionGate()
-		m = m.renderLegacyFallbackSuccess(event.Raw)
+		m = m.renderSubmissionSuccess(event.Raw)
 		return m, nil
 	case interpreter.SubmissionFailed:
 		m.releaseSubmissionGate()
@@ -160,7 +165,7 @@ func formatSubmissionFailure(event interpreter.SubmissionFailed) string {
 	return fmt.Sprintf("error: %s: %v", event.Operation, event.Err)
 }
 
-func (m Model) renderLegacyFallbackSuccess(raw string) Model {
+func (m Model) renderSubmissionSuccess(raw string) Model {
 	statement, err := promptlang.Parse(raw)
 	if err != nil {
 		return m
@@ -170,6 +175,8 @@ func (m Model) renderLegacyFallbackSuccess(raw string) Model {
 		m.room = m.room.AppendSystem("[→ " + action.Alias + "] cancel requested")
 	case promptlang.PolicyEnable:
 		m.room = m.room.AppendSystem("[policy] " + string(action.Name) + " enabled")
+	case promptlang.CommandDefinition:
+		m.room = m.room.AppendSystem("[defined] /" + action.Name)
 	}
 	return m
 }
@@ -186,6 +193,8 @@ func (m Model) handleInterpreterPresentationEvent(event interpreter.Event) (Mode
 	case interpreter.ExitRequested:
 		m.executions.cancelActive()
 		return m, tea.Quit, true
+	case interpreter.ShellCompleted:
+		return m.appendShellResult(event), nil, true
 	case interpreter.OperationFailed:
 		m.room = m.room.AppendSystem(fmt.Sprintf("error: %s: %v", event.Operation, event.Err))
 		return m, nil, true
@@ -683,35 +692,11 @@ func (m Model) executeDebugAction(a promptlang.Statement) (Model, bool) {
 
 func (m Model) executeUIAction(a promptlang.Statement) (Model, tea.Cmd) {
 	switch act := a.(type) {
-	case promptlang.Shell:
-		return m, m.executeShell(act.Program)
-	case promptlang.CommandDefinition:
-		return m.defineCommand(act), nil
-	case promptlang.CommandInvocation:
-		return m.invokeCommand(act)
 	case promptlang.Loop:
 		return m.startLoop(act), nil
 	default:
 		return m, nil
 	}
-}
-
-func (m Model) defineCommand(definition promptlang.CommandDefinition) Model {
-	if err := m.interpreter.DefineCommand(definition); err != nil {
-		m.room = m.room.AppendSystem(fmt.Sprintf("error: define /%s: %v", definition.Name, err))
-		return m
-	}
-	m.room = m.room.AppendSystem("[defined] /" + definition.Name)
-	return m
-}
-
-func (m Model) invokeCommand(invocation promptlang.CommandInvocation) (Model, tea.Cmd) {
-	body, err := m.interpreter.ResolveCommand(invocation)
-	if err != nil {
-		m.room = m.room.AppendSystem(fmt.Sprintf("error: invoke /%s: %v", invocation.Name, err))
-		return m, nil
-	}
-	return m, m.executeShellCommand("/"+invocation.Name, body.Program)
 }
 
 func (m Model) inviteAgent(alias string) Model {

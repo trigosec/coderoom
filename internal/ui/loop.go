@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/participant"
 	"github.com/trigosec/coderoom/internal/promptlang"
 	"github.com/trigosec/coderoom/internal/session"
@@ -59,12 +60,12 @@ func (m Model) evaluateLoopCondition() tea.Cmd {
 }
 
 func (m Model) handleLoopConditionResult(msg loopConditionResultMsg) (Model, tea.Cmd) {
-	shellMsg := shellResultMsg{
-		command: "/" + msg.condition,
-		cwd:     msg.cwd,
-		result:  msg.result,
-	}
-	m = m.appendShellResult(shellMsg, formatLoopConditionResult(msg.result))
+	m = m.appendShellResult(interpreter.ShellCompleted{
+		Command: "/" + msg.condition,
+		Cwd:     msg.cwd,
+		Result:  msg.result,
+		Output:  formatLoopConditionResult(msg.result),
+	})
 	if m.activeLoop == nil || m.activeLoop.phase != loopEvaluating {
 		return m, nil
 	}

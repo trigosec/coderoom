@@ -63,6 +63,15 @@ func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) 
 	case promptlang.PolicyEnable:
 		i.executePolicyEnable(raw, statement)
 		return true
+	case promptlang.Shell:
+		i.executeShell(raw, statement.Program, statement.Program)
+		return true
+	case promptlang.CommandDefinition:
+		i.executeCommandDefinition(raw, statement)
+		return true
+	case promptlang.CommandInvocation:
+		i.executeCommandInvocation(raw, statement)
+		return true
 	case promptlang.Who:
 		i.executeWho(raw)
 		return true

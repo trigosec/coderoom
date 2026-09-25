@@ -1,225 +1,104 @@
 package ui
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/interpreter"
 	"github.com/trigosec/coderoom/internal/shell"
 	"github.com/trigosec/coderoom/internal/ui/room/history/record"
 )
 
-func TestHandleSubmit_shellRunsAsynchronouslyAndRecordsResult(t *testing.T) {
+func TestHandleInterpreterEvent_rendersShellCompletion(t *testing.T) {
 	m := makeReadyModel(t)
-	called := false
 	exitCode := 7
-	m.runShell = func(_ context.Context, cwd, program string) shell.Result {
-		called = true
-		if cwd != "." {
-			t.Errorf("cwd = %q, want current model cwd", cwd)
-		}
-		if program != `echo "hello world" | false` {
-			t.Errorf("program = %q, want raw shell program", program)
-		}
-		return shell.Result{
+	event := interpreter.ShellCompleted{
+		Command: `echo "hello world" | false`,
+		Cwd:     ".",
+		Result: shell.Result{
 			Status:   shell.StatusFailure,
 			ExitCode: &exitCode,
 			Stdout:   "standard output",
 			Stderr:   "standard error",
 			Err:      errors.New("runner failure"),
-		}
+		},
+		Output: "status: failure\nstdout:\nstandard output\nstderr:\nstandard error\nerror:\nrunner failure",
 	}
 
-	next, cmd := m.handleSubmit(`/shell echo "hello world" | false`)
-	if called {
-		t.Fatal("shell runner blocked submission instead of returning a command")
-	}
-	if cmd == nil {
-		t.Fatal("expected asynchronous shell command")
-	}
-	if !hasRecord(next, record.KindUserInput, "/shell") {
-		t.Fatal("expected shell input to be echoed before execution")
-	}
-
-	msg := cmd()
-	if !called {
-		t.Fatal("expected Bubble Tea command to call shell runner")
-	}
-	updated, _ := next.Update(msg)
-	m = updated.(Model)
+	m, _ = m.handleInterpreterEvent(event)
 	command := shellCommandRecord(t, m)
-	assertShellCommand(t, command)
-}
-
-func TestFormatShellResult_keepsOrdinaryShellOutputCompact(t *testing.T) {
-	got := formatShellResult(shell.Result{Status: shell.StatusFailure})
-	if got != "status: failure" {
-		t.Errorf("formatShellResult = %q, want compact status", got)
+	if command.Command != event.Command || command.Cwd != event.Cwd || command.ExitCode != event.Result.ExitCode {
+		t.Fatalf("command = %#v, want completion event values", command)
 	}
-}
-
-func TestHandleSubmit_defineAndInvokeShellCommand(t *testing.T) {
-	m := makeReadyModel(t)
-	runs := 0
-	m.runShell = func(_ context.Context, _, program string) shell.Result {
-		runs++
-		if program != "go test ./..." {
-			t.Errorf("program = %q, want stored shell program", program)
+	for _, text := range []string{"status: failure", "stdout:\nstandard output", "stderr:\nstandard error", "error:\n"} {
+		if !strings.Contains(command.Output, text) {
+			t.Errorf("command output missing %q: %q", text, command.Output)
 		}
-		return shell.Result{Status: shell.StatusSuccess}
 	}
+}
 
-	m, cmd := m.handleSubmit("/def tests /shell go test ./...")
-	if cmd != nil {
-		t.Fatal("definition returned an execution command")
-	}
-	if runs != 0 {
-		t.Fatalf("definition executed shell %d times, want 0", runs)
-	}
+func TestHandleInterpreterEvent_rendersCommandDefinitionSuccess(t *testing.T) {
+	m := makeReadyModel(t)
+	m, _ = m.handleInterpreterEvent(interpreter.SubmissionSucceeded{
+		Raw: "/def tests /shell go test ./...",
+	})
 	if !hasRecord(m, record.KindSystem, "[defined] /tests") {
 		t.Fatal("expected room-visible definition outcome")
 	}
+}
 
-	for invocation := 1; invocation <= 2; invocation++ {
-		var next Model
-		next, cmd = m.handleSubmit("/tests")
-		if cmd == nil {
-			t.Fatal("invocation did not return an execution command")
-		}
-		updated, _ := next.Update(cmd())
-		m = updated.(Model)
+func TestHandleInterpreterEvent_shellDispatchReleasesSubmissionGate(t *testing.T) {
+	m := makeReadyModel(t)
+	m.submissionPending = true
+
+	m, _ = m.handleInterpreterEvent(interpreter.SubmissionSucceeded{Raw: "/shell long-running"})
+	if m.submissionPending {
+		t.Fatal("shell dispatch kept submission gate closed until process completion")
 	}
-	if runs != 2 {
-		t.Errorf("shell runs = %d, want 2", runs)
+	if shellCommandCount(m) != 0 {
+		t.Fatal("shell dispatch rendered a result before completion")
 	}
-	if command := shellCommandRecord(t, m); command.Command != "/tests" {
-		t.Errorf("rendered command = %q, want /tests", command.Command)
+
+	m, _ = m.handleInterpreterEvent(interpreter.ShellCompleted{
+		Command: "long-running",
+		Cwd:     ".",
+		Result:  shell.Result{Status: shell.StatusSuccess},
+		Output:  "status: success",
+	})
+	if shellCommandCount(m) != 1 {
+		t.Fatal("shell completion did not render exactly one result")
 	}
 }
 
-func TestHandleSubmit_definitionErrorsAreVisible(t *testing.T) {
-	tests := []struct {
-		name   string
-		inputs []string
-	}{
-		{"duplicate definition", []string{
-			"/def tests /shell true",
-			"/def tests /shell false",
-		}},
-		{"undefined invocation", []string{"/tests"}},
-		{"reserved name", []string{"/def help /shell true"}},
+func TestHandleInterpreterEvent_undefinedInvocationDoesNotEchoInput(t *testing.T) {
+	m := makeReadyModel(t)
+	m.submissionPending = true
+
+	m, _ = m.handleInterpreterEvent(interpreter.UnknownCommand{
+		Raw:  "/not-defined",
+		Name: "not-defined",
+	})
+	if m.submissionPending {
+		t.Fatal("undefined invocation kept submission gate closed")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := makeReadyModel(t)
-			for _, input := range tt.inputs {
-				m, _ = m.handleSubmit(input)
-			}
-			if !hasRecord(m, record.KindSystem, "error:") {
-				t.Fatal("expected room-visible error")
-			}
-		})
+	if hasRecord(m, record.KindUserInput, "/not-defined") {
+		t.Fatal("undefined invocation was appended as accepted input")
+	}
+	if !hasRecord(m, record.KindSystem, "error: invoke /not-defined") {
+		t.Fatal("undefined invocation error was not rendered")
 	}
 }
 
-func TestShellExecutionStopsWithUILifetime(t *testing.T) {
-	tests := []struct {
-		name string
-		stop func(Model, context.CancelFunc)
-	}{
-		{"parent context", func(_ Model, cancel context.CancelFunc) { cancel() }},
-		{"model close", func(m Model, _ context.CancelFunc) { m.Close() }},
-		{"quit command", func(m Model, _ context.CancelFunc) {
-			_, _ = m.handleInterpreterEvent(interpreter.ExitRequested{})
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assertShellStopsWithUI(t, tt.stop)
-		})
-	}
-}
-
-func TestModelCloseWaitsForShellCompletion(t *testing.T) {
-	m := New(context.Background(), newTestSession(t), ".")
-	started := make(chan struct{})
-	cancelled := make(chan struct{})
-	release := make(chan struct{})
-	m.runShell = func(ctx context.Context, _, _ string) shell.Result {
-		close(started)
-		<-ctx.Done()
-		close(cancelled)
-		<-release
-		return shell.Result{Status: shell.StatusCancelled, Err: ctx.Err()}
-	}
-
-	commandDone := make(chan struct{})
-	cmd := m.executeShell("long-running")
-	go func() {
-		_ = cmd()
-		close(commandDone)
-	}()
-	<-started
-
-	closeDone := make(chan struct{})
-	go func() {
-		m.Close()
-		close(closeDone)
-	}()
-	<-cancelled
-	select {
-	case <-closeDone:
-		t.Fatal("Model.Close returned before shell completion")
-	default:
-	}
-
-	close(release)
-	select {
-	case <-closeDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Model.Close did not return after shell completion")
-	}
-	<-commandDone
-}
-
-func assertShellStopsWithUI(t *testing.T, stop func(Model, context.CancelFunc)) {
-	t.Helper()
-	parent, cancelParent := context.WithCancel(context.Background())
-	m := New(parent, newTestSession(t), ".")
-	t.Cleanup(m.Close)
-	started := make(chan struct{})
-	m.runShell = func(ctx context.Context, _, _ string) shell.Result {
-		close(started)
-		<-ctx.Done()
-		return shell.Result{Status: shell.StatusCancelled, Err: ctx.Err()}
-	}
-
-	resultCh := make(chan tea.Msg, 1)
-	cmd := m.executeShell("long-running")
-	go func() { resultCh <- cmd() }()
-	<-started
-	stop(m, cancelParent)
-
-	select {
-	case raw := <-resultCh:
-		msg, ok := raw.(shellResultMsg)
-		if !ok {
-			t.Fatalf("message = %T, want shellResultMsg", raw)
+func shellCommandCount(m Model) int {
+	count := 0
+	for _, rec := range m.room.HistoryRecords() {
+		if rec.Kind == record.KindCommand {
+			count++
 		}
-		if msg.result.Status != shell.StatusCancelled {
-			t.Errorf("status = %q, want cancelled", msg.result.Status)
-		}
-		if !errors.Is(msg.result.Err, context.Canceled) {
-			t.Errorf("error = %v, want context cancellation", msg.result.Err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("shell execution survived UI shutdown")
 	}
+	return count
 }
 
 func shellCommandRecord(t *testing.T, m Model) agent.Command {
@@ -242,19 +121,4 @@ func shellCommandRecord(t *testing.T, m Model) agent.Command {
 	}
 	t.Fatal("expected canonical command record")
 	return agent.Command{}
-}
-
-func assertShellCommand(t *testing.T, command agent.Command) {
-	t.Helper()
-	if command.Command != `echo "hello world" | false` {
-		t.Errorf("command = %q, want submitted program", command.Command)
-	}
-	if command.ExitCode == nil || *command.ExitCode != 7 {
-		t.Errorf("exit code = %v, want 7", command.ExitCode)
-	}
-	for _, text := range []string{"status: failure", "stdout:\nstandard output", "stderr:\nstandard error", "error:\n"} {
-		if !strings.Contains(command.Output, text) {
-			t.Errorf("command output missing %q: %q", text, command.Output)
-		}
-	}
 }

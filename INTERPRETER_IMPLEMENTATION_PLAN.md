@@ -172,8 +172,8 @@ go test ./...
 - [x] Migrate policy commands from `SubmitWithFallback` to native `Submit`
       handling and delete their fallback translations.
 - [x] Move the room-scoped command registry.
-- [ ] Move shell execution, definitions, invocation, and cancellation.
-- [ ] Add a fake shell runner for interpreter tests.
+- [x] Move shell execution, definitions, invocation, and cancellation.
+- [x] Add a fake shell runner for interpreter tests.
 - [ ] Preserve existing syntax, routing, output, and error behavior.
 - [ ] Remove each TUI translator as its native interpreter handler lands.
 

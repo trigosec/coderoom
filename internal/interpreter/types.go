@@ -6,6 +6,7 @@ import (
 	"github.com/trigosec/coderoom/internal/agent"
 	"github.com/trigosec/coderoom/internal/participant"
 	roomstate "github.com/trigosec/coderoom/internal/room"
+	"github.com/trigosec/coderoom/internal/shell"
 )
 
 var (
@@ -101,6 +102,14 @@ type HelpListed struct {
 // ExitRequested asks a front end to end its interactive session.
 type ExitRequested struct{}
 
+// ShellCompleted reports the structured result of a local shell command.
+type ShellCompleted struct {
+	Command string
+	Cwd     string
+	Result  shell.Result
+	Output  string
+}
+
 // SubmissionSucceeded reports that recognized input executed or scheduled
 // successfully. Asynchronous work started by the command may still be active.
 type SubmissionSucceeded struct{ Raw string }
@@ -120,6 +129,7 @@ func (UnknownCommand) interpreterEvent()      {}
 func (RosterListed) interpreterEvent()        {}
 func (HelpListed) interpreterEvent()          {}
 func (ExitRequested) interpreterEvent()       {}
+func (ShellCompleted) interpreterEvent()      {}
 func (SubmissionSucceeded) interpreterEvent() {}
 func (SubmissionFailed) interpreterEvent()    {}
 
