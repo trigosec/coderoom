@@ -50,6 +50,12 @@ func (op submitOperation) apply(i *Interpreter) {
 }
 
 func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) bool {
+	return i.executeNativeSession(raw, statement) ||
+		i.executeNativeShell(raw, statement) ||
+		i.executeNativeControl(raw, statement)
+}
+
+func (i *Interpreter) executeNativeSession(raw string, statement promptlang.Statement) bool {
 	switch statement := statement.(type) {
 	case promptlang.Invite:
 		i.executeInvite(raw, statement)
@@ -63,6 +69,13 @@ func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) 
 	case promptlang.PolicyEnable:
 		i.executePolicyEnable(raw, statement)
 		return true
+	default:
+		return false
+	}
+}
+
+func (i *Interpreter) executeNativeShell(raw string, statement promptlang.Statement) bool {
+	switch statement := statement.(type) {
 	case promptlang.Shell:
 		i.executeShell(raw, statement.Program, statement.Program)
 		return true
@@ -72,6 +85,13 @@ func (i *Interpreter) executeNative(raw string, statement promptlang.Statement) 
 	case promptlang.CommandInvocation:
 		i.executeCommandInvocation(raw, statement)
 		return true
+	default:
+		return false
+	}
+}
+
+func (i *Interpreter) executeNativeControl(raw string, statement promptlang.Statement) bool {
+	switch statement.(type) {
 	case promptlang.Who:
 		i.executeWho(raw)
 		return true

@@ -59,19 +59,30 @@ func TestSubmitContract_shellRunsAndPublishesStructuredCompletion(t *testing.T) 
 		Stderr: "err",
 		Err:    errors.New("runner failure"),
 	}}
-	interp, _, events := newShellTestInterpreter(t, runner)
+	interp, events := newShellTestInterpreter(t, runner)
 
 	mustSubmit(t, interp.Submit("/shell echo hello"))
 	receiveSubmitEvent[InputAccepted](t, events)
 	receiveSubmitEvent[SubmissionSucceeded](t, events)
 	completed := receiveSubmitEvent[ShellCompleted](t, events)
+	assertShellCompletion(t, completed)
+	changed := receiveSubmitEvent[StateChanged](t, events)
+	assertShellCompletionRecord(t, changed, completed)
+	assertShellCall(t, runner.recordedCalls(), "/workspace", "echo hello")
+}
+
+func assertShellCompletion(t *testing.T, completed ShellCompleted) {
+	t.Helper()
 	if completed.Command != "echo hello" || completed.Cwd != "/workspace" {
 		t.Fatalf("completion = %#v", completed)
 	}
 	if completed.Result.Status != shell.StatusFailure || completed.Output == "" {
 		t.Fatalf("completion result = %#v", completed)
 	}
-	changed := receiveSubmitEvent[StateChanged](t, events)
+}
+
+func assertShellCompletionRecord(t *testing.T, changed StateChanged, completed ShellCompleted) {
+	t.Helper()
 	if len(changed.Snapshot.Room.Records) != 2 {
 		t.Fatalf("records = %#v, want input and command", changed.Snapshot.Room.Records)
 	}
@@ -80,14 +91,18 @@ func TestSubmitContract_shellRunsAndPublishesStructuredCompletion(t *testing.T) 
 	if !ok || command.Command != completed.Command || command.Output != completed.Output {
 		t.Fatalf("command record = %#v", record)
 	}
-	if calls := runner.recordedCalls(); len(calls) != 1 || calls[0].cwd != "/workspace" || calls[0].program != "echo hello" {
+}
+
+func assertShellCall(t *testing.T, calls []shellCall, cwd, program string) {
+	t.Helper()
+	if len(calls) != 1 || calls[0].cwd != cwd || calls[0].program != program {
 		t.Fatalf("calls = %#v", calls)
 	}
 }
 
 func TestSubmitContract_definesAndInvokesShellCommand(t *testing.T) {
 	runner := &fakeShellRunner{result: shell.Result{Status: shell.StatusSuccess}}
-	interp, _, events := newShellTestInterpreter(t, runner)
+	interp, events := newShellTestInterpreter(t, runner)
 
 	mustSubmit(t, interp.Submit("/def tests /shell go test ./..."))
 	receiveSubmitEvent[InputAccepted](t, events)
@@ -111,7 +126,7 @@ func TestSubmitContract_definesAndInvokesShellCommand(t *testing.T) {
 }
 
 func TestSubmitContract_undefinedInvocationIsUnknown(t *testing.T) {
-	interp, _, events := newShellTestInterpreter(t, &fakeShellRunner{})
+	interp, events := newShellTestInterpreter(t, &fakeShellRunner{})
 
 	mustSubmit(t, interp.Submit("/tests"))
 	unknown := receiveSubmitEvent[UnknownCommand](t, events)
@@ -127,7 +142,7 @@ func TestInterpreter_closeCancelsAndWaitsForShell(t *testing.T) {
 		cancelled: make(chan struct{}),
 		release:   make(chan struct{}),
 	}
-	interp, _, events := newShellTestInterpreter(t, runner)
+	interp, events := newShellTestInterpreter(t, runner)
 	mustSubmit(t, interp.Submit("/shell long-running"))
 	receiveSubmitEvent[InputAccepted](t, events)
 	receiveSubmitEvent[SubmissionSucceeded](t, events)
@@ -156,12 +171,12 @@ func TestInterpreter_closeCancelsAndWaitsForShell(t *testing.T) {
 	}
 }
 
-func newShellTestInterpreter(t *testing.T, runner ShellRunner) (*Interpreter, *submitContractSession, chan Event) {
+func newShellTestInterpreter(t *testing.T, runner ShellRunner) (*Interpreter, chan Event) {
 	t.Helper()
 	sess := newSubmitContractSession()
 	interp := New(context.Background(), sess, "/workspace", WithShellRunner(runner))
 	events := make(chan Event, 16)
 	interp.AddObserver(submitContractObserver{events: events})
 	t.Cleanup(interp.Close)
-	return interp, sess, events
+	return interp, events
 }
